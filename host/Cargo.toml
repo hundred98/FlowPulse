@@ -1,0 +1,57 @@
+[package]
+name = "host"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "3D Printer Host Application"
+license = "MIT"
+repository.workspace = true
+
+[[bin]]
+name = "host"
+path = "src/main.rs"
+
+
+[dependencies]
+# Internal crates
+emb-public = { workspace = true }
+emb-api = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["signal"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Web API framework
+axum = { workspace = true }
+tower-http = { workspace = true }
+tower = { workspace = true }
+
+# Logging
+log = { workspace = true }
+env_logger = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Signal handling
+ctrlc = { workspace = true }
+
+# Serial port communication
+tokio-serial = { workspace = true }
+crc16 = { workspace = true }
+rand = { workspace = true }
+bytes = { workspace = true }
+aes-gcm = { workspace = true }
+aead = { workspace = true }
+chrono = { workspace = true }
+crossbeam = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+
+# Windows API (only on Windows)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_Security"] }

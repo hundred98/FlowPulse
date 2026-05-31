@@ -1,0 +1,21 @@
+FlowPulse - 3D Printer Firmware System
+Copyright (c) 2024-2026 hundred98
+
+This project uses a mixed licensing strategy. Please refer to the LICENSE file
+in each subdirectory for the specific license governing that component.
+
+Overview:
+
+  host/          MIT License          - User interface, HTTP API, CLI tools
+  emb-public/    MIT License          - GCode parsing, peripheral IO, configuration
+  releases/      Proprietary          - Core engine binaries (All Rights Reserved)
+
+The open-source components (host, emb-public) are released under the MIT License
+and may be freely used, modified, and distributed under its terms.
+
+The core engine (emb-core), including motion planning algorithms, flow control
+algorithms, trajectory optimization, and related core functionality, is NOT open
+source. It is distributed as pre-compiled binaries under a proprietary license.
+Commercial use of the core engine requires a separate commercial license.
+
+Contact: hundred98@163.com

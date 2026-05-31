@@ -1,0 +1,56 @@
+{
+  "kinematics": {
+    "max_velocity": 400,
+    "max_acceleration": 20000,
+    "max_feed_rate": 15000.0,
+    "jerk": 10.0
+  },
+
+  "junction": {
+    "square_corner_velocity": 5.0,
+    "junction_deviation": 0.05
+  },
+
+  "segment": {
+    "segment_time_ms": 5,
+    "min_segment_distance": 0.1,
+    "buffer_ahead_ms": 300,
+    "microstep_accumulation_enabled": true
+  },
+
+  "homing": {
+    "speed": 1000.0,
+    "retract_speed": 200.0,
+    "backoff": 5.0,
+    "direction": {
+      "x": -1,
+      "y": -1,
+      "z": -1
+    }
+  },
+
+  "arc": {
+    "sag_tolerance": 0.01,
+    "centripetal_accel": 500.0,
+    "min_segments": 4
+  },
+
+  "extruder": {
+    "pressure_advance": 0.0,
+    "pressure_advance_max_accel": 5000.0
+  },
+
+  "velocity_profile": {
+    "type": "six_point",
+    "six_point": {
+      "start_accel_mm_s2": 5000,
+      "max_accel_mm_s2": 20000,
+      "final_decel_mm_s2": 5000,
+      "max_decel_mm_s2": 20000,
+      "start_speed_mm_s": 0,
+      "stop_speed_mm_s": 0,
+      "break_speed_mm_s": 100,
+      "min_distance_mm": 0.1
+    }
+  }
+}

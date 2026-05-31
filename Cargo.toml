@@ -1,0 +1,91 @@
+[workspace]
+resolver = "2"
+members = [
+    "emb-api",
+    "emb-public",
+    "host",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["hundred98 <hundred98@163.com>"]
+description = "FlowPulse - A modular 3D printer control system with Rust-based host software and STM32 firmware"
+license = "MIT"
+repository = "https://github.com/hundred98/FlowPulse"
+readme = "README.md"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.0", features = [
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "net",
+    "io-util",
+    "fs",
+    "macros",
+] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Web API framework
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+tower = "0.4"
+
+# Logging
+log = "0.4"
+env_logger = "0.10"
+
+# Time handling
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# FFI for C library
+libc = "0.2"
+
+# Shared memory utilities
+memmap2 = "0.9"
+
+# Concurrency
+crossbeam = "0.8"
+
+# Async traits
+async-trait = "0.1"
+
+# UUID for message IDs
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Serial port communication
+tokio-serial = "5.4"
+
+# CRC calculation
+crc16 = "0.4"
+
+# Signal handling
+ctrlc = "3.4"
+
+# Random number generation
+rand = "0.8"
+
+# Bytes handling
+bytes = "1.5"
+
+# AES-256-GCM encryption
+aes-gcm = "0.10"
+aead = "0.5"
+
+# WebSocket client
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+
+# Internal crates
+emb-api = { path = "emb-api" }
+emb-public = { path = "emb-public" }

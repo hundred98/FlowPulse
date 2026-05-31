@@ -1,0 +1,38 @@
+[package]
+name = "emb-public"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "3D Printer Public Module - Open for third-party development"
+license = "MIT"
+repository.workspace = true
+
+[dependencies]
+# Shared API types (for Socket communication)
+emb-api = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+crossbeam = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true }
+tower = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+
+regex-lite = "0.1"
+futures-lite = "2.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

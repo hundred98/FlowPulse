@@ -1,0 +1,82 @@
+{
+  "version": "1.0",
+  "motor": [
+    {
+      "axis": "X",
+      "step_pin": "PE3",
+      "dir_pin": "PE2",
+      "enable_pin": "!PE4",
+      "steps_per_mm": 80,
+      "max_speed_mm_per_s": 400,
+      "max_accel": 20000,
+      "position_min": 0,
+      "position_max": 300,
+      "driver": {
+        "uart_pin": "",
+        "microsteps": 16,
+        "current_ma": 800,
+        "hold_current_ma": 500,
+        "stealthchop_threshold": 999999
+      }
+    },
+    {
+      "axis": "Y",
+      "step_pin": "PE0",
+      "dir_pin": "PB9",
+      "enable_pin": "!PE1",
+      "steps_per_mm": 80,
+      "max_speed_mm_per_s": 400,
+      "max_accel": 20000,
+      "position_min": 0,
+      "position_max": 300,
+      "driver": {
+        "uart_pin": "",
+        "microsteps": 16,
+        "current_ma": 800,
+        "hold_current_ma": 500,
+        "stealthchop_threshold": 999999
+      }
+    },
+    {
+      "axis": "Z",
+      "step_pin": "PB5",
+      "dir_pin": "PB4",
+      "enable_pin": "!PB8",
+      "steps_per_mm": 400,
+      "max_speed_mm_per_s": 20,
+      "max_accel": 500,
+      "position_min": 0,
+      "position_max": 200,
+      "driver": {
+        "uart_pin": "",
+        "microsteps": 16,
+        "current_ma": 800,
+        "hold_current_ma": 500,
+        "stealthchop_threshold": 999999
+      }
+    },
+    {
+      "axis": "E0",
+      "step_pin": "PD6",
+      "dir_pin": "!PD3",
+      "enable_pin": "!PB3",
+      "steps_per_mm": 80,
+      "max_speed_mm_per_s": 50,
+      "max_accel": 5000,
+      "position_min": 0,
+      "position_max": 0,
+      "driver": {
+        "uart_pin": "",
+        "microsteps": 16,
+        "current_ma": 600,
+        "hold_current_ma": 300,
+        "stealthchop_threshold": 999999
+      },
+      "extruder": {
+        "nozzle_diameter_mm": 0.4,
+        "filament_diameter_mm": 1.75,
+        "max_flow_rate": 25
+      }
+    }
+  ]
+}

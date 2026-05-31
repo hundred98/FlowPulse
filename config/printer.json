@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "printer_model": "STM32F407_3DPrinter",
+  "communication": {
+    "serial": {
+      "port": "COM7",
+      "baud_rate": 57600,
+      "data_bits": 8,
+      "parity": "None",
+      "stop_bits": 1,
+      "timeout_ms": 1000,
+      "flow_control": false
+    }
+  },
+  "gcode_settings": {
+    "motion_batch_size": 4
+  }
+}

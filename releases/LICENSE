@@ -1,0 +1,43 @@
+PROPRIETARY SOFTWARE LICENSE AGREEMENT
+=====================================
+
+Copyright (c) 2024-2026 hundred98
+All Rights Reserved.
+
+IMPORTANT: This is proprietary software. By using the binaries in this
+directory, you agree to be bound by the following terms.
+
+1. OWNERSHIP
+   The software, including all binaries, documentation, and associated files
+   (collectively the "Software"), are proprietary to 3D Printer Team and are
+   protected by copyright laws and international treaty provisions.
+
+2. RESTRICTIONS ON USE
+   You may NOT:
+   - Copy, modify, or distribute the Software
+   - Reverse engineer, disassemble, or decompile the Software
+   - Sublicense, rent, lease, or lend the Software
+   - Remove any proprietary notices or labels from the Software
+   - Use the Software for any unlawful purpose
+
+3. PUBLIC COMPONENTS
+   The host and emb-public components of this project are released under the
+   MIT License. See the respective LICENSE files in those directories for
+   details. The emb-core components, motion planning algorithms, flow control
+   algorithms, and core functionality included in these binaries are NOT open
+   source and require a separate commercial license for commercial use.
+
+4. DISCLAIMER OF WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+5. LIMITATION OF LIABILITY
+   IN NO EVENT SHALL 3D PRINTER TEAM BE LIABLE FOR ANY DIRECT, INDIRECT,
+   INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES.
+
+6. TERMINATION
+   This license is effective until terminated. It will terminate automatically
+   if you fail to comply with any of its terms.
+
+For licensing inquiries: hundred98@163.com, hundred984@gmail.com
