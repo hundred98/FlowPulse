@@ -104,6 +104,11 @@ pub enum MotionRequest {
     WaitMotionDrain,
     /// Query motion and serial statistics
     QueryStats,
+    /// Enable or disable motors
+    MotorEnable {
+        /// Motor enable mask (bit0=X, bit1=Y, bit2=Z, bit3=E, 1=enable, 0=disable)
+        enable_mask: u8,
+    },
 }
 
 /// Arc parameters for G2/G3 commands (API-safe subset)
@@ -229,6 +234,11 @@ pub enum MotionResponse {
     },
     /// Motion and serial statistics
     Stats(MotionStatsResponse),
+    /// Motor enable/disable result
+    MotorEnableResult {
+        success: bool,
+        error: Option<String>,
+    },
 }
 
 /// Motion and serial statistics

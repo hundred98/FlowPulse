@@ -119,6 +119,7 @@ pub struct GCodeController {
     stats: Arc<tokio::sync::Mutex<ControllerStats>>,
     running: Arc<tokio::sync::Mutex<bool>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
+    motor_enabled: Arc<tokio::sync::Mutex<bool>>,
 }
 
 impl GCodeController {
@@ -131,6 +132,7 @@ impl GCodeController {
             stats: Arc::new(tokio::sync::Mutex::new(ControllerStats::default())),
             running: Arc::new(tokio::sync::Mutex::new(false)),
             shutdown_tx: None,
+            motor_enabled: Arc::new(tokio::sync::Mutex::new(false)),
         }
     }
 
@@ -164,16 +166,23 @@ impl GCodeController {
 
         match category {
             GCodeCategory::LinearMove | GCodeCategory::RapidPositioning => {
+                self.ensure_motor_enabled().await?;
                 self.send_linear_move(gcode, &command_str).await
             }
             GCodeCategory::ArcCW | GCodeCategory::ArcCCW => {
+                self.ensure_motor_enabled().await?;
                 self.send_arc_move(gcode, &command_str).await
             }
             GCodeCategory::Home => {
+                self.ensure_motor_enabled().await?;
                 self.send_home_command(&command_str).await
             }
             GCodeCategory::SetPosition => {
                 self.send_set_position(gcode, &command_str).await
+            }
+            GCodeCategory::MotorDisable => {
+                self.disable_motors().await?;
+                Ok("OK (motors disabled)".to_string())
             }
             _ => {
                 Ok(format!("OK (queued: {})", command_str))
@@ -303,6 +312,31 @@ impl GCodeController {
         self.client.serial_exit_special_mode().await
             .map_err(|e| EmbError::Protocol(format!("Exit print mode failed: {}", e)))?;
         info!("Exited print mode");
+        Ok(())
+    }
+
+    async fn ensure_motor_enabled(&self) -> EmbResult<()> {
+        let mut enabled = self.motor_enabled.lock().await;
+        if !*enabled {
+            let enable_mask = 0x0F;
+            self.client.motor_enable(enable_mask).await
+                .map_err(|e| EmbError::Motion(format!("Motor enable failed: {}", e)))?;
+            *enabled = true;
+            info!("Motors enabled (mask=0x{:02X}), waiting 500ms for stabilization", enable_mask);
+            
+            drop(enabled);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        Ok(())
+    }
+
+    pub async fn disable_motors(&self) -> EmbResult<()> {
+        let mut enabled = self.motor_enabled.lock().await;
+        let enable_mask = 0x00;
+        self.client.motor_enable(enable_mask).await
+            .map_err(|e| EmbError::Motion(format!("Motor disable failed: {}", e)))?;
+        *enabled = false;
+        info!("Motors disabled (M84)");
         Ok(())
     }
 }

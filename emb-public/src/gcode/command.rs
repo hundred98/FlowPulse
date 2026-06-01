@@ -46,7 +46,7 @@ impl GCodeCommand {
                 GCodeCategory::TemperatureControl
             }
             GCodeCommandType::M106 | GCodeCommandType::M107 => GCodeCategory::FanControl,
-            GCodeCommandType::M84 => GCodeCategory::Unknown,
+            GCodeCommandType::M84 => GCodeCategory::MotorDisable,
             _ => GCodeCategory::Unknown,
         }
     }

@@ -115,6 +115,7 @@ impl GCodeCommand {
             ('M', 106) | ('M', 107) => GCodeCategory::FanControl,
             ('M', 140) | ('M', 190) => GCodeCategory::TemperatureControl,
             ('M', 83) | ('M', 82) => GCodeCategory::Extruder,
+            ('M', 84) => GCodeCategory::MotorDisable,
             ('M', 900) => GCodeCategory::PressureAdvance,
             _ => GCodeCategory::Unknown,
         }
@@ -154,6 +155,7 @@ pub enum GCodeCategory {
     Extruder,
     BedControl,
     PressureAdvance,
+    MotorDisable,
     Unknown,
 }
 

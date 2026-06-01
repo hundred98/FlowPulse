@@ -410,6 +410,18 @@ impl CoreSocketClient {
         }
     }
 
+    /// Enable or disable motors.
+    pub async fn motor_enable(&self, enable_mask: u8) -> Result<(), String> {
+        match self.send_request(&CoreRequest::Motion(MotionRequest::MotorEnable { enable_mask })).await? {
+            CoreResponse::Motion(MotionResponse::MotorEnableResult { success: true, .. }) => Ok(()),
+            CoreResponse::Motion(MotionResponse::MotorEnableResult { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "Motor enable failed".to_string()))
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
     /// Plan a move AND dispatch segments to the serial device.
     /// Server handles planning → mm→steps → batch → serial send.
     /// Returns the number of segments dispatched.
