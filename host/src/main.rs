@@ -330,6 +330,7 @@ async fn main() -> anyhow::Result<()> {
                 log::info!("--- Motion Statistics ---");
                 log::info!("  Total G-code lines: {}", stats.motion.total_gcode_lines);
                 log::info!("  Total batches: {}", stats.motion.total_batches);
+                log::info!("  Total steps: {}", stats.motion.total_steps);
                 log::info!("  Distance X: {:.3} mm", stats.motion.distance_x_mm);
                 log::info!("  Distance Y: {:.3} mm", stats.motion.distance_y_mm);
                 log::info!("  Distance Z: {:.3} mm", stats.motion.distance_z_mm);

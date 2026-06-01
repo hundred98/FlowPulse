@@ -259,6 +259,7 @@ pub struct SerialStats {
 pub struct MotionSummary {
     pub total_gcode_lines: u64,
     pub total_batches: u64,
+    pub total_steps: u64,
     pub distance_x_mm: f64,
     pub distance_y_mm: f64,
     pub distance_z_mm: f64,
