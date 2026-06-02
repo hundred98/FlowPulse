@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use axum::http::Method;
 
-use emb_public::CoreSocketClient;
+use emb_public::{CoreSocketClient, ConfigFrameBuilder, config_adapter};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GpioSetRequest {
@@ -145,6 +145,47 @@ async fn serial_connect(
     match state.core_client.serial_connect(&req.port, req.baud_rate).await {
         Ok(()) => {
             log::info!("Serial connected to {}", req.port);
+            
+            let config_dir = std::env::current_dir()
+                .map(|p| p.join("config"))
+                .unwrap_or_else(|_| std::path::PathBuf::from("config"));
+            
+            match config_adapter::load_configs(&config_dir.to_string_lossy()) {
+                Ok(configs) => {
+                    log::info!("Configs loaded successfully");
+                    
+                    let printer_config = config_adapter::build_printer_config(&configs);
+                    let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
+                    log::info!("Sending {} config frames to device...", config_frames.len());
+                    
+                    for frame_bytes in &config_frames {
+                        match state.core_client.serial_send_raw(frame_bytes).await {
+                            Ok(()) => log::debug!("Config frame sent: {} bytes", frame_bytes.len()),
+                            Err(e) => log::warn!("Failed to send config frame: {}", e),
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    
+                    log::info!("All config frames sent, waiting 300ms before ConfigComplete...");
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    
+                    match state.core_client.serial_config_complete().await {
+                        Ok(()) => log::info!("ConfigComplete sent"),
+                        Err(e) => log::warn!("ConfigComplete failed: {}", e),
+                    }
+                    
+                    match state.core_client.serial_init_seq().await {
+                        Ok(()) => log::info!("Device seq initialized"),
+                        Err(e) => log::warn!("Init seq failed: {}", e),
+                    }
+                    
+                    match state.core_client.serial_enter_special_mode().await {
+                        Ok(()) => log::info!("Entered special mode"),
+                        Err(e) => log::warn!("EnterSpecialMode failed: {}", e),
+                    }
+                }
+                Err(e) => log::warn!("Failed to load configs for serial init: {}", e),
+            }
             
             Json(ApiResponse::success(StatusInfo {
                 serial_connected: true,

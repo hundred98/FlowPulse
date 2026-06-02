@@ -547,6 +547,48 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         .and_then(|v| serde_json::from_value::<pc::GCodeSettings>(v.clone()).ok())
         .unwrap_or_default();
 
+    // Build GPIO config
+    let gpio = configs.hardware.gpio.as_ref().map(|hw_gpio| {
+        let output_pins: Vec<pc::OutputPinParams> = hw_gpio.output.iter().map(|o| {
+            pc::OutputPinParams {
+                name: o.name.clone(),
+                pin: o.pin.clone(),
+                pin_type: match o.pin_type.as_str() {
+                    "pwm" => pc::OutputPinType::Pwm,
+                    _ => pc::OutputPinType::Digital,
+                },
+                active_high: o.active_high,
+                pwm_freq_hz: o.pwm_freq_hz as u16,
+                default_value: o.default_value,
+                shutdown_value: o.shutdown_value,
+                max_value: o.max_value,
+            }
+        }).collect();
+
+        let input_pins: Vec<pc::InputPinParams> = hw_gpio.input.iter().map(|i| {
+            pc::InputPinParams {
+                name: i.name.clone(),
+                pin: i.pin.clone(),
+                pin_type: match i.pin_type.as_str() {
+                    "analog" => pc::InputPinType::Analog,
+                    _ => pc::InputPinType::Digital,
+                },
+                pull: i.pull.clone(),
+                active_high: i.active_high,
+                debounce_ms: i.debounce_ms,
+                event: None,
+                report: None,
+                calibration: None,
+                adc_resolution: 12, // Default ADC resolution
+            }
+        }).collect();
+
+        pc::GpioConfig {
+            output: output_pins,
+            input: input_pins,
+        }
+    }).unwrap_or_default();
+
     pc::PrinterJsonConfig {
         version: configs.printer.version.clone(),
         printer_model: configs.printer.printer_model.clone(),
@@ -554,6 +596,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         printer: printer_params,
         gcode_settings,
         motor: motors,
+        gpio,
         ..Default::default()
     }
 }

@@ -1,9 +1,20 @@
-use crate::printer_config::{PrinterJsonConfig, MotorParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams};
+use crate::printer_config::{PrinterJsonConfig, MotorParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams, OutputPinParams, InputPinParams};
 use crate::common::pin_parser::parse_pin;
 
 pub const FRAME_SOF: u8 = 0xAA;
 pub const FRAME_EOF: u8 = 0x55;
 pub const FRAME_TYPE_CONFIG: u8 = 0x05;
+
+// Config frame subtypes - must match STM32 firmware definitions (emb_protocol.h)
+pub const CONFIG_SUBTYPE_MOTOR: u8 = 0x01;
+pub const CONFIG_SUBTYPE_TEMP: u8 = 0x02;
+pub const CONFIG_SUBTYPE_LIMIT_SWITCH: u8 = 0x03;
+pub const CONFIG_SUBTYPE_MOTION: u8 = 0x04;
+pub const CONFIG_SUBTYPE_SYSTEM: u8 = 0x05;
+pub const CONFIG_SUBTYPE_GPIO: u8 = 0x06;
+pub const CONFIG_SUBTYPE_GPIO_OUTPUT: u8 = 0x07;  // Matches CONFIG_SUB_GPIO_OUTPUT on STM32
+pub const CONFIG_SUBTYPE_GPIO_INPUT: u8 = 0x08;   // Matches CONFIG_SUB_GPIO_INPUT on STM32
+pub const CONFIG_SUBTYPE_QUERY: u8 = 0x10;
 
 pub struct ConfigFrameBuilder {
     #[allow(dead_code)]
@@ -45,6 +56,34 @@ impl ConfigFrameBuilder {
             if !fan.pin.is_empty() {
                 frames.push(Self::build_fan_frame(fan));
             }
+        }
+
+        // GPIO output pins (build single frame with all outputs)
+        let output_gpio_frames: Vec<Vec<u8>> = config.gpio.output.iter()
+            .filter(|o| !o.pin.is_empty())
+            .map(|o| Self::build_single_gpio_output_entry(o))
+            .collect();
+        if !output_gpio_frames.is_empty() {
+            let mut payload = vec![CONFIG_SUBTYPE_GPIO_OUTPUT];
+            payload.push(output_gpio_frames.len() as u8);
+            for entry in output_gpio_frames {
+                payload.extend(entry);
+            }
+            frames.push(Self::wrap_frame(FRAME_TYPE_CONFIG, &payload));
+        }
+
+        // GPIO input pins (build single frame with all inputs)
+        let input_gpio_frames: Vec<Vec<u8>> = config.gpio.input.iter()
+            .filter(|i| !i.pin.is_empty())
+            .map(|i| Self::build_single_gpio_input_entry(i))
+            .collect();
+        if !input_gpio_frames.is_empty() {
+            let mut payload = vec![CONFIG_SUBTYPE_GPIO_INPUT];
+            payload.push(input_gpio_frames.len() as u8);
+            for entry in input_gpio_frames {
+                payload.extend(entry);
+            }
+            frames.push(Self::wrap_frame(FRAME_TYPE_CONFIG, &payload));
         }
 
         frames
@@ -182,6 +221,145 @@ impl ConfigFrameBuilder {
         payload.extend_from_slice(&freq_bytes[..2]);
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
+    }
+
+    fn build_single_gpio_output_entry(output: &OutputPinParams) -> Vec<u8> {
+        let mut entry = Vec::with_capacity(36);
+        
+        // name (16 bytes)
+        let name_bytes = output.name.as_bytes();
+        for i in 0..16 {
+            entry.push(name_bytes.get(i).copied().unwrap_or(0));
+        }
+        
+        // pin_port, pin_pin
+        let pin = parse_pin(&output.pin);
+        entry.push(pin.map(|p| p.port).unwrap_or(0xFF));
+        entry.push(pin.map(|p| p.pin).unwrap_or(0xFF));
+        
+        // pin_type: 0=Digital, 1=PWM
+        let pin_type = match output.pin_type {
+            crate::printer_config::OutputPinType::Digital => 0x00,
+            crate::printer_config::OutputPinType::Pwm => 0x01,
+        };
+        entry.push(pin_type);
+        
+        // active_high
+        entry.push(if output.active_high { 1 } else { 0 });
+        
+        // pwm_freq_hz (2 bytes)
+        let freq_bytes = output.pwm_freq_hz.to_le_bytes();
+        entry.extend_from_slice(&freq_bytes[..2]);
+        
+        // default_value (4 bytes, float)
+        let default_bytes = output.default_value.to_le_bytes();
+        entry.extend_from_slice(&default_bytes);
+        
+        // shutdown_value (4 bytes, float)
+        let shutdown_bytes = output.shutdown_value.to_le_bytes();
+        entry.extend_from_slice(&shutdown_bytes);
+        
+        // max_value (4 bytes, float)
+        let max_bytes = output.max_value.to_le_bytes();
+        entry.extend_from_slice(&max_bytes);
+        
+        // padding (2 bytes)
+        entry.extend_from_slice(&[0, 0]);
+        
+        entry
+    }
+
+    fn build_single_gpio_input_entry(input: &InputPinParams) -> Vec<u8> {
+        let mut entry = Vec::with_capacity(45);
+        
+        // name (16 bytes)
+        let name_bytes = input.name.as_bytes();
+        for i in 0..16 {
+            entry.push(name_bytes.get(i).copied().unwrap_or(0));
+        }
+        
+        // pin_port, pin_pin
+        let pin = parse_pin(&input.pin);
+        entry.push(pin.map(|p| p.port).unwrap_or(0xFF));
+        entry.push(pin.map(|p| p.pin).unwrap_or(0xFF));
+        
+        // pin_type: 0=Digital, 1=Analog
+        let pin_type = match input.pin_type {
+            crate::printer_config::InputPinType::Digital => 0x00,
+            crate::printer_config::InputPinType::Analog => 0x01,
+        };
+        entry.push(pin_type);
+        
+        // pull: 0=None, 1=Up, 2=Down
+        let pull = match input.pull.as_str() {
+            "up" => 0x01,
+            "down" => 0x02,
+            _ => 0x00,
+        };
+        entry.push(pull);
+        
+        // active_high
+        entry.push(if input.active_high { 1 } else { 0 });
+        
+        // debounce_ms (2 bytes)
+        let debounce_bytes = input.debounce_ms.to_le_bytes();
+        entry.extend_from_slice(&debounce_bytes);
+        
+        // event_action (1 byte) - 0 for none
+        entry.push(0);
+        
+        // report_mode: 0=on_change, 1=interval
+        let report_mode = match &input.report {
+            Some(report) => if report.mode == "interval" { 1 } else { 0 },
+            None => 0,
+        };
+        entry.push(report_mode);
+        
+        // report_trigger: 0=rising, 1=falling, 2=both
+        let report_trigger = match &input.report {
+            Some(report) => match &report.trigger {
+                Some(trigger) if trigger == "falling" => 1,
+                Some(trigger) if trigger == "both" => 2,
+                _ => 0, // rising
+            },
+            None => 0,
+        };
+        entry.push(report_trigger);
+        
+        // report_interval_ms (2 bytes)
+        let interval_ms = input.report.as_ref().and_then(|r| r.interval_ms).unwrap_or(0);
+        let interval_bytes = interval_ms.to_le_bytes();
+        entry.extend_from_slice(&interval_bytes);
+        
+        // report_threshold (4 bytes, float)
+        let threshold = input.report.as_ref().and_then(|r| r.threshold).unwrap_or(0.0);
+        let threshold_bytes = threshold.to_le_bytes();
+        entry.extend_from_slice(&threshold_bytes);
+        
+        // calibration_offset (4 bytes, float)
+        let offset = input.calibration.as_ref().map(|c| c.offset).unwrap_or(0.0);
+        let offset_bytes = offset.to_le_bytes();
+        entry.extend_from_slice(&offset_bytes);
+        
+        // calibration_scale (4 bytes, float)
+        let scale = input.calibration.as_ref().map(|c| c.scale).unwrap_or(1.0);
+        let scale_bytes = scale.to_le_bytes();
+        entry.extend_from_slice(&scale_bytes);
+        
+        // calibration_min (4 bytes, float)
+        let cal_min = input.calibration.as_ref().map(|c| c.min_value).unwrap_or(0.0);
+        let min_bytes = cal_min.to_le_bytes();
+        entry.extend_from_slice(&min_bytes);
+        
+        // calibration_max (4 bytes, float)
+        let cal_max = input.calibration.as_ref().map(|c| c.max_value).unwrap_or(1.0);
+        let max_bytes = cal_max.to_le_bytes();
+        entry.extend_from_slice(&max_bytes);
+        
+        // adc_resolution
+        entry.push(input.adc_resolution);
+        
+        entry
     }
 
     fn wrap_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {
