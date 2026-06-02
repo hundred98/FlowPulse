@@ -24,7 +24,82 @@ use crate::printer_config as pc;
 pub struct HardwareConfig {
     pub communication: Option<CommunicationConfig>,
     pub motor: Vec<MotorConfig>,
+    pub gpio: Option<GpioConfig>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct GpioConfig {
+    pub output: Vec<OutputGpioConfig>,
+    pub input: Vec<InputGpioConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OutputGpioConfig {
+    pub name: String,
+    pub pin: String,
+    #[serde(rename = "type")]
+    pub pin_type: String,
+    #[serde(default = "default_true")]
+    pub active_high: bool,
+    #[serde(default)]
+    pub pwm_freq_hz: u32,
+    #[serde(default)]
+    pub default_value: f32,
+    #[serde(default)]
+    pub shutdown_value: f32,
+    #[serde(default = "default_max_value")]
+    pub max_value: f32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InputGpioConfig {
+    pub name: String,
+    pub pin: String,
+    #[serde(rename = "type")]
+    pub pin_type: String,
+    #[serde(default)]
+    pub pull: String,
+    #[serde(default = "default_true")]
+    pub active_high: bool,
+    #[serde(default)]
+    pub debounce_ms: u16,
+    pub event: Option<InputGpioEvent>,
+    pub report: Option<InputGpioReport>,
+    pub calibration: Option<InputGpioCalibration>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InputGpioEvent {
+    #[serde(default)]
+    pub event_type: String,
+    #[serde(default)]
+    pub action: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InputGpioReport {
+    #[serde(default)]
+    pub mode: String,
+    pub trigger: Option<String>,
+    pub interval_ms: Option<u16>,
+    pub threshold: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InputGpioCalibration {
+    #[serde(default)]
+    pub offset: f32,
+    #[serde(default = "default_scale")]
+    pub scale: f32,
+    #[serde(default)]
+    pub min: f32,
+    #[serde(default = "default_max_value")]
+    pub max: f32,
+}
+
+fn default_true() -> bool { true }
+fn default_max_value() -> f32 { 1.0 }
+fn default_scale() -> f32 { 1.0 }
 
 #[derive(Debug, Deserialize)]
 pub struct CommunicationConfig {
@@ -211,8 +286,6 @@ pub struct PrinterParamsSection {
     pub junction_deviation: f32,
     pub velocity_profile: Option<VelocityProfileFile>,
 }
-
-fn default_true() -> bool { true }
 
 // ── Public API ───────────────────────────────────────────────
 

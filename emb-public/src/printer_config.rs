@@ -24,6 +24,8 @@ pub struct PrinterJsonConfig {
     pub probe: ProbeParams,
     #[serde(default)]
     pub pinout: PinoutInfo,
+    #[serde(default)]
+    pub gpio: GpioConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -101,6 +103,7 @@ impl Default for PrinterJsonConfig {
             fan: vec![],
             probe: ProbeParams::default(),
             pinout: PinoutInfo::default(),
+            gpio: GpioConfig::default(),
         }
     }
 }
@@ -212,6 +215,8 @@ fn default_max_decel() -> f32 { 2000.0 }
 fn default_start_speed() -> f32 { 10.0 }
 fn default_stop_speed() -> f32 { 10.0 }
 fn default_break_speed() -> f32 { 50.0 }
+fn default_max_value() -> f32 { 1.0 }
+fn default_adc_resolution() -> u8 { 12 }
 
 impl Default for SixPointConfig {
     fn default() -> Self {
@@ -526,6 +531,101 @@ impl Default for PinoutInfo {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GpioConfig {
+    #[serde(default)]
+    pub output: Vec<OutputPinParams>,
+    #[serde(default)]
+    pub input: Vec<InputPinParams>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputPinParams {
+    pub name: String,
+    pub pin: String,
+    #[serde(rename = "type")]
+    pub pin_type: OutputPinType,
+    #[serde(default = "default_active_high")]
+    pub active_high: bool,
+    #[serde(default = "default_pwm_freq")]
+    pub pwm_freq_hz: u16,
+    #[serde(default)]
+    pub default_value: f32,
+    #[serde(default)]
+    pub shutdown_value: f32,
+    #[serde(default = "default_max_value")]
+    pub max_value: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputPinType {
+    Pwm,
+    Digital,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputPinParams {
+    pub name: String,
+    pub pin: String,
+    #[serde(rename = "type")]
+    pub pin_type: InputPinType,
+    pub pull: String,
+    #[serde(default = "default_active_high")]
+    pub active_high: bool,
+    #[serde(default)]
+    pub debounce_ms: u16,
+    #[serde(default)]
+    pub event: Option<InputEventConfig>,
+    #[serde(default)]
+    pub report: Option<InputReportConfig>,
+    #[serde(default)]
+    pub calibration: Option<AnalogCalibrationConfig>,
+    #[serde(default = "default_adc_resolution")]
+    pub adc_resolution: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputPinType {
+    Digital,
+    Analog,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputEventConfig {
+    pub action: String,
+    #[serde(default)]
+    pub threshold_below: Option<f32>,
+    #[serde(default)]
+    pub threshold_above: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputReportConfig {
+    pub mode: String,
+    #[serde(default)]
+    pub trigger: Option<String>,
+    #[serde(default)]
+    pub threshold: Option<f32>,
+    #[serde(default)]
+    pub interval_ms: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalogCalibrationConfig {
+    #[serde(default)]
+    pub offset: f32,
+    #[serde(default = "default_scale")]
+    pub scale: f32,
+    #[serde(default)]
+    pub min_value: f32,
+    #[serde(default = "default_max_value")]
+    pub max_value: f32,
+}
+
+fn default_scale() -> f32 { 1.0 }
 
 pub fn parse_json_config(content: &str) -> Result<PrinterJsonConfig, String> {
     serde_json::from_str(content)

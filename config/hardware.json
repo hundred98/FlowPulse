@@ -78,5 +78,76 @@
         "max_flow_rate": 25
       }
     }
-  ]
+  ],
+  "gpio": {
+    "output": [
+      {
+        "name": "box_fan",
+        "pin": "PA8",
+        "type": "pwm",
+        "active_high": true,
+        "pwm_freq_hz": 100,
+        "default_value": 0.0,
+        "shutdown_value": 0.0,
+        "max_value": 1.0
+      },
+      {
+        "name": "chamber_led",
+        "pin": "!PA6",
+        "type": "digital",
+        "active_high": true,
+        "default_value": 0
+      }
+    ],
+    "input": [
+      {
+        "name": "filament_sensor",
+        "pin": "!PC5",
+        "type": "digital",
+        "pull": "up",
+        "active_high": false,
+        "debounce_ms": 50,
+        "event": {
+          "action": "filament_runout"
+        },
+        "report": {
+          "mode": "on_change",
+          "trigger": "rising"
+        }
+      },
+      {
+        "name": "door_sensor",
+        "pin": "PD0",
+        "type": "digital",
+        "pull": "up",
+        "active_high": false,
+        "report": {
+          "mode": "interval",
+          "interval_ms": 5000
+        }
+      },
+      {
+        "name": "power_monitor",
+        "pin": "PC2",
+        "type": "analog",
+        "pull": "none",
+        "adc_resolution": 12,
+        "calibration": {
+          "offset": 0.05,
+          "scale": 1.1,
+          "min_value": 0.0,
+          "max_value": 1.0
+        },
+        "event": {
+          "action": "power_loss",
+          "threshold_below": 0.1,
+          "threshold_above": 0.9
+        },
+        "report": {
+          "mode": "interval",
+          "interval_ms": 1000
+        }
+      }
+    ]
+  }
 }

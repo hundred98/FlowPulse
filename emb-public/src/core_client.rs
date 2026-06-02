@@ -494,6 +494,61 @@ impl CoreSocketClient {
             other => Err(format!("Unexpected response: {:?}", other)),
         }
     }
+
+    /// Load all config files from a directory (printer.json, motion.json, hardware.json).
+    pub async fn load_all_configs(&self, config_dir: &str) -> Result<(bool, bool, bool), String> {
+        match self.send_request(&CoreRequest::Config(ConfigRequest::LoadAllConfigs {
+            config_dir: config_dir.to_string(),
+        })).await? {
+            CoreResponse::Config(ConfigResponse::AllConfigsLoaded {
+                success: true,
+                printer_loaded,
+                motion_loaded,
+                hardware_loaded,
+                ..
+            }) => Ok((printer_loaded, motion_loaded, hardware_loaded)),
+            CoreResponse::Config(ConfigResponse::AllConfigsLoaded {
+                success: false,
+                error,
+                ..
+            }) => Err(error.unwrap_or_else(|| "Load all configs failed".to_string())),
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    // ========================================================================
+    // GPIO operations
+    // ========================================================================
+
+    /// Set GPIO pin value.
+    pub async fn gpio_set(&self, name: &str, value: f32) -> Result<bool, String> {
+        match self.send_request(&CoreRequest::Gpio(emb_api::GpioRequest::SetPin {
+            name: name.to_string(),
+            value,
+        })).await? {
+            CoreResponse::Gpio(emb_api::GpioResponse::SetPinResult { success, error }) => {
+                if success {
+                    Ok(true)
+                } else {
+                    Err(error.unwrap_or_else(|| "Set pin failed".to_string()))
+                }
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    /// Query GPIO pin value.
+    pub async fn gpio_query(&self, name: &str) -> Result<f32, String> {
+        match self.send_request(&CoreRequest::Gpio(emb_api::GpioRequest::QueryPin {
+            name: name.to_string(),
+        })).await? {
+            CoreResponse::Gpio(emb_api::GpioResponse::QueryPinResult { value, .. }) => Ok(value),
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
 }
 
 #[cfg(test)]

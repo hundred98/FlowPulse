@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPIO Debug Terminal</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
+        h1 { color: #00d4ff; margin-bottom: 20px; font-size: 24px; }
+        h2 { color: #00d4ff; margin: 15px 0 10px; font-size: 18px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .row { display: flex; gap: 20px; flex-wrap: wrap; }
+        .col { flex: 1; min-width: 300px; }
+        .card { background: #16213e; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+        .form-group { margin-bottom: 10px; }
+        label { display: block; margin-bottom: 5px; color: #888; font-size: 12px; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #333; border-radius: 4px; background: #0f0f23; color: #eee; font-size: 14px; }
+        input:focus, select:focus { outline: none; border-color: #00d4ff; }
+        button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 5px; margin-bottom: 5px; }
+        .btn-primary { background: #00d4ff; color: #000; }
+        .btn-primary:hover { background: #00a8cc; }
+        .btn-secondary { background: #333; color: #eee; }
+        .btn-secondary:hover { background: #444; }
+        .btn-danger { background: #e74c3c; color: #fff; }
+        .btn-danger:hover { background: #c0392b; }
+        .btn-success { background: #2ecc71; color: #000; }
+        .btn-success:hover { background: #27ae60; }
+        .log { background: #0f0f23; border-radius: 4px; padding: 10px; height: 300px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12px; }
+        .log-entry { padding: 2px 0; border-bottom: 1px solid #222; }
+        .log-time { color: #666; margin-right: 10px; }
+        .log-success { color: #2ecc71; }
+        .log-error { color: #e74c3c; }
+        .log-info { color: #3498db; }
+        .gpio-item { display: flex; align-items: center; justify-content: space-between; padding: 8px; background: #0f0f23; border-radius: 4px; margin-bottom: 5px; }
+        .gpio-name { font-weight: bold; color: #00d4ff; }
+        .gpio-value { color: #2ecc71; font-family: monospace; }
+        .slider { -webkit-appearance: none; width: 100%; height: 8px; border-radius: 4px; background: #333; outline: none; }
+        .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #00d4ff; cursor: pointer; }
+        .status { padding: 5px 10px; border-radius: 4px; font-size: 12px; display: inline-block; }
+        .status-connected { background: #2ecc71; color: #000; }
+        .status-disconnected { background: #e74c3c; color: #fff; }
+        .inline-form { display: flex; gap: 10px; align-items: flex-end; }
+        .inline-form .form-group { flex: 1; margin-bottom: 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 GPIO Debug Terminal</h1>
+        
+        <div class="row">
+            <div class="col">
+                <div class="card">
+                    <h2>🔌 Serial Connection</h2>
+                    <div id="connection-status" style="margin-bottom: 10px;">
+                        <span class="status status-disconnected" id="status-badge">Disconnected</span>
+                        <span id="status-port" style="margin-left: 10px; color: #888;"></span>
+                    </div>
+                    <div class="inline-form">
+                        <div class="form-group">
+                            <label>Port</label>
+                            <input type="text" id="serial-port" value="COM7" placeholder="COM7">
+                        </div>
+                        <div class="form-group" style="width: 120px;">
+                            <label>Baud Rate</label>
+                            <input type="number" id="serial-baud" value="57600">
+                        </div>
+                        <button class="btn-success" onclick="connectSerial()">Connect</button>
+                        <button class="btn-danger" onclick="disconnectSerial()">Disconnect</button>
+                        <button class="btn-primary" onclick="sendGpioConfig()" style="margin-left: 10px;">Send GPIO Config</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📤 GPIO Output Control</h2>
+                    <div class="form-group">
+                        <label>Pin Name</label>
+                        <input type="text" id="output-name" value="box_fan" placeholder="e.g. box_fan, led">
+                    </div>
+                    <div class="form-group">
+                        <label>Value (0.0 - 1.0)</label>
+                        <input type="range" id="output-value" class="slider" min="0" max="100" value="0" oninput="updateValueDisplay(this.value)">
+                        <span id="value-display">0.00</span>
+                    </div>
+                    <div class="form-group">
+                        <button class="btn-primary" onclick="setGpio()">Set Value</button>
+                        <button class="btn-secondary" onclick="setGpioValue(0)">OFF (0)</button>
+                        <button class="btn-secondary" onclick="setGpioValue(1)">ON (1)</button>
+                        <button class="btn-secondary" onclick="setGpioValue(0.5)">50%</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📥 GPIO Input Query</h2>
+                    <div class="form-group">
+                        <label>Pin Name</label>
+                        <input type="text" id="input-name" value="filament_sensor" placeholder="e.g. filament_sensor">
+                    </div>
+                    <div class="form-group">
+                        <button class="btn-primary" onclick="queryGpio()">Query Value</button>
+                    </div>
+                    <div id="input-result" class="gpio-item" style="display:none;">
+                        <span class="gpio-name" id="input-pin-name"></span>
+                        <span class="gpio-value" id="input-pin-value"></span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📋 Quick Commands</h2>
+                    <button class="btn-secondary" onclick="setGpioByName('box_fan', 0)">box_fan OFF</button>
+                    <button class="btn-secondary" onclick="setGpioByName('box_fan', 1)">box_fan ON</button>
+                    <button class="btn-secondary" onclick="queryGpioByName('filament_sensor')">Query filament_sensor</button>
+                </div>
+            </div>
+
+            <div class="col">
+                <div class="card">
+                    <h2>📜 Communication Log</h2>
+                    <button class="btn-danger" onclick="clearLog()" style="float:right;">Clear</button>
+                    <div id="log" class="log"></div>
+                </div>
+
+                <div class="card">
+                    <h2>📖 Help</h2>
+                    <p style="font-size:12px;color:#888;line-height:1.6;">
+                        <b>1. Connect Serial:</b> Click Connect button to establish serial connection.<br>
+                        <b>2. GPIO Output:</b> Use SET_PIN command to control output pins.<br>
+                        <b>3. GPIO Input:</b> Use QUERY_PIN to read input pin values.<br>
+                        <b>4. Value Range:</b> 0.0 (OFF) to 1.0 (ON).<br>
+                        <b>5. PWM:</b> Values between 0-1 control PWM duty cycle.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-time">${time}</span><span class="log-${type}">${message}</span>`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            log('Log cleared', 'info');
+        }
+
+        function updateStatus(connected, port) {
+            const badge = document.getElementById('status-badge');
+            const portSpan = document.getElementById('status-port');
+            
+            if (connected) {
+                badge.className = 'status status-connected';
+                badge.textContent = 'Connected';
+                portSpan.textContent = port || '';
+            } else {
+                badge.className = 'status status-disconnected';
+                badge.textContent = 'Disconnected';
+                portSpan.textContent = '';
+            }
+        }
+
+        async function checkStatus() {
+            try {
+                const response = await fetch('/debug/api/status');
+                const data = await response.json();
+                if (data.success) {
+                    updateStatus(data.data.serial_connected, data.data.serial_port);
+                }
+            } catch (e) {
+                log('Failed to check status: ' + e.message, 'error');
+            }
+        }
+
+        async function connectSerial() {
+            const port = document.getElementById('serial-port').value;
+            const baud = parseInt(document.getElementById('serial-baud').value);
+            
+            log(`Connecting to ${port} @ ${baud}...`, 'info');
+            
+            try {
+                const response = await fetch('/debug/api/serial/connect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ port, baud_rate: baud })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    log(`✓ Connected to ${port}`, 'success');
+                    updateStatus(true, port);
+                } else {
+                    log(`✗ Connect failed: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                log(`✗ Request failed: ${e.message}`, 'error');
+            }
+        }
+
+        async function disconnectSerial() {
+            log('Disconnecting...', 'info');
+            
+            try {
+                const response = await fetch('/debug/api/serial/disconnect', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    log('✓ Disconnected', 'success');
+                    updateStatus(false, null);
+                } else {
+                    log(`✗ Disconnect failed: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                log(`✗ Request failed: ${e.message}`, 'error');
+            }
+        }
+
+        async function sendGpioConfig() {
+            log('Sending GPIO config...', 'info');
+            try {
+                const response = await fetch('/debug/api/gpio/send_config', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (data.success) {
+                    log(`✓ GPIO config sent: ${data.data.output_count} output, ${data.data.input_count} input`, 'success');
+                } else {
+                    log(`✗ Error: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                log(`✗ Request failed: ${e.message}`, 'error');
+            }
+        }
+
+        function updateValueDisplay(value) {
+            const floatValue = (value / 100).toFixed(2);
+            document.getElementById('value-display').textContent = floatValue;
+        }
+
+        async function setGpio() {
+            const name = document.getElementById('output-name').value;
+            const value = (document.getElementById('output-value').value / 100).toFixed(2);
+            await setGpioByName(name, parseFloat(value));
+        }
+
+        async function setGpioValue(value) {
+            document.getElementById('output-value').value = value * 100;
+            updateValueDisplay(value * 100);
+            const name = document.getElementById('output-name').value;
+            await setGpioByName(name, value);
+        }
+
+        async function setGpioByName(name, value) {
+            log(`SET_PIN ${name} = ${value}`, 'info');
+            try {
+                const response = await fetch(`/debug/api/gpio/set?name=${encodeURIComponent(name)}&value=${value}`);
+                const data = await response.json();
+                if (data.success) {
+                    log(`✓ Success: ${name} = ${data.data.value}`, 'success');
+                } else {
+                    log(`✗ Error: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                log(`✗ Request failed: ${e.message}`, 'error');
+            }
+        }
+
+        async function queryGpio() {
+            const name = document.getElementById('input-name').value;
+            await queryGpioByName(name);
+        }
+
+        async function queryGpioByName(name) {
+            log(`QUERY_PIN ${name}`, 'info');
+            try {
+                const response = await fetch(`/debug/api/gpio/query?name=${encodeURIComponent(name)}`);
+                const data = await response.json();
+                if (data.success) {
+                    log(`✓ ${name} = ${data.data.value}`, 'success');
+                    document.getElementById('input-result').style.display = 'flex';
+                    document.getElementById('input-pin-name').textContent = data.data.name;
+                    document.getElementById('input-pin-value').textContent = data.data.value.toFixed(2);
+                } else {
+                    log(`✗ Error: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                log(`✗ Request failed: ${e.message}`, 'error');
+            }
+        }
+
+        log('Debug terminal initialized', 'info');
+        checkStatus();
+    </script>
+</body>
+</html>

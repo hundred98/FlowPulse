@@ -28,9 +28,101 @@ pub enum CoreRequest {
     /// Configuration management
     Config(ConfigRequest),
 
+    /// GPIO management
+    Gpio(GpioRequest),
+
     /// Query server status
     QueryStatus,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GpioRequest {
+    SetPin {
+        name: String,
+        value: f32,
+    },
+    QueryPin {
+        name: String,
+    },
+    SendGpioConfig {
+        output_pins: Vec<OutputGpioConfigApi>,
+        input_pins: Vec<InputGpioConfigApi>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputGpioConfigApi {
+    pub name: String,
+    pub pin: String,
+    #[serde(rename = "type")]
+    pub pin_type: String,
+    #[serde(default = "default_true")]
+    pub active_high: bool,
+    #[serde(default = "default_pwm_freq")]
+    pub pwm_freq_hz: u16,
+    #[serde(default)]
+    pub default_value: f32,
+    #[serde(default)]
+    pub shutdown_value: f32,
+    #[serde(default = "default_max_value")]
+    pub max_value: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputGpioConfigApi {
+    pub name: String,
+    pub pin: String,
+    #[serde(rename = "type")]
+    pub pin_type: String,
+    #[serde(default)]
+    pub pull: String,
+    #[serde(default = "default_true")]
+    pub active_high: bool,
+    #[serde(default)]
+    pub debounce_ms: u16,
+    #[serde(default)]
+    pub event: Option<InputEventConfigApi>,
+    #[serde(default)]
+    pub report: Option<InputReportConfigApi>,
+    #[serde(default)]
+    pub calibration: Option<AnalogCalibrationConfigApi>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputEventConfigApi {
+    #[serde(rename = "type")]
+    pub event_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputReportConfigApi {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub trigger: String,
+    #[serde(default)]
+    pub interval_ms: u16,
+    #[serde(default)]
+    pub threshold: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalogCalibrationConfigApi {
+    #[serde(default)]
+    pub offset: f32,
+    #[serde(default = "default_calib_scale")]
+    pub scale: f32,
+    #[serde(default)]
+    pub min_value: f32,
+    #[serde(default = "default_calib_max")]
+    pub max_value: f32,
+}
+
+fn default_true() -> bool { true }
+fn default_pwm_freq() -> u16 { 1000 }
+fn default_max_value() -> f32 { 1.0 }
+fn default_calib_scale() -> f32 { 1.0 }
+fn default_calib_max() -> f32 { 1.0 }
 
 /// Serial port related requests
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +227,11 @@ pub enum ConfigRequest {
         /// Motion config JSON
         motion_config_json: String,
     },
+    /// Load all configuration files from a directory
+    LoadAllConfigs {
+        /// Path to the config directory containing printer.json, motion.json, hardware.json
+        config_dir: String,
+    },
 }
 
 // ============================================================================
@@ -157,11 +254,35 @@ pub enum CoreResponse {
     /// Configuration response
     Config(ConfigResponse),
 
+    /// GPIO response
+    Gpio(GpioResponse),
+
     /// Status response
     Status(StatusResponse),
 
     /// Error response (used for all error cases)
     Error(ErrorInfo),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GpioResponse {
+    SetPinResult {
+        success: bool,
+        error: Option<String>,
+    },
+    QueryPinResult {
+        name: String,
+        value: f32,
+        success: bool,
+    },
+    PinReport {
+        name: String,
+        value: f32,
+    },
+    GpioConfigResult {
+        success: bool,
+        error: Option<String>,
+    },
 }
 
 /// Serial port related responses
@@ -309,6 +430,14 @@ pub enum ConfigResponse {
     /// Motion config update result
     MotionConfigUpdated {
         success: bool,
+        error: Option<String>,
+    },
+    /// All configs load result
+    AllConfigsLoaded {
+        success: bool,
+        printer_loaded: bool,
+        motion_loaded: bool,
+        hardware_loaded: bool,
         error: Option<String>,
     },
 }
