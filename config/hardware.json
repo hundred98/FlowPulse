@@ -93,7 +93,7 @@
       },
       {
         "name": "chamber_led",
-        "pin": "!PA6",
+        "pin": "PA6",
         "type": "digital",
         "active_high": true,
         "default_value": 0
@@ -102,10 +102,10 @@
     "input": [
       {
         "name": "filament_sensor",
-        "pin": "!PC5",
+        "pin": "PC5",
         "type": "digital",
         "pull": "up",
-        "active_high": false,
+        "active_high": true,
         "debounce_ms": 50,
         "event": {
           "action": "filament_runout"

@@ -146,6 +146,10 @@ async fn serial_connect(
         Ok(()) => {
             log::info!("Serial connected to {}", req.port);
             
+            // Wait for server to send GPIO config and ConfigComplete first
+            log::info!("Waiting for server to send GPIO config...");
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            
             let config_dir = std::env::current_dir()
                 .map(|p| p.join("config"))
                 .unwrap_or_else(|_| std::path::PathBuf::from("config"));
@@ -156,33 +160,31 @@ async fn serial_connect(
                     
                     let printer_config = config_adapter::build_printer_config(&configs);
                     let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
-                    log::info!("Sending {} config frames to device...", config_frames.len());
                     
-                    for frame_bytes in &config_frames {
-                        match state.core_client.serial_send_raw(frame_bytes).await {
-                            Ok(()) => log::debug!("Config frame sent: {} bytes", frame_bytes.len()),
-                            Err(e) => log::warn!("Failed to send config frame: {}", e),
+                    if config_frames.is_empty() {
+                        log::info!("No config frames to send (GPIO config sent by server)");
+                    } else {
+                        log::info!("Sending {} config frames to device...", config_frames.len());
+                        
+                        for frame_bytes in &config_frames {
+                            match state.core_client.serial_send_raw(frame_bytes).await {
+                                Ok(()) => log::debug!("Config frame sent: {} bytes", frame_bytes.len()),
+                                Err(e) => log::warn!("Failed to send config frame: {}", e),
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        
+                        log::info!("All config frames sent");
                     }
                     
-                    log::info!("All config frames sent, waiting 300ms before ConfigComplete...");
-                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                    
-                    match state.core_client.serial_config_complete().await {
-                        Ok(()) => log::info!("ConfigComplete sent"),
-                        Err(e) => log::warn!("ConfigComplete failed: {}", e),
-                    }
+                    // Wait for server's ConfigComplete to be processed
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     
                     match state.core_client.serial_init_seq().await {
                         Ok(()) => log::info!("Device seq initialized"),
                         Err(e) => log::warn!("Init seq failed: {}", e),
                     }
                     
-                    match state.core_client.serial_enter_special_mode().await {
-                        Ok(()) => log::info!("Entered special mode"),
-                        Err(e) => log::warn!("EnterSpecialMode failed: {}", e),
-                    }
                 }
                 Err(e) => log::warn!("Failed to load configs for serial init: {}", e),
             }
