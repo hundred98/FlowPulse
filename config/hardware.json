@@ -123,7 +123,7 @@
         "active_high": true,
         "report": {
           "mode": "interval",
-          "interval_ms": 5000
+          "interval_ms": 10000
         }
       },
       {
@@ -133,14 +133,14 @@
         "pull": "none",
         "adc_resolution": 12,
         "calibration": {
-          "offset": 0.05,
-          "scale": 1.1,
+          "offset": 0.0,
+          "scale": 1.0,
           "min_value": 0.0,
           "max_value": 1.0
         },
         "report": {
-          "mode": "interval",
-          "interval_ms": 5000,
+          "mode": "on_change",
+          "trigger": "falling",
           "event": {
             "action": "power_loss"
           }
