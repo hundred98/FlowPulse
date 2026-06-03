@@ -67,7 +67,6 @@
                         </div>
                         <button class="btn-success" onclick="connectSerial()">Connect</button>
                         <button class="btn-danger" onclick="disconnectSerial()">Disconnect</button>
-                        <button class="btn-primary" onclick="sendGpioConfig()" style="margin-left: 10px;">Send GPIO Config</button>
                     </div>
                 </div>
 
@@ -216,23 +215,6 @@
                     updateStatus(false, null);
                 } else {
                     log(`✗ Disconnect failed: ${data.error}`, 'error');
-                }
-            } catch (e) {
-                log(`✗ Request failed: ${e.message}`, 'error');
-            }
-        }
-
-        async function sendGpioConfig() {
-            log('Sending GPIO config...', 'info');
-            try {
-                const response = await fetch('/debug/api/gpio/send_config', {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                if (data.success) {
-                    log(`✓ GPIO config sent: ${data.data.output_count} output, ${data.data.input_count} input`, 'success');
-                } else {
-                    log(`✗ Error: ${data.error}`, 'error');
                 }
             } catch (e) {
                 log(`✗ Request failed: ${e.message}`, 'error');

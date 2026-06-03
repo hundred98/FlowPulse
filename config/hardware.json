@@ -117,10 +117,10 @@
       },
       {
         "name": "door_sensor",
-        "pin": "PD0",
+        "pin": "PA5",
         "type": "digital",
         "pull": "up",
-        "active_high": false,
+        "active_high": true,
         "report": {
           "mode": "interval",
           "interval_ms": 5000
@@ -128,7 +128,7 @@
       },
       {
         "name": "power_monitor",
-        "pin": "PC2",
+        "pin": "PC1",
         "type": "analog",
         "pull": "none",
         "adc_resolution": 12,
