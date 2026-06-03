@@ -186,8 +186,8 @@ final_value = clamp((raw_value + offset) * scale, min_value, max_value)
 | `mode` | string | ✓ | - | 上报模式：`on_change` 或 `interval` |
 | `threshold` | float | | `0.0` | 变化阈值（mode=on_change），变化超过此值才上报 |
 | `interval_ms` | u32 | | - | 定时间隔（mode=interval，必填） |
-| `threshold_below` | float | | - | 低于此值触发事件 |
-| `threshold_above` | float | | - | 高于此值触发事件 |
+| `threshold_below` | float | | - | 低于此值触发事件，与`mode`无关 |
+| `threshold_above` | float | | - | 高于此值触发事件，与`mode`无关 |
 | `event` | object | | - | 事件配置 |
 
 **注意**：`threshold` 和 `interval_ms` 由 `mode` 决定，互斥。

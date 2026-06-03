@@ -140,7 +140,7 @@
         },
         "report": {
           "mode": "on_change",
-          "trigger": "falling",
+          "threshold": 0.2,
           "event": {
             "action": "power_loss"
           }
