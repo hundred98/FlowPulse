@@ -107,12 +107,12 @@
         "pull": "up",
         "active_high": true,
         "debounce_ms": 50,
-        "event": {
-          "action": "filament_runout"
-        },
         "report": {
           "mode": "on_change",
-          "trigger": "rising"
+          "trigger": "rising",
+          "event": {
+            "action": "filament_runout"
+          }
         }
       },
       {
@@ -138,14 +138,14 @@
           "min_value": 0.0,
           "max_value": 1.0
         },
-        "event": {
-          "action": "power_loss",
-          "threshold_below": 0.1,
-          "threshold_above": 0.9
-        },
         "report": {
           "mode": "interval",
-          "interval_ms": 1000
+          "interval_ms": 1000,
+          "threshold_below": 0.1,
+          "threshold_above": 0.9,
+          "event": {
+            "action": "power_loss"
+          }
         }
       }
     ]

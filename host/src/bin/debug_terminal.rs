@@ -11,13 +11,14 @@
 use std::sync::Arc;
 use axum::{
     extract::State,
-    response::{Html, IntoResponse, Json},
+    response::{Html, IntoResponse, Json, sse::{Event, Sse}},
     routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use axum::http::Method;
+use tokio::sync::broadcast;
 
 use emb_public::{CoreSocketClient, ConfigFrameBuilder, config_adapter};
 
@@ -66,8 +67,16 @@ impl<T> ApiResponse<T> {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GpioReportEvent {
+    name: String,
+    value: f32,
+}
+
 struct DebugState {
     core_client: Arc<CoreSocketClient>,
+    /// GPIO Report事件广播通道
+    gpio_report_tx: broadcast::Sender<GpioReportEvent>,
 }
 
 fn create_debug_router(state: Arc<DebugState>) -> Router {
@@ -79,6 +88,7 @@ fn create_debug_router(state: Arc<DebugState>) -> Router {
         .route("/api/serial/disconnect", post(serial_disconnect))
         .route("/api/gpio/set", get(gpio_set))
         .route("/api/gpio/query", get(gpio_query))
+        .route("/api/gpio/report/stream", get(gpio_report_stream))
         .with_state(state)
 }
 
@@ -239,6 +249,29 @@ async fn gpio_query(
     }
 }
 
+/// GPIO Report SSE流
+async fn gpio_report_stream(
+    State(state): State<Arc<DebugState>>,
+) -> impl IntoResponse {
+    use std::convert::Infallible;
+    use tokio_stream::StreamExt;
+    
+    let rx = state.gpio_report_tx.subscribe();
+    
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
+        .filter_map(|result| {
+            match result {
+                Ok(event) => {
+                    let json = serde_json::to_string(&event).ok()?;
+                    Some(Ok::<Event, Infallible>(Event::default().data(json)))
+                }
+                Err(_) => None,
+            }
+        });
+    
+    Sse::new(stream)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -255,6 +288,9 @@ async fn main() -> anyhow::Result<()> {
 
     let core_client = Arc::new(CoreSocketClient::default_client(&core_addr));
     
+    // 创建GPIO Report广播通道
+    let (gpio_report_tx, _) = broadcast::channel(16);
+    
     match core_client.connect().await {
         Ok(()) => log::info!("Connected to core server"),
         Err(e) => {
@@ -262,6 +298,21 @@ async fn main() -> anyhow::Result<()> {
             log::error!("Make sure emb-core-server is running at {}", core_addr);
             std::process::exit(1);
         }
+    }
+    
+    // 设置GPIO Report回调
+    {
+        let tx = gpio_report_tx.clone();
+        core_client.set_gpio_report_callback(move |name, value| {
+            log::info!("GPIO Report: {} = {}", name, value);
+            let _ = tx.send(GpioReportEvent { name, value });
+        }).await;
+    }
+    
+    // 订阅GPIO Report
+    match core_client.gpio_subscribe_report(true).await {
+        Ok(()) => log::info!("Subscribed to GPIO Report"),
+        Err(e) => log::warn!("Failed to subscribe GPIO Report: {}", e),
     }
 
     // Load all configs
@@ -285,7 +336,10 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let state = Arc::new(DebugState { core_client });
+    let state = Arc::new(DebugState { 
+        core_client,
+        gpio_report_tx,
+    });
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

@@ -48,6 +48,11 @@ pub enum GpioRequest {
         output_pins: Vec<OutputGpioConfigApi>,
         input_pins: Vec<InputGpioConfigApi>,
     },
+    /// 订阅GPIO Report事件
+    SubscribeReport {
+        /// 是否启用订阅
+        enable: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +280,7 @@ pub enum GpioResponse {
         value: f32,
         success: bool,
     },
+    /// GPIO主动上报（服务端推送）
     PinReport {
         name: String,
         value: f32,
@@ -282,6 +288,27 @@ pub enum GpioResponse {
     GpioConfigResult {
         success: bool,
         error: Option<String>,
+    },
+    /// 订阅结果
+    SubscribeResult {
+        success: bool,
+        error: Option<String>,
+    },
+}
+
+/// GPIO事件（用于实时推送）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GpioEvent {
+    /// GPIO查询响应
+    Response {
+        name: String,
+        value: f32,
+        success: bool,
+    },
+    /// GPIO主动上报
+    Report {
+        name: String,
+        value: f32,
     },
 }
 

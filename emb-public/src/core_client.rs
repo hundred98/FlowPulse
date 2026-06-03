@@ -47,6 +47,8 @@ pub struct CoreSocketClient {
     config: CoreClientConfig,
     stream: RwLock<Option<TcpStream>>,
     read_buf: Mutex<Vec<u8>>,
+    /// GPIO Report回调（可选）
+    gpio_report_callback: RwLock<Option<Box<dyn Fn(String, f32) + Send + Sync>>>,
 }
 
 impl CoreSocketClient {
@@ -56,6 +58,7 @@ impl CoreSocketClient {
             config,
             stream: RwLock::new(None),
             read_buf: Mutex::new(Vec::new()),
+            gpio_report_callback: RwLock::new(None),
         }
     }
 
@@ -99,6 +102,21 @@ impl CoreSocketClient {
             let _ = stream.shutdown().await;
         }
         info!("Disconnected from core server");
+    }
+    
+    /// 设置GPIO Report回调
+    pub async fn set_gpio_report_callback<F>(&self, callback: F)
+    where
+        F: Fn(String, f32) + Send + Sync + 'static,
+    {
+        let mut guard = self.gpio_report_callback.write().await;
+        *guard = Some(Box::new(callback));
+    }
+    
+    /// 清除GPIO Report回调
+    pub async fn clear_gpio_report_callback(&self) {
+        let mut guard = self.gpio_report_callback.write().await;
+        *guard = None;
     }
 
     /// Check if connected.
@@ -162,6 +180,18 @@ impl CoreSocketClient {
                             // Consume the decoded portion
                             let consumed = buf_snapshot.len() - remaining.len();
                             buf.drain(..consumed);
+                            
+                            // 检查是否是GPIO Report推送
+                            if let CoreResponse::Gpio(emb_api::GpioResponse::PinReport { name, value }) = &response {
+                                // 触发回调
+                                let callback_guard = self.gpio_report_callback.read().await;
+                                if let Some(callback) = callback_guard.as_ref() {
+                                    callback(name.clone(), *value);
+                                }
+                                // 继续读取下一个消息
+                                continue;
+                            }
+                            
                             return Ok(response);
                         }
                         Err(e) => {
@@ -545,6 +575,21 @@ impl CoreSocketClient {
             name: name.to_string(),
         })).await? {
             CoreResponse::Gpio(emb_api::GpioResponse::QueryPinResult { value, .. }) => Ok(value),
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+    
+    /// 订阅GPIO Report事件
+    pub async fn gpio_subscribe_report(&self, enable: bool) -> Result<(), String> {
+        match self.send_request(&CoreRequest::Gpio(emb_api::GpioRequest::SubscribeReport { enable })).await? {
+            CoreResponse::Gpio(emb_api::GpioResponse::SubscribeResult { success, error }) => {
+                if success {
+                    Ok(())
+                } else {
+                    Err(error.unwrap_or_else(|| "Subscribe failed".to_string()))
+                }
+            }
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),
         }
