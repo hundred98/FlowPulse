@@ -140,9 +140,7 @@
         },
         "report": {
           "mode": "interval",
-          "interval_ms": 1000,
-          "threshold_below": 0.1,
-          "threshold_above": 0.9,
+          "interval_ms": 5000,
           "event": {
             "action": "power_loss"
           }

@@ -95,8 +95,11 @@ pub struct InputGpioConfigApi {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputEventConfigApi {
-    #[serde(rename = "type")]
-    pub event_type: String,
+    pub action: String,
+    #[serde(default)]
+    pub threshold_below: Option<f32>,
+    #[serde(default)]
+    pub threshold_above: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,11 +107,14 @@ pub struct InputReportConfigApi {
     #[serde(default)]
     pub mode: String,
     #[serde(default)]
-    pub trigger: String,
+    pub trigger: Option<String>,
     #[serde(default)]
-    pub interval_ms: u16,
+    pub interval_ms: Option<u16>,
     #[serde(default)]
-    pub threshold: f32,
+    pub threshold: Option<f32>,
+    /// 事件配置（可选）：收到Report后触发事件
+    #[serde(default)]
+    pub event: Option<InputEventConfigApi>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,6 +290,8 @@ pub enum GpioResponse {
     PinReport {
         name: String,
         value: f32,
+        /// 事件配置（从hardware.json中查找），客户端据此决定触发什么事件
+        event: Option<InputEventConfigApi>,
     },
     GpioConfigResult {
         success: bool,

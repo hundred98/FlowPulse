@@ -71,6 +71,8 @@ impl<T> ApiResponse<T> {
 struct GpioReportEvent {
     name: String,
     value: f32,
+    /// 事件动作（如 "filament_runout", "power_loss"），无事件时为 None
+    action: Option<String>,
 }
 
 struct DebugState {
@@ -155,6 +157,9 @@ async fn serial_connect(
     match state.core_client.serial_connect(&req.port, req.baud_rate).await {
         Ok(()) => {
             log::info!("Serial connected to {}", req.port);
+            
+            // 串口连接成功后订阅GPIO Report
+            subscribe_gpio_report(&state.core_client).await;
             
             // Wait for server to send GPIO config and ConfigComplete first
             log::info!("Waiting for server to send GPIO config...");
@@ -249,6 +254,14 @@ async fn gpio_query(
     }
 }
 
+/// 订阅GPIO Report（仅在串口连接后调用）
+async fn subscribe_gpio_report(core_client: &CoreSocketClient) {
+    match core_client.gpio_subscribe_report(true).await {
+        Ok(()) => log::info!("Subscribed to GPIO Report"),
+        Err(e) => log::warn!("Failed to subscribe GPIO Report: {}", e),
+    }
+}
+
 /// GPIO Report SSE流
 async fn gpio_report_stream(
     State(state): State<Arc<DebugState>>,
@@ -300,20 +313,37 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     
-    // 设置GPIO Report回调
+    // 设置GPIO Report回调（提前设置，实际订阅在串口连接后）
     {
         let tx = gpio_report_tx.clone();
-        core_client.set_gpio_report_callback(move |name, value| {
-            log::info!("GPIO Report: {} = {}", name, value);
-            let _ = tx.send(GpioReportEvent { name, value });
+        core_client.set_gpio_report_callback(move |name, value, event| {
+            let action = event.as_ref().map(|e| e.action.clone());
+            log::info!("GPIO Report: {} = {} (event: {:?})", name, value, action);
+
+            // 推送到SSE流（包含事件信息）
+            let _ = tx.send(GpioReportEvent { name, value, action: action.clone() });
+
+            // 根据事件action执行客户端处理逻辑
+            if let Some(ref event_config) = event {
+                match event_config.action.as_str() {
+                    "filament_runout" => {
+                        log::warn!("🔴 Filament runout detected! Client handling.");
+                        // TODO: 暂停打印、提示用户更换耗材
+                    }
+                    "power_loss" => {
+                        log::error!("⚡ Power loss detected! Client handling.");
+                        // TODO: 保存打印状态、通知断电
+                    }
+                    other => {
+                        log::info!("📢 GPIO event triggered: {}", other);
+                    }
+                }
+            }
         }).await;
     }
     
-    // 订阅GPIO Report
-    match core_client.gpio_subscribe_report(true).await {
-        Ok(()) => log::info!("Subscribed to GPIO Report"),
-        Err(e) => log::warn!("Failed to subscribe GPIO Report: {}", e),
-    }
+    // 注意：GPIO订阅需要在串口连接之后才能成功
+    // 将在 serial_connect 处理函数中订阅
 
     // Load all configs
     let config_dir = std::env::current_dir()
@@ -331,10 +361,23 @@ async fn main() -> anyhow::Result<()> {
     if let Some(port) = serial_port {
         log::info!("Auto-connecting serial: {} @ {}", port, baud_rate);
         match core_client.serial_connect(&port, baud_rate).await {
-            Ok(()) => log::info!("Serial connected to {}", port),
+            Ok(()) => {
+                log::info!("Serial connected to {}", port);
+                // 串口连接成功后订阅GPIO Report
+                subscribe_gpio_report(&core_client).await;
+            }
             Err(e) => log::error!("Serial connect failed: {}", e),
         }
     }
+
+    // 后台 pinger：每2秒 ping 一次，触发 read_response 消费 GPIO Report 推送
+    let ping_client = core_client.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let _ = ping_client.ping().await;
+        }
+    });
 
     let state = Arc::new(DebugState { 
         core_client,

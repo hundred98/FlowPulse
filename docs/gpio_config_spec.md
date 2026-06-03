@@ -76,12 +76,12 @@ SET_PIN PIN=chamber_led VALUE=0  ; 数字输出关闭
   "pull": "up",
   "active_high": false,
   "debounce_ms": 50,
-  "event": {
-    "action": "filament_runout"
-  },
   "report": {
     "mode": "on_change",
-    "trigger": "rising"
+    "trigger": "rising",
+    "event": {
+      "action": "filament_runout"
+    }
   }
 }
 ```
@@ -96,16 +96,7 @@ SET_PIN PIN=chamber_led VALUE=0  ; 数字输出关闭
 | `pull` | string | ✓ | - | 上下拉：`up` / `down` / `none` |
 | `active_high` | bool | | `true` | 高电平有效，定义物理电平到逻辑值的映射 |
 | `debounce_ms` | u16 | | `0` | 消抖时间（毫秒） |
-| `event` | object | | - | 事件配置，不配置则无事件回调 |
 | `report` | object | | - | 上报配置，不配置则不上报 |
-
-#### event 字段（可选）
-
-| 字段 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|:----:|--------|------|
-| `action` | string | ✓ | - | 动作类型：`filament_runout`, `power_loss` 等 |
-
-**触发逻辑**：当逻辑值变为 1（激活）时触发 `action`。
 
 #### report 字段（可选）
 
@@ -114,6 +105,15 @@ SET_PIN PIN=chamber_led VALUE=0  ; 数字输出关闭
 | `mode` | string | ✓ | - | 上报模式：`on_change` 或 `interval` |
 | `trigger` | string | | `both` | 触发条件（mode=on_change）：`rising` / `falling` / `both` |
 | `interval_ms` | u32 | | - | 定时间隔（mode=interval，必填） |
+| `event` | object | | - | 事件配置，不配置则无事件回调 |
+
+#### report.event 字段（可选）
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|:----:|--------|------|
+| `action` | string | ✓ | - | 动作类型：`filament_runout`, `power_loss` 等 |
+
+**触发逻辑**：当逻辑值变为 1（激活）时触发 `action`。
 
 #### 上报格式
 
@@ -141,14 +141,14 @@ SET_PIN PIN=chamber_led VALUE=0  ; 数字输出关闭
     "min_value": 0.0,
     "max_value": 1.0
   },
-  "event": {
-    "action": "power_loss",
-    "threshold_below": 0.1,
-    "threshold_above": 0.9
-  },
   "report": {
     "mode": "interval",
-    "interval_ms": 1000
+    "interval_ms": 1000,
+    "threshold_below": 0.1,
+    "threshold_above": 0.9,
+    "event": {
+      "action": "power_loss"
+    }
   }
 }
 ```
@@ -163,7 +163,6 @@ SET_PIN PIN=chamber_led VALUE=0  ; 数字输出关闭
 | `pull` | string | ✓ | - | 上下拉：`up` / `down` / `none` |
 | `adc_resolution` | u8 | | `12` | ADC 分辨率：8 / 10 / 12 |
 | `calibration` | object | | - | 校准参数 |
-| `event` | object | | - | 事件配置 |
 | `report` | object | | - | 上报配置 |
 
 #### calibration 字段（可选）
@@ -180,16 +179,6 @@ SET_PIN PIN=chamber_led VALUE=0  ; 数字输出关闭
 final_value = clamp((raw_value + offset) * scale, min_value, max_value)
 ```
 
-#### event 字段（可选）
-
-| 字段 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|:----:|--------|------|
-| `action` | string | ✓ | - | 动作类型 |
-| `threshold_below` | float | | - | 低于此值触发 |
-| `threshold_above` | float | | - | 高于此值触发 |
-
-**注意**：`threshold_below` 和 `threshold_above` 可同时配置。
-
 #### report 字段（可选）
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
@@ -197,8 +186,19 @@ final_value = clamp((raw_value + offset) * scale, min_value, max_value)
 | `mode` | string | ✓ | - | 上报模式：`on_change` 或 `interval` |
 | `threshold` | float | | `0.0` | 变化阈值（mode=on_change），变化超过此值才上报 |
 | `interval_ms` | u32 | | - | 定时间隔（mode=interval，必填） |
+| `threshold_below` | float | | - | 低于此值触发事件 |
+| `threshold_above` | float | | - | 高于此值触发事件 |
+| `event` | object | | - | 事件配置 |
 
 **注意**：`threshold` 和 `interval_ms` 由 `mode` 决定，互斥。
+
+#### report.event 字段（可选）
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|:----:|--------|------|
+| `action` | string | ✓ | - | 动作类型 |
+
+**注意**：`threshold_below` 和 `threshold_above` 可同时配置。
 
 #### 上报格式
 
@@ -262,12 +262,12 @@ Result: power_monitor=0.73
         "pull": "up",
         "active_high": false,
         "debounce_ms": 50,
-        "event": {
-          "action": "filament_runout"
-        },
         "report": {
           "mode": "on_change",
-          "trigger": "rising"
+          "trigger": "rising",
+          "event": {
+            "action": "filament_runout"
+          }
         }
       },
       {
@@ -293,14 +293,14 @@ Result: power_monitor=0.73
           "min_value": 0.0,
           "max_value": 1.0
         },
-        "event": {
-          "action": "power_loss",
-          "threshold_below": 0.1,
-          "threshold_above": 0.9
-        },
         "report": {
           "mode": "interval",
-          "interval_ms": 1000
+          "interval_ms": 1000,
+          "threshold_below": 0.1,
+          "threshold_above": 0.9,
+          "event": {
+            "action": "power_loss"
+          }
         }
       }
     ]
