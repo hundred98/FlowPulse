@@ -525,6 +525,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "emb-api",
  "emb-public",
  "env_logger",

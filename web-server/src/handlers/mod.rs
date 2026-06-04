@@ -7,3 +7,4 @@ pub mod files;
 pub mod temperature;
 pub mod config;
 pub mod websocket;
+pub mod auth;

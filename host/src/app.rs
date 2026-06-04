@@ -20,6 +20,7 @@ use emb_public::{
     
     // Event system
     SyncEventPublisher,
+    common::events::EventPublisher,  // Import EventPublisher trait
     
     // Multi-channel access
     ChannelManager, ChannelManagerConfig,
@@ -131,8 +132,23 @@ impl AppState {
     pub async fn initialize(&self) -> emb_public::EmbResult<()> {
         log::info!("Initializing application state...");
         
+        // Verify core client connection
+        log::info!("Verifying core client connection...");
+        if let Err(e) = self.core_client.ping().await {
+            log::warn!("Core client ping failed: {}, continuing anyway", e);
+        } else {
+            log::info!("Core client connection verified");
+        }
+        
         // Register message handlers
         self.register_handlers().await?;
+        
+        // Publish initialization event
+        let event = emb_public::common::events::PrinterEvent::info(
+            "app".to_string(),
+            "Application initialized".to_string(),
+        );
+        self.event_publisher.publish(event).await;
         
         log::info!("Application state initialized");
         Ok(())
@@ -185,6 +201,13 @@ impl AppState {
     pub async fn start_services(&self) -> emb_public::EmbResult<()> {
         log::info!("Starting background services...");
         
+        // Publish service starting event
+        let event = emb_public::common::events::PrinterEvent::info(
+            "app".to_string(),
+            "Starting all services".to_string(),
+        );
+        self.event_publisher.publish(event).await;
+        
         // Start device state synchronization loop
         let device_state_clone = self.device_state.clone();
         tokio::spawn(async move {
@@ -204,15 +227,30 @@ impl AppState {
         
         // Start status broadcast loop
         let channel_manager_clone = self.channel_manager.clone();
+        let event_publisher_clone = self.event_publisher.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 
                 if let Err(e) = channel_manager_clone.broadcast_status().await {
                     log::error!("Status broadcast error: {}", e);
+                    
+                    // Publish error event
+                    let error_event = emb_public::common::events::PrinterEvent::error(
+                        "status_broadcast".to_string(),
+                        format!("Status broadcast failed: {}", e),
+                    );
+                    event_publisher_clone.publish(error_event).await;
                 }
             }
         });
+        
+        // Publish service started event
+        let event = emb_public::common::events::PrinterEvent::info(
+            "app".to_string(),
+            "All services started".to_string(),
+        );
+        self.event_publisher.publish(event).await;
         
         log::info!("Background services started");
         Ok(())
@@ -222,10 +260,42 @@ impl AppState {
     pub async fn stop_services(&self) -> emb_public::EmbResult<()> {
         log::info!("Stopping services...");
         
+        // Publish service stopping event
+        let event = emb_public::common::events::PrinterEvent::info(
+            "app".to_string(),
+            "Stopping all services".to_string(),
+        );
+        self.event_publisher.publish(event).await;
+        
         self.channel_manager.stop_all().await?;
         self.message_queue.shutdown().await;
         
         log::info!("Services stopped");
         Ok(())
+    }
+    
+    /// Get core client
+    pub fn core_client(&self) -> &Arc<CoreSocketClient> {
+        &self.core_client
+    }
+    
+    /// Get event publisher
+    pub fn event_publisher(&self) -> &Arc<SyncEventPublisher> {
+        &self.event_publisher
+    }
+    
+    /// Get device state manager
+    pub fn device_state(&self) -> &Arc<DeviceStateManager> {
+        &self.device_state
+    }
+    
+    /// Get state machine
+    pub fn state_machine(&self) -> &Arc<StateMachine> {
+        &self.state_machine
+    }
+    
+    /// Get print controller
+    pub fn print_controller(&self) -> &Arc<PrintController> {
+        &self.print_controller
     }
 }

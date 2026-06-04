@@ -46,14 +46,20 @@ impl WebServer {
 
     /// Build the Axum router
     fn build_router(&self) -> Router {
+        use axum::middleware;
+        
         let mut router = Router::new()
-            // Health check
+            // Health check (no auth required)
             .route("/health", get(|| async { "OK" }))
             
-            // WebSocket route
+            // WebSocket route (no auth required for now)
             .route("/ws", get(handlers::websocket::ws_handler))
             
-            // API routes
+            // Authentication routes (no auth required)
+            .route("/api/v1/auth/login", post(handlers::auth::login))
+            .route("/api/v1/auth/validate", post(handlers::auth::validate_token))
+            
+            // API routes (protected by auth if enabled)
             .route("/api/v1/printer/status", get(handlers::printer::get_status))
             .route("/api/v1/printer/start", post(handlers::printer::start_print))
             .route("/api/v1/printer/pause", post(handlers::printer::pause_print))
@@ -72,6 +78,15 @@ impl WebServer {
             .route("/api/v1/config", get(handlers::config::get_config))
             
             .with_state(self.state.clone());
+
+        // Add authentication middleware if enabled
+        if self.state.config.enable_auth {
+            router = router.layer(middleware::from_fn_with_state(
+                self.state.clone(),
+                self::middleware::auth::auth_middleware,
+            ));
+            info!("JWT authentication middleware enabled");
+        }
 
         // Add CORS if enabled
         if self.state.config.enable_cors {
