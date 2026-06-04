@@ -1,11 +1,34 @@
+//! FlowPulse emb-public library
+//!
+//! This library provides the public interface for FlowPulse 3D printer control system.
+
 pub mod common;
 pub mod core_client;
 pub mod config_adapter;
 pub mod printer_config;
 pub mod config_protocol;
 
-pub use common::{EmbError, EmbResult};
+// State management modules
+pub mod state_machine;
+pub mod message_queue;
+pub mod print_control;
+pub mod gateway;
+pub mod state;  // New module (device_state, frontend_provider)
+pub mod safety;  // New module (safety controller)
+pub mod gcode;  // New module (gcode parser, reserved)
+
+// Re-export common types
+pub use common::{
+    EmbError, EmbResult,
+    PrinterEvent, EventKind, EventSeverity, EventListener,
+    EventPublisher, SyncEventPublisher,
+    WebSocketMessage, SharedState, PrinterStatus, TempStatus, PositionData,
+};
+
+// Re-export core client
 pub use core_client::{CoreSocketClient, CoreClientConfig};
+
+// Re-export config types
 pub use printer_config::{
     PrinterJsonConfig, PrinterParams, MotorParams, LimitSwitchParams,
     TemperatureParams, HeaterParams, FanParams, ProbeParams,
@@ -13,4 +36,40 @@ pub use printer_config::{
 };
 pub use config_protocol::{
     ConfigFrameBuilder, create_config_frames, validate_config,
+};
+
+// Re-export state machine types
+pub use state_machine::{
+    PrinterState, TransitionReason, StateTransition, StateMachineConfig,
+    StateMachine,
+};
+
+// Re-export message queue types
+pub use message_queue::{
+    Message, MessageType, MessagePriority, MessageStatus,
+    MessageQueueConfig, QueueStats, MessageHandler, MessageQueue,
+};
+
+// Re-export print control types
+pub use print_control::{
+    PrintController, PrintJob, PrintState, TemperaturePreset,
+};
+
+// Re-export gateway types
+pub use gateway::{
+    CommunicationGateway, CommunicationChannel,
+    ChannelType, ChannelStatus, ChannelConfig, ChannelStats, Direction,
+    SerialChannelStats,
+};
+
+// Re-export state types
+pub use state::{
+    DeviceStateManager, FrontendDataProvider, UnixSocketProvider,
+    EmbeddedDataProvider, WebDataProvider,
+};
+
+// Re-export safety types
+pub use safety::{
+    SafetyController, SafetyConfig, TemperatureLimit, MotionLimit,
+    SafetyCheckResult,
 };

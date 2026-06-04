@@ -18,5 +18,11 @@ log = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
+# Additional dependencies for state management
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+crossbeam = "0.8"
+async-trait = "0.1"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

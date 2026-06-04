@@ -31,6 +31,9 @@ pub enum EmbError {
     #[error("Configuration error: {0}")]
     Configuration(String),
     
+    #[error("Config error: {0}")]
+    Config(String),
+    
     #[error("Motion control error: {0}")]
     MotionControl(String),
     
@@ -42,6 +45,9 @@ pub enum EmbError {
     
     #[error("Hardware error: {0}")]
     Hardware(String),
+    
+    #[error("Safety error: {0}")]
+    Safety(String),
     
     #[error("Serial frame lost: seq={seq}, retries={retries}")]
     FrameLost { seq: u8, retries: u32 },
