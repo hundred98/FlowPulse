@@ -209,6 +209,16 @@ FlowPulse/
 │       ├── realtime_monitor/    # 实时监控
 │       └── ...
 │
+├── web-server/                  # MIT许可证 - Web服务器
+│   ├── src/
+│   │   ├── config/             # 配置管理
+│   │   ├── handlers/           # API处理
+│   │   ├── middleware/         # 中间件（认证等）
+│   │   └── routes/             # 路由定义
+│   └── config/                 # Web服务器配置文件
+│       ├── web-server.json     # 实际配置
+│       └── web-server.example.json # 配置模板
+│
 ├── emb-public/                  # MIT许可证 - 可复用核心模块
 │   └── src/
 │       ├── gcode/              # G-code解析器
@@ -221,7 +231,10 @@ FlowPulse/
 ├── releases/                    # 专有 - 预编译二进制
 │   └── Linux/emb-core-server
 │
-├── config/                      # 配置文件
+├── config/                      # 打印机硬件配置文件
+│   ├── hardware.json           # 硬件配置
+│   ├── motion.json             # 运动配置
+│   └── printer.json            # 打印机配置
 ├── gcodes/                      # 测试G-code文件
 ├── docs/                        # 文档
 └── Cargo.toml                   # Rust workspace
@@ -363,6 +376,28 @@ cargo build --release
 .\target\release\host.exe "gcodes/test-200.gcode"
 ```
 
+### 4. 配置 Web Server（可选）
+
+```bash
+# 编辑配置文件
+nano web-server/config/web-server.json
+
+# 配置示例（公网访问）
+{
+  "bind_address": "0.0.0.0",
+  "port": 8080,
+  "enable_auth": true,
+  "access_password": "your-secure-password"
+}
+
+# 启动服务
+./target/release/host.exe
+```
+
+**访问 Web 界面：**
+- 浏览器打开 `http://localhost:8080`
+- 输入密码登录（如果启用了认证）
+
 ### 4. 启动桌面UI
 
 ```bash
@@ -457,6 +492,7 @@ make -j4
 | G-code处理 | ✅ | 解析器开发者 |
 | 温度控制 | ✅ | 控制算法工程师 |
 | API开发 | ✅ | Web/后端开发者 |
+| Web Server | ✅ | Web开发者 |
 | 文档 | ✅ | 技术文档作者 |
 | 运动算法 | 🔒 | 需要商业授权 |
 | 流控 | 🔒 | 需要商业授权 |
@@ -491,6 +527,35 @@ emb-public/src/
 - **状态管理**: 健壮的状态机
 - **远程API**: HTTP + WebSocket接口
 - **配置**: JSON类型安全配置
+
+#### Web Server
+
+- **REST API**: 完整的打印机控制接口
+- **WebSocket**: 实时状态推送
+- **JWT认证**: 密码保护访问
+- **灵活配置**: 支持配置文件、环境变量
+
+**配置方式：**
+
+```bash
+# 方式1：配置文件（推荐）
+# 编辑 web-server/config/web-server.json
+{
+  "bind_address": "0.0.0.0",
+  "port": 8080,
+  "enable_auth": true,
+  "access_password": "your-password"
+}
+
+# 方式2：环境变量
+export FLOWPULSE_BIND_ADDRESS="0.0.0.0"
+export FLOWPULSE_ENABLE_AUTH="true"
+export FLOWPULSE_ACCESS_PASSWORD="your-password"
+```
+
+**访问方式：**
+- 本地网络：`http://192.168.x.x:8080`（可无密码）
+- 公网访问：`http://your-ip:8080`（需密码保护）
 
 #### 嵌入式固件
 
