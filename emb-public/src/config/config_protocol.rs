@@ -1,4 +1,4 @@
-use crate::printer_config::{PrinterJsonConfig, MotorParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams};
+use super::printer_config::{PrinterJsonConfig, MotorParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams};
 use crate::common::pin_parser::parse_pin;
 
 pub const FRAME_SOF: u8 = 0xAA;

@@ -4,9 +4,7 @@
 
 pub mod common;
 pub mod core_client;
-pub mod config_adapter;
-pub mod printer_config;
-pub mod config_protocol;
+pub mod config;
 
 // State management modules
 pub mod state_machine;
@@ -29,12 +27,12 @@ pub use common::{
 pub use core_client::{CoreSocketClient, CoreClientConfig};
 
 // Re-export config types
-pub use printer_config::{
+pub use config::{
     PrinterJsonConfig, PrinterParams, MotorParams, LimitSwitchParams,
     TemperatureParams, HeaterParams, FanParams, ProbeParams,
     load_config_from_file, parse_json_config,
-};
-pub use config_protocol::{
+    load_configs, build_motion_config_json, build_printer_config,
+    LoadedConfigs, HardwareConfig, MotionFileConfig, PrinterFileConfig,
     ConfigFrameBuilder, create_config_frames, validate_config,
 };
 

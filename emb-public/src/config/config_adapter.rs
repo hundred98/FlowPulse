@@ -16,7 +16,7 @@
 
 use serde::Deserialize;
 use std::collections::HashMap;
-use crate::printer_config as pc;
+use super::printer_config as pc;
 
 // ── hardware.json structures ──────────────────────────────────
 
