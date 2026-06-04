@@ -15,6 +15,7 @@ use axum::{
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use log::info;
+use emb_public::state::FrontendDataProvider;
 
 pub use config::WebServerConfig;
 
@@ -22,9 +23,8 @@ pub use config::WebServerConfig;
 pub struct WebServerState {
     /// Server configuration
     pub config: WebServerConfig,
-    // TODO: Add shared state components
-    // pub device_state: Arc<DeviceStateManager>,
-    // pub message_queue: Arc<MessageQueue>,
+    /// Frontend data provider
+    pub data_provider: Arc<dyn FrontendDataProvider>,
 }
 
 /// Web Server
@@ -35,9 +35,10 @@ pub struct WebServer {
 
 impl WebServer {
     /// Create a new web server
-    pub fn new(config: WebServerConfig) -> Self {
+    pub fn new(config: WebServerConfig, data_provider: Arc<dyn FrontendDataProvider>) -> Self {
         let state = Arc::new(WebServerState {
             config,
+            data_provider,
         });
         
         Self { state }
@@ -48,6 +49,9 @@ impl WebServer {
         let mut router = Router::new()
             // Health check
             .route("/health", get(|| async { "OK" }))
+            
+            // WebSocket route
+            .route("/ws", get(handlers::websocket::ws_handler))
             
             // API routes
             .route("/api/v1/printer/status", get(handlers::printer::get_status))
@@ -102,11 +106,15 @@ impl WebServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use emb_public::state::WebDataProvider;
+    use tokio::sync::broadcast;
 
     #[test]
     fn test_web_server_creation() {
         let config = WebServerConfig::default();
-        let server = WebServer::new(config);
+        let (tx, _rx) = broadcast::channel(16);
+        let provider = Arc::new(WebDataProvider::new(tx));
+        let server = WebServer::new(config, provider);
         assert_eq!(server.state.config.port, 8080);
     }
 }
@@ -120,8 +128,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration
     let config = WebServerConfig::default();
     
+    // Create data provider (using WebDataProvider for now)
+    let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel(16);
+    let data_provider = Arc::new(emb_public::state::WebDataProvider::new(broadcast_tx));
+    
     // Create and start web server
-    let server = WebServer::new(config);
+    let server = WebServer::new(config, data_provider);
     server.start().await?;
     
     Ok(())

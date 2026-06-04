@@ -45,16 +45,19 @@ pub struct ApiResponse<T> {
 
 /// Get printer status
 pub async fn get_status(
-    State(_state): State<Arc<WebServerState>>,
+    State(state): State<Arc<WebServerState>>,
 ) -> Result<Json<PrinterStatusResponse>, StatusCode> {
-    // TODO: Implement actual status retrieval from DeviceStateManager
+    // Use FrontendDataProvider to get status
+    let printer_status = state.data_provider.get_printer_status();
+    let position = state.data_provider.get_position();
+    
     let response = PrinterStatusResponse {
-        state: "Idle".to_string(),
+        state: printer_status.state,
         position: PositionData {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-            e: 0.0,
+            x: position.x,
+            y: position.y,
+            z: position.z,
+            e: position.e,
         },
         progress: None,
     };

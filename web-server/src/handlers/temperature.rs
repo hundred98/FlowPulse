@@ -23,15 +23,17 @@ pub struct TemperatureStatus {
 
 /// Get temperature status
 pub async fn get_temperature(
-    State(_state): State<Arc<WebServerState>>,
+    State(state): State<Arc<WebServerState>>,
 ) -> Result<Json<TemperatureStatus>, StatusCode> {
-    // TODO: Implement actual temperature retrieval
-    let temp = TemperatureStatus {
-        hotend_current: 25.0,
-        hotend_target: 0.0,
-        bed_current: 25.0,
-        bed_target: 0.0,
+    // Use FrontendDataProvider to get temperature
+    let temp = state.data_provider.get_temperature();
+    
+    let response = TemperatureStatus {
+        hotend_current: temp.hotend_current,
+        hotend_target: temp.hotend_target,
+        bed_current: temp.bed_current,
+        bed_target: temp.bed_target,
     };
     
-    Ok(Json(temp))
+    Ok(Json(response))
 }

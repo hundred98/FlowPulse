@@ -24,6 +24,8 @@ emb-public = { path = "../emb-public" }
 
 # Additional dependencies for web server
 chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"  # For WebSocket stream handling
+jsonwebtoken = "9.3"  # For JWT authentication
 
 [dev-dependencies]
 tokio-test = "0.4"
