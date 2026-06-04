@@ -283,11 +283,11 @@ impl MqttClient {
     /// Build MQTT topic string
     fn build_topic(&self, topic_type: MqttTopicType) -> String {
         let suffix = match topic_type {
-            MqttTopicType::Status => "status",
-            MqttTopicType::Command => "command",
-            MqttTopicType::Temperature => "temperature",
-            MqttTopicType::Position => "position",
-            MqttTopicType::Event => "event",
+            MqttTopicType::Status => "status".to_string(),
+            MqttTopicType::Command => "command".to_string(),
+            MqttTopicType::Temperature => "temperature".to_string(),
+            MqttTopicType::Position => "position".to_string(),
+            MqttTopicType::Event => "event".to_string(),
             MqttTopicType::Custom(s) => s,
         };
         
