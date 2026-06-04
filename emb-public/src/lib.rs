@@ -64,7 +64,8 @@ pub use gateway::{
 
 // Re-export state types
 pub use state::{
-    DeviceStateManager, FrontendDataProvider, UnixSocketProvider,
+    DeviceStateManager, DeviceStateConfig, Position, MotionStatus, FlowStatus,
+    DeviceStateSnapshot, FrontendDataProvider, UnixSocketProvider,
     EmbeddedDataProvider, WebDataProvider,
 };
 
@@ -72,4 +73,9 @@ pub use state::{
 pub use safety::{
     SafetyController, SafetyConfig, TemperatureLimit, MotionLimit,
     SafetyCheckResult,
+};
+
+// Re-export message queue handlers
+pub use message_queue::{
+    CommandHandler, StatusHandler, ErrorHandler,
 };

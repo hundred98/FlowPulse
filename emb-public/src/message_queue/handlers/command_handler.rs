@@ -4,7 +4,7 @@ use crate::{EmbResult, EmbError};
 use crate::state::{DeviceStateManager, Position};
 use crate::state_machine::{StateMachine, PrinterState, TransitionReason};
 use crate::print_control::PrintController;
-use super::{MessageHandler, Message, MessageType};
+use crate::message_queue::{MessageHandler, Message, MessageType};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -47,13 +47,16 @@ impl CommandHandler {
             TransitionReason::UserRequest,
         )?;
         
+        // Load print job file
+        self.print_controller.load_file(file_path).await?;
+        
         // Start print job
         self.print_controller.start().await?;
         
         // Request state transition to Printing
         self.state_machine.transition_to(
             PrinterState::Printing,
-            TransitionReason::PrintStarted,
+            TransitionReason::OperationComplete,
         )?;
         
         log::info!("Print started: {}", file_path);

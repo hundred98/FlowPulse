@@ -4,7 +4,7 @@ use crate::{EmbResult, EmbError};
 use crate::state::{DeviceStateManager, MotionStatus};
 use crate::state_machine::{StateMachine, PrinterState};
 use crate::print_control::PrintController;
-use super::{MessageHandler, Message, MessageType};
+use crate::message_queue::{MessageHandler, Message, MessageType};
 use async_trait::async_trait;
 use std::sync::Arc;
 use serde_json::json;

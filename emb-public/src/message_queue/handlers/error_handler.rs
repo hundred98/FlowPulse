@@ -3,7 +3,7 @@
 use crate::{EmbResult, EmbError};
 use crate::safety::SafetyController;
 use crate::state_machine::{StateMachine, PrinterState, TransitionReason};
-use super::{MessageHandler, Message, MessageType, MessageStatus};
+use crate::message_queue::{MessageHandler, Message, MessageType, MessageStatus};
 use async_trait::async_trait;
 use std::sync::Arc;
 use chrono::Utc;
@@ -54,7 +54,7 @@ impl ErrorHandler {
             // Transition to Error state
             self.state_machine.transition_to(
                 PrinterState::Error,
-                TransitionReason::ErrorOccurred,
+                TransitionReason::Error(error_message.to_string()),
             )?;
             
             log::warn!("Emergency stop triggered due to critical error");
@@ -93,7 +93,7 @@ impl ErrorHandler {
             // Transition to Error state
             self.state_machine.transition_to(
                 PrinterState::Error,
-                TransitionReason::ErrorOccurred,
+                TransitionReason::Error(format!("Hardware error: {} (code: {})", component, error_code)),
             )?;
         }
         
