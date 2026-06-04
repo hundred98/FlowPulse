@@ -8,7 +8,7 @@ use crate::state::DeviceStateManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use log::{info, warn, error};
+use log::info;
 use std::path::PathBuf;
 
 /// UnixSocket server configuration
@@ -104,13 +104,14 @@ impl UnixSocketServer {
         message_queue: Arc<MessageQueue>,
         device_state: Arc<DeviceStateManager>,
     ) -> Self {
+        let socket_path = config.socket_path.clone();
         Self {
             config,
             message_queue,
             device_state,
             connections: Arc::new(RwLock::new(Vec::new())),
             status: Arc::new(RwLock::new(UnixSocketStatus {
-                socket_path: config.socket_path.clone(),
+                socket_path,
                 ..Default::default()
             })),
         }

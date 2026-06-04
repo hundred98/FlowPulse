@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use std::fmt;
 
 /// Event kinds that can occur in the printer system
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,6 +35,38 @@ pub enum EventKind {
     Debug,
 }
 
+impl fmt::Display for EventKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EventKind::StateChanged => write!(f, "StateChanged"),
+            EventKind::StateTransitionRequested => write!(f, "StateTransitionRequested"),
+            EventKind::StateTransitionFailed => write!(f, "StateTransitionFailed"),
+            EventKind::PrintStarted => write!(f, "PrintStarted"),
+            EventKind::PrintPaused => write!(f, "PrintPaused"),
+            EventKind::PrintResumed => write!(f, "PrintResumed"),
+            EventKind::PrintCompleted => write!(f, "PrintCompleted"),
+            EventKind::PrintCancelled => write!(f, "PrintCancelled"),
+            EventKind::PrintFailed => write!(f, "PrintFailed"),
+            EventKind::TemperatureUpdate => write!(f, "TemperatureUpdate"),
+            EventKind::PositionUpdate => write!(f, "PositionUpdate"),
+            EventKind::LimitSwitchTriggered => write!(f, "LimitSwitchTriggered"),
+            EventKind::MotorError => write!(f, "MotorError"),
+            EventKind::MessageReceived => write!(f, "MessageReceived"),
+            EventKind::MessageSent => write!(f, "MessageSent"),
+            EventKind::ConnectionEstablished => write!(f, "ConnectionEstablished"),
+            EventKind::ConnectionLost => write!(f, "ConnectionLost"),
+            EventKind::DdsPublisherCreated => write!(f, "DdsPublisherCreated"),
+            EventKind::DdsSubscriptionCreated => write!(f, "DdsSubscriptionCreated"),
+            EventKind::DdsMessagePublished => write!(f, "DdsMessagePublished"),
+            EventKind::DdsMessageReceived => write!(f, "DdsMessageReceived"),
+            EventKind::Error => write!(f, "Error"),
+            EventKind::Warning => write!(f, "Warning"),
+            EventKind::Info => write!(f, "Info"),
+            EventKind::Debug => write!(f, "Debug"),
+        }
+    }
+}
+
 /// Event severity levels
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EventSeverity {
@@ -42,6 +75,18 @@ pub enum EventSeverity {
     Warning,
     Error,
     Critical,
+}
+
+impl fmt::Display for EventSeverity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EventSeverity::Debug => write!(f, "Debug"),
+            EventSeverity::Info => write!(f, "Info"),
+            EventSeverity::Warning => write!(f, "Warning"),
+            EventSeverity::Error => write!(f, "Error"),
+            EventSeverity::Critical => write!(f, "Critical"),
+        }
+    }
 }
 
 /// A printer event with metadata

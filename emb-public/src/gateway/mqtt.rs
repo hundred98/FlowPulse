@@ -8,7 +8,7 @@ use crate::state::DeviceStateManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use log::{info, warn, error};
+use log::info;
 
 /// MQTT client configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,15 +3,15 @@
 //! Manages all communication channels (WebSocket, UnixSocket, MQTT) and provides
 //! a unified interface for message routing and state synchronization.
 
-use crate::{EmbResult, EmbError};
+use crate::{EmbResult};
 use crate::message_queue::{Message, MessageQueue};
 use crate::state::DeviceStateManager;
-use crate::common::{WebSocketMessage, EventPublisher, SyncEventPublisher, PrinterEvent, EventKind};
+use crate::common::{WebSocketMessage, SyncEventPublisher, PrinterEvent};
 use super::{WebSocketServer, WebSocketConfig, UnixSocketServer, UnixSocketConfig, MqttClient, MqttConfig};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use log::{info, warn, error};
+use log::{info, warn};
 
 /// Channel manager configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,24 +293,13 @@ impl ChannelManager {
     }
     
     /// Convert queue message to WebSocket message
-    fn convert_to_websocket_message(&self, msg: Message) -> EmbResult<WebSocketMessage> {
+    fn convert_to_websocket_message(&self, _msg: Message) -> EmbResult<WebSocketMessage> {
         // TODO: Implement proper conversion based on message type
         
-        Ok(WebSocketMessage::Status(crate::common::PrinterStatus {
-            position: crate::common::PositionData {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-                e: 0.0,
-            },
-            temperatures: crate::common::TempStatus {
-                hotend: 0.0,
-                bed: 0.0,
-                chamber: 0.0,
-            },
-            state: "idle".to_string(),
-            print_progress: 0.0,
-        }))
+        Ok(WebSocketMessage::State {
+            from: "unknown".to_string(),
+            to: "unknown".to_string(),
+        })
     }
     
     /// Get manager status

@@ -5,11 +5,11 @@
 use crate::{EmbResult, EmbError};
 use crate::message_queue::{Message, MessageType, MessageQueue};
 use crate::state::DeviceStateManager;
-use crate::common::{WebSocketMessage, PrinterStatus};
+use crate::common::WebSocketMessage;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use log::{info, warn, error};
+use log::info;
 
 /// WebSocket server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,7 +147,7 @@ impl WebSocketServer {
     }
     
     /// Send message to WebSocket clients
-    pub async fn send_to_clients(&self, msg: WebSocketMessage) -> EmbResult<()> {
+    pub async fn send_to_clients(&self, _msg: WebSocketMessage) -> EmbResult<()> {
         // TODO: Implement actual message sending to WebSocket clients
         
         // Update statistics
@@ -163,25 +163,25 @@ impl WebSocketServer {
         let position = self.device_state.get_position().await;
         let temperatures = self.device_state.get_temperatures().await;
         
-        // Create status message
-        let status_msg = WebSocketMessage::Status(PrinterStatus {
-            position: crate::common::PositionData {
-                x: position.x,
-                y: position.y,
-                z: position.z,
-                e: position.e,
-            },
-            temperatures: crate::common::TempStatus {
-                hotend: temperatures.get("hotend").unwrap_or(0.0),
-                bed: temperatures.get("bed").unwrap_or(0.0),
-                chamber: temperatures.get("chamber").unwrap_or(0.0),
-            },
-            state: "idle".to_string(),
-            print_progress: 0.0,
-        });
+        // Create temperature message
+        let temp_msg = WebSocketMessage::Temperature {
+            hotend_current: temperatures.get("hotend").unwrap_or(&0.0),
+            hotend_target: temperatures.get("hotend_target").unwrap_or(&0.0),
+            bed_current: temperatures.get("bed").unwrap_or(&0.0),
+            bed_target: temperatures.get("bed_target").unwrap_or(&0.0),
+        };
+        
+        // Create position message
+        let pos_msg = WebSocketMessage::Position {
+            x: position.x,
+            y: position.y,
+            z: position.z,
+            e: position.e,
+        };
         
         // Broadcast to all clients
-        self.send_to_clients(status_msg).await?;
+        self.send_to_clients(temp_msg).await?;
+        self.send_to_clients(pos_msg).await?;
         
         Ok(())
     }
@@ -189,41 +189,50 @@ impl WebSocketServer {
     /// Convert WebSocket message to queue message
     fn convert_websocket_message(&self, msg: WebSocketMessage) -> EmbResult<Message> {
         match msg {
-            WebSocketMessage::Command(cmd) => {
-                let msg_type = match cmd.command.as_str() {
+            WebSocketMessage::PrintEvent { event, message } => {
+                let msg_type = match event.as_str() {
                     "start" => MessageType::PrintStart,
                     "pause" => MessageType::PrintPause,
                     "resume" => MessageType::PrintResume,
                     "stop" => MessageType::PrintStop,
-                    "home" => MessageType::HomeCommand,
-                    "move" => MessageType::MoveCommand,
-                    "temp" => MessageType::TemperatureSet,
-                    _ => MessageType::Custom(cmd.command.clone()),
+                    _ => MessageType::Custom(event.clone()),
                 };
                 
                 Ok(Message::new(
                     msg_type,
                     "websocket".to_string(),
-                    cmd.params,
+                    serde_json::json!({
+                        "message": message,
+                    }),
                 ))
             },
-            WebSocketMessage::Status(_) => {
+            WebSocketMessage::State { from, to } => {
                 Ok(Message::new(
                     MessageType::StateQuery,
                     "websocket".to_string(),
-                    serde_json::json!({}),
+                    serde_json::json!({
+                        "from": from,
+                        "to": to,
+                    }),
                 ))
             },
-            WebSocketMessage::Error(err) => {
+            WebSocketMessage::Alert { severity, message } => {
                 Ok(Message::new(
                     MessageType::PrintError,
                     "websocket".to_string(),
                     serde_json::json!({
-                        "error": err.message,
-                        "severity": err.severity,
+                        "severity": severity,
+                        "message": message,
                     }),
                 ))
             },
+            _ => {
+                Ok(Message::new(
+                    MessageType::Custom("unknown".to_string()),
+                    "websocket".to_string(),
+                    serde_json::json!({}),
+                ))
+            }
         }
     }
     

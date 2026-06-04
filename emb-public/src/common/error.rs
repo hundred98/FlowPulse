@@ -16,6 +16,9 @@ pub enum EmbError {
     #[error("Communication error: {0}")]
     Communication(String),
     
+    #[error("Gateway error: {0}")]
+    Gateway(String),
+    
     #[error("Protocol error: {0}")]
     Protocol(String),
     

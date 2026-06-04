@@ -1,8 +1,8 @@
 //! Status handler for querying printer status
 
 use crate::{EmbResult, EmbError};
-use crate::state::{DeviceStateManager, MotionStatus};
-use crate::state_machine::{StateMachine, PrinterState};
+use crate::state::DeviceStateManager;
+use crate::state_machine::StateMachine;
 use crate::print_control::PrintController;
 use crate::message_queue::{MessageHandler, Message, MessageType};
 use async_trait::async_trait;
