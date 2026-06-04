@@ -17,7 +17,9 @@ pub struct WebServerConfig {
     pub enable_cors: bool,
     /// Enable authentication
     pub enable_auth: bool,
-    /// JWT secret (optional)
+    /// Access password (simple password protection, no username required)
+    pub access_password: Option<String>,
+    /// JWT secret (optional, auto-generated if not provided)
     pub jwt_secret: Option<String>,
     /// Request timeout in seconds
     pub request_timeout_secs: u64,
@@ -35,6 +37,7 @@ impl Default for WebServerConfig {
             max_connections: 5, // Limit for embedded Linux
             enable_cors: true,
             enable_auth: false,
+            access_password: None,
             jwt_secret: None,
             request_timeout_secs: 30,
             serve_static_files: false,
@@ -57,6 +60,7 @@ impl WebServerConfig {
             max_connections: 10,
             enable_cors: true,
             enable_auth: false,
+            access_password: None,
             jwt_secret: None,
             request_timeout_secs: 60,
             serve_static_files: true,
@@ -71,11 +75,22 @@ impl WebServerConfig {
             port: 8080,
             max_connections: 5, // Strict limit for embedded Linux
             enable_cors: false,
-            enable_auth: true,
+            enable_auth: false, // Default to no auth for local network
+            access_password: None,
             jwt_secret: Some("change-this-secret".to_string()),
             request_timeout_secs: 30,
             serve_static_files: false,
             static_files_dir: None,
+        }
+    }
+
+    /// Create configuration with simple password protection
+    pub fn with_password(password: &str) -> Self {
+        Self {
+            enable_auth: true,
+            access_password: Some(password.to_string()),
+            jwt_secret: Some(uuid::Uuid::new_v4().to_string()), // Auto-generate secret
+            ..Self::default()
         }
     }
 
@@ -84,8 +99,82 @@ impl WebServerConfig {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config file: {}", e))?;
         
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))
+        let mut config: Self = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse config: {}", e))?;
+        
+        // Auto-generate JWT secret if not provided
+        if config.jwt_secret.is_none() {
+            config.jwt_secret = Some(uuid::Uuid::new_v4().to_string());
+        }
+        
+        Ok(config)
+    }
+
+    /// Load configuration from environment variables
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+        
+        // BIND_ADDRESS
+        if let Ok(addr) = std::env::var("FLOWPULSE_BIND_ADDRESS") {
+            config.bind_address = addr;
+        }
+        
+        // PORT
+        if let Ok(port) = std::env::var("FLOWPULSE_PORT") {
+            if let Ok(p) = port.parse() {
+                config.port = p;
+            }
+        }
+        
+        // ENABLE_AUTH
+        if let Ok(auth) = std::env::var("FLOWPULSE_ENABLE_AUTH") {
+            config.enable_auth = auth == "true" || auth == "1";
+        }
+        
+        // ACCESS_PASSWORD
+        if let Ok(password) = std::env::var("FLOWPULSE_ACCESS_PASSWORD") {
+            config.access_password = Some(password);
+            config.enable_auth = true;
+        }
+        
+        // JWT_SECRET
+        if let Ok(secret) = std::env::var("FLOWPULSE_JWT_SECRET") {
+            config.jwt_secret = Some(secret);
+        }
+        
+        // Auto-generate JWT secret if auth enabled but no secret
+        if config.enable_auth && config.jwt_secret.is_none() {
+            config.jwt_secret = Some(uuid::Uuid::new_v4().to_string());
+        }
+        
+        config
+    }
+
+    /// Load configuration with priority: file > env > default
+    pub fn load(config_path: Option<&str>) -> Result<Self, String> {
+        // Try to load from file first
+        if let Some(path) = config_path {
+            if std::path::Path::new(path).exists() {
+                log::info!("Loading config from file: {}", path);
+                return Self::from_file(path);
+            } else {
+                log::warn!("Config file not found: {}, using defaults", path);
+            }
+        }
+        
+        // Try environment variables
+        let has_env = std::env::var("FLOWPULSE_BIND_ADDRESS").is_ok() ||
+                      std::env::var("FLOWPULSE_PORT").is_ok() ||
+                      std::env::var("FLOWPULSE_ACCESS_PASSWORD").is_ok();
+        
+        if has_env {
+            log::info!("Loading config from environment variables");
+            return Ok(Self::from_env());
+        }
+        
+        // Use default
+        log::info!("Using default config");
+        Ok(Self::default())
     }
 
     /// Get the server address

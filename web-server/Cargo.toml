@@ -26,6 +26,7 @@ emb-public = { path = "../emb-public" }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"  # For WebSocket stream handling
 jsonwebtoken = "9.3"  # For JWT authentication
+uuid = { version = "1.0", features = ["v4"] }  # For generating JWT secrets
 
 [dev-dependencies]
 tokio-test = "0.4"

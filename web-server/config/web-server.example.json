@@ -1,0 +1,33 @@
+{
+  "_comment": "FlowPulse Web Server Configuration",
+  
+  "bind_address": "0.0.0.0",
+  "_bind_address_comment": "0.0.0.0 for public access, 127.0.0.1 for local only",
+  
+  "port": 8080,
+  "_port_comment": "Web server port (default: 8080)",
+  
+  "max_connections": 5,
+  "_max_connections_comment": "Maximum concurrent connections (5 for embedded Linux, 10+ for desktop)",
+  
+  "enable_cors": false,
+  "_enable_cors_comment": "Enable CORS for development (false for production)",
+  
+  "enable_auth": true,
+  "_enable_auth_comment": "Enable password protection (true for public access, false for local network)",
+  
+  "access_password": "change-me",
+  "_access_password_comment": "Password for web access (change this!)",
+  
+  "jwt_secret": null,
+  "_jwt_secret_comment": "JWT secret key (null = auto-generate, or set your own)",
+  
+  "request_timeout_secs": 30,
+  "_request_timeout_comment": "Request timeout in seconds",
+  
+  "serve_static_files": false,
+  "_serve_static_files_comment": "Serve static files from disk (false = use embedded files)",
+  
+  "static_files_dir": null,
+  "_static_files_dir_comment": "Static files directory (null = use embedded, or './web/dist' for dev)"
+}

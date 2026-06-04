@@ -15,9 +15,7 @@ use crate::{WebServerState, middleware::auth};
 /// Login request
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
-    /// User ID
-    pub user_id: String,
-    /// Password (for future use)
+    /// Access password (simple password protection)
     pub password: String,
 }
 
@@ -32,11 +30,45 @@ pub struct LoginResponse {
     pub expires_in: i64,
 }
 
-/// Login handler - generate JWT token
+/// Login handler - validate password and generate JWT token
 pub async fn login(
     State(state): State<Arc<WebServerState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
+    // Check if authentication is enabled
+    if !state.config.enable_auth {
+        // If auth is disabled, still generate a token for consistency
+        let secret = state.config.jwt_secret.as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("default-secret");
+        
+        let expires_in_hours = 24;
+        let token = auth::generate_token("user", secret, expires_in_hours)
+            .map_err(|e| {
+                log::error!("Failed to generate token: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        
+        return Ok(Json(LoginResponse {
+            token,
+            token_type: "Bearer".to_string(),
+            expires_in: expires_in_hours * 3600,
+        }));
+    }
+    
+    // Get expected password
+    let expected_password = state.config.access_password.as_ref()
+        .ok_or_else(|| {
+            log::error!("Access password not configured");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    
+    // Validate password
+    if req.password != *expected_password {
+        log::warn!("Invalid password attempt");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    
     // Get JWT secret
     let secret = state.config.jwt_secret.as_ref()
         .ok_or_else(|| {
@@ -46,11 +78,13 @@ pub async fn login(
     
     // Generate token (expires in 24 hours)
     let expires_in_hours = 24;
-    let token = auth::generate_token(&req.user_id, secret, expires_in_hours)
+    let token = auth::generate_token("user", secret, expires_in_hours)
         .map_err(|e| {
             log::error!("Failed to generate token: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+    
+    log::info!("User logged in successfully");
     
     Ok(Json(LoginResponse {
         token,
