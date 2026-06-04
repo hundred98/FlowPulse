@@ -5,6 +5,7 @@
 pub mod types;
 pub mod handler;
 pub mod queue;
+pub mod handlers;
 
 pub use types::{
     Message, MessageType, MessagePriority, MessageStatus,
@@ -12,6 +13,9 @@ pub use types::{
 };
 pub use handler::MessageHandler;
 pub use queue::MessageQueue;
+pub use handlers::{
+    CommandHandler, StatusHandler, ErrorHandler,
+};
 
 #[cfg(test)]
 mod tests {
