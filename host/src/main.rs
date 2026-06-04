@@ -1,6 +1,7 @@
 //! Host Application V2
 //!
 //! Socket-based host that connects to emb-core-server via TCP.
+//! Integrates state management, message queue, and multi-channel access.
 //! Loads config files, prints G-code files.
 //! All motion planning + segment dispatch is handled by emb-core-server.
 
@@ -8,6 +9,7 @@ mod printer_host_v2;
 mod app;
 
 use printer_host_v2::{PrinterHostV2, HostV2Config};
+use app::AppState;
 use emb_public::config_adapter;
 use emb_public::config_protocol::ConfigFrameBuilder;
 use std::env;
@@ -136,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
     
     // Parse flags first
     let query_stats = args.iter().any(|a| a == "--stats" || a == "-s");
+    let enable_services = args.iter().any(|a| a == "--services");
     
     // Parse positional arguments (skip flags)
     let positional_args: Vec<&str> = args.iter()
@@ -152,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
     log::info!("Server: {}", server_addr);
     log::info!("Config: {}", config_dir);
     log::info!("Query stats: {}", query_stats);
+    log::info!("Enable services: {}", enable_services);
 
     // Load config files (hardware.json + motion.json + printer.json)
     let configs = config_adapter::load_configs(config_dir)
@@ -186,6 +190,21 @@ async fn main() -> anyhow::Result<()> {
             log::error!("TCP connection failed: {}", e);
             std::process::exit(1);
         }
+    }
+
+    // Create application state with state management and multi-channel services
+    let app_state = AppState::new(host.client());
+    
+    // Initialize application state
+    if enable_services {
+        app_state.initialize().await?;
+        log::info!("Application state initialized");
+        
+        // Start background services
+        app_state.start_services().await?;
+        log::info!("Background services started");
+        log::info!("WebSocket server: http://127.0.0.1:8080");
+        log::info!("UnixSocket server: /tmp/flowpulse.sock");
     }
 
     // Step 2: Connect serial port to STM32 (through server proxy)
@@ -360,6 +379,13 @@ async fn main() -> anyhow::Result<()> {
     }
 
     log::info!("Shutting down...");
+    
+    // Stop services if enabled
+    if enable_services {
+        app_state.stop_services().await?;
+        log::info!("Services stopped");
+    }
+    
     host.disconnect().await.ok();
 
     Ok(())

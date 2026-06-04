@@ -49,18 +49,25 @@ impl Default for ChannelManagerConfig {
 /// Channel manager for unified access
 pub struct ChannelManager {
     /// Manager configuration
+    #[allow(dead_code)]
     config: ChannelManagerConfig,
     /// WebSocket server
+    #[allow(dead_code)]
     websocket_server: Option<Arc<WebSocketServer>>,
     /// UnixSocket server
+    #[allow(dead_code)]
     unix_socket_server: Option<Arc<UnixSocketServer>>,
     /// MQTT client
+    #[allow(dead_code)]
     mqtt_client: Option<Arc<MqttClient>>,
     /// Message queue
+    #[allow(dead_code)]
     message_queue: Arc<MessageQueue>,
     /// Device state manager
+    #[allow(dead_code)]
     device_state: Arc<DeviceStateManager>,
     /// Event publisher
+    #[allow(dead_code)]
     event_publisher: Arc<SyncEventPublisher>,
     /// Manager status
     status: Arc<RwLock<ChannelManagerStatus>>,

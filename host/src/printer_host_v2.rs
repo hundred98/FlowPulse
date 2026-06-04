@@ -191,8 +191,8 @@ impl PrinterHostV2 {
     // ── Accessors ────────────────────────────────────────────────
 
     /// Get the underlying CoreSocketClient.
-    pub fn client(&self) -> &CoreSocketClient {
-        &self.client
+    pub fn client(&self) -> Arc<CoreSocketClient> {
+        self.client.clone()
     }
 
     /// Get config reference.

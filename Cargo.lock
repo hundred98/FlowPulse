@@ -290,6 +290,7 @@ dependencies = [
  "chrono",
  "crossbeam",
  "emb-api",
+ "env_logger",
  "log",
  "serde",
  "serde_json",

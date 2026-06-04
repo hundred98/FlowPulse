@@ -38,12 +38,16 @@ impl Default for UnixSocketConfig {
 /// UnixSocket server for CLI and HMI
 pub struct UnixSocketServer {
     /// Server configuration
+    #[allow(dead_code)]
     config: UnixSocketConfig,
     /// Message queue
+    #[allow(dead_code)]
     message_queue: Arc<MessageQueue>,
     /// Device state manager
+    #[allow(dead_code)]
     device_state: Arc<DeviceStateManager>,
     /// Active connections
+    #[allow(dead_code)]
     connections: Arc<RwLock<Vec<UnixSocketConnection>>>,
     /// Server status
     status: Arc<RwLock<UnixSocketStatus>>,

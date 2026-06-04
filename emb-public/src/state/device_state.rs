@@ -179,12 +179,37 @@ impl DeviceStateManager {
     
     /// Sync state from core server
     pub async fn sync_state(&self) -> EmbResult<()> {
-        // TODO: Implement actual state synchronization with core server
-        // For now, we simulate state updates
+        // Get position from core server
+        if let Ok((x, y, z, e)) = self.client.motion_get_position().await {
+            let pos = Position { x, y, z, e };
+            self.update_position(pos).await;
+        }
+        
+        // Get motion stats from core server
+        if let Ok(stats) = self.client.motion_query_stats().await {
+            // Determine motion status based on stats
+            let motion_status = if stats.motion.total_steps > 0 {
+                MotionStatus::Printing
+            } else {
+                MotionStatus::Idle
+            };
+            self.update_motion_status(motion_status).await;
+            
+            // Update flow status based on stats
+            let flow_status = FlowStatus {
+                flow_rate: stats.motion.avg_speed_mm_per_s as f32,
+                pressure: 0.0, // Not available from stats
+                is_active: stats.motion.total_steps > 0,
+            };
+            self.update_flow_status(flow_status).await;
+        }
         
         // Update last sync time
         let mut last_sync = self.last_sync.write().await;
         *last_sync = Instant::now();
+        
+        // Save snapshot to history
+        self.save_snapshot().await;
         
         // Publish sync event
         let _ = self.event_publisher.publish(PrinterEvent::new(
@@ -239,6 +264,19 @@ impl DeviceStateManager {
             EventKind::StateChanged,
             "device_state".to_string(),
             format!("Motion status updated: {:?}", status),
+        ).with_severity(EventSeverity::Info));
+    }
+    
+    /// Update flow status
+    pub async fn update_flow_status(&self, status: FlowStatus) {
+        let mut flow_status = self.flow_status.write().await;
+        *flow_status = status;
+        
+        // Publish flow status update event
+        let _ = self.event_publisher.publish(PrinterEvent::new(
+            EventKind::StateChanged,
+            "device_state".to_string(),
+            format!("Flow status updated: rate={}, active={}", status.flow_rate, status.is_active),
         ).with_severity(EventSeverity::Info));
     }
     
