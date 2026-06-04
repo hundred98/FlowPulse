@@ -1,0 +1,111 @@
+//! Printer Control Handlers
+//!
+//! HTTP handlers for printer control endpoints.
+
+use axum::{
+    extract::State,
+    http::StatusCode,
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use crate::WebServerState;
+
+/// Printer status response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PrinterStatusResponse {
+    pub state: String,
+    pub position: PositionData,
+    pub progress: Option<ProgressData>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PositionData {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub e: f32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProgressData {
+    pub percent: f32,
+    pub current_layer: u32,
+    pub total_layers: u32,
+}
+
+/// Generic API response
+#[derive(Debug, Serialize)]
+pub struct ApiResponse<T> {
+    pub success: bool,
+    pub data: Option<T>,
+    pub message: Option<String>,
+}
+
+/// Get printer status
+pub async fn get_status(
+    State(_state): State<Arc<WebServerState>>,
+) -> Result<Json<PrinterStatusResponse>, StatusCode> {
+    // TODO: Implement actual status retrieval from DeviceStateManager
+    let response = PrinterStatusResponse {
+        state: "Idle".to_string(),
+        position: PositionData {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            e: 0.0,
+        },
+        progress: None,
+    };
+    
+    Ok(Json(response))
+}
+
+/// Start print
+pub async fn start_print(
+    State(_state): State<Arc<WebServerState>>,
+) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    // TODO: Implement actual print start logic
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some("Print started".to_string()),
+        message: None,
+    }))
+}
+
+/// Pause print
+pub async fn pause_print(
+    State(_state): State<Arc<WebServerState>>,
+) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    // TODO: Implement actual pause logic
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some("Print paused".to_string()),
+        message: None,
+    }))
+}
+
+/// Resume print
+pub async fn resume_print(
+    State(_state): State<Arc<WebServerState>>,
+) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    // TODO: Implement actual resume logic
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some("Print resumed".to_string()),
+        message: None,
+    }))
+}
+
+/// Stop print
+pub async fn stop_print(
+    State(_state): State<Arc<WebServerState>>,
+) -> Result<Json<ApiResponse<String>>, StatusCode> {
+    // TODO: Implement actual stop logic
+    Ok(Json(ApiResponse {
+        success: true,
+        data: Some("Print stopped".to_string()),
+        message: None,
+    }))
+}

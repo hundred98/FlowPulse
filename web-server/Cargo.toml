@@ -1,0 +1,45 @@
+[package]
+name = "web-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "FlowPulse Web Server - Axum-based REST API and WebSocket server"
+license.workspace = true
+
+[dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Internal crates
+emb-public = { path = "../emb-public" }
+
+# Additional dependencies for web server
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []
+# Enable memory profiling
+memory-profile = []
+
+# Optimization settings for embedded Linux (low memory)
+[profile.release]
+opt-level = "z"      # Optimize for size
+lto = true           # Enable link-time optimization
+codegen-units = 1    # Better optimization
+panic = "abort"      # Smaller binary
+strip = true         # Strip symbols
+
+[profile.release.package."*"]
+opt-level = "z"      # Optimize dependencies for size

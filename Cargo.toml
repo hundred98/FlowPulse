@@ -4,6 +4,7 @@ members = [
     "emb-api",
     "emb-public",
     "host",
+    "web-server",
 ]
 
 [workspace.package]

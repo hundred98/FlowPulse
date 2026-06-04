@@ -36,6 +36,9 @@ pub use config::{
     ConfigFrameBuilder, create_config_frames, validate_config,
 };
 
+// Re-export config submodules
+pub use config::{config_adapter, config_protocol};
+
 // Re-export state machine types
 pub use state_machine::{
     PrinterState, TransitionReason, StateTransition, StateMachineConfig,
