@@ -178,7 +178,7 @@ impl UnixSocketServer {
     }
     
     /// Send message to UnixSocket client
-    pub async fn send_to_client(&self, conn_id: usize, msg: serde_json::Value) -> EmbResult<()> {
+    pub async fn send_to_client(&self, _conn_id: usize, _msg: serde_json::Value) -> EmbResult<()> {
         // TODO: Implement actual message sending to UnixSocket client
         
         // Update statistics

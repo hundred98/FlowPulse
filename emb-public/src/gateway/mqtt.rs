@@ -114,12 +114,13 @@ impl MqttClient {
         message_queue: Arc<MessageQueue>,
         device_state: Arc<DeviceStateManager>,
     ) -> Self {
+        let broker_address = format!("{}:{}", config.broker_address, config.port);
         Self {
             config,
             message_queue,
             device_state,
             status: Arc::new(RwLock::new(MqttStatus {
-                broker_address: format!("{}:{}", config.broker_address, config.port),
+                broker_address,
                 ..Default::default()
             })),
             subscribed_topics: Arc::new(RwLock::new(Vec::new())),
@@ -186,7 +187,7 @@ impl MqttClient {
     }
     
     /// Publish message to a topic
-    pub async fn publish(&self, topic_type: MqttTopicType, payload: serde_json::Value) -> EmbResult<()> {
+    pub async fn publish(&self, topic_type: MqttTopicType, _payload: serde_json::Value) -> EmbResult<()> {
         if !self.status.read().await.connected {
             return Err(EmbError::Gateway("MQTT client not connected".to_string()));
         }
@@ -287,7 +288,7 @@ impl MqttClient {
             MqttTopicType::Temperature => "temperature",
             MqttTopicType::Position => "position",
             MqttTopicType::Event => "event",
-            MqttTopicType::Custom(s) => s.as_str(),
+            MqttTopicType::Custom(s) => s,
         };
         
         format!("{}/{}", self.config.topic_prefix, suffix)

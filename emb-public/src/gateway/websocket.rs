@@ -165,10 +165,10 @@ impl WebSocketServer {
         
         // Create temperature message
         let temp_msg = WebSocketMessage::Temperature {
-            hotend_current: temperatures.get("hotend").unwrap_or(&0.0),
-            hotend_target: temperatures.get("hotend_target").unwrap_or(&0.0),
-            bed_current: temperatures.get("bed").unwrap_or(&0.0),
-            bed_target: temperatures.get("bed_target").unwrap_or(&0.0),
+            hotend_current: *temperatures.get("hotend").unwrap_or(&0.0),
+            hotend_target: *temperatures.get("hotend_target").unwrap_or(&0.0),
+            bed_current: *temperatures.get("bed").unwrap_or(&0.0),
+            bed_target: *temperatures.get("bed_target").unwrap_or(&0.0),
         };
         
         // Create position message
