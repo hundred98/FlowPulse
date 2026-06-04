@@ -9,7 +9,7 @@ mod middleware;
 mod routes;
 
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use std::sync::Arc;
@@ -61,10 +61,12 @@ impl WebServer {
             .route("/api/v1/printer/stop", post(handlers::printer::stop_print))
             
             // File management
-            .route("/api/v1/files", get(handlers::files::list_files))
+            .route("/api/v1/files", get(handlers::files::list_files).post(handlers::files::upload_file))
+            .route("/api/v1/files/:name", delete(handlers::files::delete_file))
             
             // Temperature control
             .route("/api/v1/temperature/status", get(handlers::temperature::get_temperature))
+            .route("/api/v1/temperature/target", post(handlers::temperature::set_temperature))
             
             // Configuration
             .route("/api/v1/config", get(handlers::config::get_config))

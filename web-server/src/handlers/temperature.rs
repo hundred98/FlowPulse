@@ -21,6 +21,20 @@ pub struct TemperatureStatus {
     pub bed_target: f32,
 }
 
+/// Temperature target request
+#[derive(Debug, Deserialize)]
+pub struct SetTemperatureRequest {
+    pub hotend: Option<f32>,
+    pub bed: Option<f32>,
+}
+
+/// API response
+#[derive(Debug, Serialize)]
+pub struct ApiResponse {
+    pub success: bool,
+    pub message: String,
+}
+
 /// Get temperature status
 pub async fn get_temperature(
     State(state): State<Arc<WebServerState>>,
@@ -36,4 +50,32 @@ pub async fn get_temperature(
     };
     
     Ok(Json(response))
+}
+
+/// Set temperature target
+pub async fn set_temperature(
+    State(state): State<Arc<WebServerState>>,
+    Json(request): Json<SetTemperatureRequest>,
+) -> Result<Json<ApiResponse>, StatusCode> {
+    // Send G-code commands to set temperature
+    if let Some(hotend_temp) = request.hotend {
+        let cmd = format!("M104 S{}", hotend_temp);
+        if let Err(e) = state.data_provider.send_gcode(&cmd) {
+            log::error!("Failed to set hotend temperature: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+    
+    if let Some(bed_temp) = request.bed {
+        let cmd = format!("M140 S{}", bed_temp);
+        if let Err(e) = state.data_provider.send_gcode(&cmd) {
+            log::error!("Failed to set bed temperature: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+    
+    Ok(Json(ApiResponse {
+        success: true,
+        message: "Temperature target set successfully".to_string(),
+    }))
 }

@@ -4,8 +4,8 @@
 //! supporting UnixSocket (priority), SharedMemory (reserved), and WebSocket.
 
 use crate::common::{EmbResult, PrinterStatus, TempStatus, PositionData, SharedState};
-use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
+use std::sync::{Arc, RwLock};
+use tokio::sync::broadcast;
 
 /// Frontend data provider trait
 /// Unified interface for different communication methods
@@ -51,20 +51,20 @@ impl UnixSocketProvider {
     }
     
     /// Update cached status
-    pub async fn update_status(&self, status: PrinterStatus) {
-        let mut cached = self.cached_status.write().await;
+    pub fn update_status(&self, status: PrinterStatus) {
+        let mut cached = self.cached_status.write().unwrap();
         *cached = status;
     }
     
     /// Update cached temperature
-    pub async fn update_temperature(&self, temp: TempStatus) {
-        let mut cached = self.cached_temp.write().await;
+    pub fn update_temperature(&self, temp: TempStatus) {
+        let mut cached = self.cached_temp.write().unwrap();
         *cached = temp;
     }
     
     /// Update cached position
-    pub async fn update_position(&self, position: PositionData) {
-        let mut cached = self.cached_position.write().await;
+    pub fn update_position(&self, position: PositionData) {
+        let mut cached = self.cached_position.write().unwrap();
         *cached = position;
     }
     
@@ -76,17 +76,16 @@ impl UnixSocketProvider {
 
 impl FrontendDataProvider for UnixSocketProvider {
     fn get_printer_status(&self) -> PrinterStatus {
-        // For synchronous trait, we use blocking read
-        // In async context, use update_status() to update cache
-        self.cached_status.blocking_read().clone()
+        // Use std::sync::RwLock for synchronous access
+        self.cached_status.read().unwrap().clone()
     }
     
     fn get_temperature(&self) -> TempStatus {
-        self.cached_temp.blocking_read().clone()
+        self.cached_temp.read().unwrap().clone()
     }
     
     fn get_position(&self) -> PositionData {
-        self.cached_position.blocking_read().clone()
+        self.cached_position.read().unwrap().clone()
     }
     
     fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
@@ -115,8 +114,8 @@ impl EmbeddedDataProvider {
     }
     
     /// Update shared memory state (reserved)
-    pub async fn update_state(&self, state: SharedState) {
-        let mut shared = self.shared_mem.write().await;
+    pub fn update_state(&self, state: SharedState) {
+        let mut shared = self.shared_mem.write().unwrap();
         *shared = state;
     }
 }
@@ -125,13 +124,13 @@ impl FrontendDataProvider for EmbeddedDataProvider {
     fn get_printer_status(&self) -> PrinterStatus {
         // Reserved implementation
         // TODO: Implement shared memory read
-        let shared = self.shared_mem.blocking_read();
+        let shared = self.shared_mem.read().unwrap();
         PrinterStatus::new(format!("state_{}", shared.printer_state))
     }
     
     fn get_temperature(&self) -> TempStatus {
         // Reserved implementation
-        let shared = self.shared_mem.blocking_read();
+        let shared = self.shared_mem.read().unwrap();
         TempStatus::new(
             shared.hotend_current,
             shared.hotend_target,
@@ -142,7 +141,7 @@ impl FrontendDataProvider for EmbeddedDataProvider {
     
     fn get_position(&self) -> PositionData {
         // Reserved implementation
-        let shared = self.shared_mem.blocking_read();
+        let shared = self.shared_mem.read().unwrap();
         PositionData::new(
             shared.position_x,
             shared.position_y,
@@ -194,8 +193,8 @@ impl WebDataProvider {
     }
     
     /// Update cached status and broadcast
-    pub async fn update_and_broadcast_status(&self, status: PrinterStatus) -> EmbResult<()> {
-        let mut cached = self.cached_status.write().await;
+    pub fn update_and_broadcast_status(&self, status: PrinterStatus) -> EmbResult<()> {
+        let mut cached = self.cached_status.write().unwrap();
         *cached = status.clone();
         
         // Broadcast state change
@@ -210,15 +209,15 @@ impl WebDataProvider {
 
 impl FrontendDataProvider for WebDataProvider {
     fn get_printer_status(&self) -> PrinterStatus {
-        self.cached_status.blocking_read().clone()
+        self.cached_status.read().unwrap().clone()
     }
     
     fn get_temperature(&self) -> TempStatus {
-        self.cached_temp.blocking_read().clone()
+        self.cached_temp.read().unwrap().clone()
     }
     
     fn get_position(&self) -> PositionData {
-        self.cached_position.blocking_read().clone()
+        self.cached_position.read().unwrap().clone()
     }
     
     fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
