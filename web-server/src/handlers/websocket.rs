@@ -48,7 +48,7 @@ async fn handle_websocket(socket: WebSocket, state: Arc<WebServerState>) {
     let temp_rx = {
         // Try to get broadcast receiver from WebDataProvider
         // For now, we'll create a dummy channel
-        let (tx, rx) = broadcast::channel(16);
+        let (_tx, rx) = broadcast::channel(16);
         rx
     };
     

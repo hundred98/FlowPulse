@@ -275,26 +275,31 @@ impl AppState {
     }
     
     /// Get core client
+    #[allow(dead_code)]
     pub fn core_client(&self) -> &Arc<CoreSocketClient> {
         &self.core_client
     }
     
     /// Get event publisher
+    #[allow(dead_code)]
     pub fn event_publisher(&self) -> &Arc<SyncEventPublisher> {
         &self.event_publisher
     }
     
     /// Get device state manager
+    #[allow(dead_code)]
     pub fn device_state(&self) -> &Arc<DeviceStateManager> {
         &self.device_state
     }
     
     /// Get state machine
+    #[allow(dead_code)]
     pub fn state_machine(&self) -> &Arc<StateMachine> {
         &self.state_machine
     }
     
     /// Get print controller
+    #[allow(dead_code)]
     pub fn print_controller(&self) -> &Arc<PrintController> {
         &self.print_controller
     }

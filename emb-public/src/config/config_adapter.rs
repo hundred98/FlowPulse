@@ -25,6 +25,52 @@ pub struct HardwareConfig {
     pub communication: Option<CommunicationConfig>,
     pub motor: Vec<MotorConfig>,
     pub gpio: Option<GpioConfig>,
+    pub temperature: Option<TemperatureHardwareConfig>,
+    pub heater: Option<HeaterHardwareConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TemperatureHardwareConfig {
+    pub hotbed: TempSensorHardwareConfig,
+    pub hotend: TempSensorHardwareConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TempSensorHardwareConfig {
+    pub sensor_type: String,
+    pub adc_pin: String,
+    pub beta: u32,
+    pub ntc_resistance_25c: u32,
+    pub pullup_resistor: u32,
+    pub min_temp: i16,
+    pub max_temp: u16,
+    pub kp: f32,
+    pub ki: f32,
+    pub kd: f32,
+    pub pid_interval_ms: u16,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HeaterHardwareConfig {
+    pub hotbed: HeaterHardwarePin,
+    pub hotend: HeaterHardwarePin,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HeaterHardwarePin {
+    pub pin: String,
+    pub active_high: bool,
+    pub pwm_freq_hz: u16,
+    pub max_power: u8,
+    pub safety: HeaterSafetyHardwareConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HeaterSafetyHardwareConfig {
+    pub max_temp_deviation: i16,
+    pub min_temp_deviation: i16,
+    pub heating_timeout_ms: u32,
+    pub sensor_fault_threshold: u16,
 }
 
 #[derive(Debug, Deserialize)]
@@ -589,6 +635,68 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         }
     }).unwrap_or_default();
 
+    // Build temperature config
+    let temperature = configs.hardware.temperature.as_ref().map(|temp| {
+        pc::TemperatureParams {
+            hotbed: pc::TempSensorParams {
+                sensor_type: temp.hotbed.sensor_type.clone(),
+                adc_pin: temp.hotbed.adc_pin.clone(),
+                beta: temp.hotbed.beta,
+                ntc_resistance_25c: temp.hotbed.ntc_resistance_25c,
+                pullup_resistor: temp.hotbed.pullup_resistor,
+                min_temp: temp.hotbed.min_temp,
+                max_temp: temp.hotbed.max_temp,
+                kp: temp.hotbed.kp,
+                ki: temp.hotbed.ki,
+                kd: temp.hotbed.kd,
+                pid_interval_ms: temp.hotbed.pid_interval_ms,
+            },
+            hotend: pc::TempSensorParams {
+                sensor_type: temp.hotend.sensor_type.clone(),
+                adc_pin: temp.hotend.adc_pin.clone(),
+                beta: temp.hotend.beta,
+                ntc_resistance_25c: temp.hotend.ntc_resistance_25c,
+                pullup_resistor: temp.hotend.pullup_resistor,
+                min_temp: temp.hotend.min_temp,
+                max_temp: temp.hotend.max_temp,
+                kp: temp.hotend.kp,
+                ki: temp.hotend.ki,
+                kd: temp.hotend.kd,
+                pid_interval_ms: temp.hotend.pid_interval_ms,
+            },
+        }
+    }).unwrap_or_default();
+
+    // Build heater config
+    let heater = configs.hardware.heater.as_ref().map(|h| {
+        pc::HeaterParams {
+            hotbed: pc::HeaterPin {
+                pin: h.hotbed.pin.clone(),
+                active_high: h.hotbed.active_high,
+                pwm_freq_hz: h.hotbed.pwm_freq_hz,
+                max_power: h.hotbed.max_power,
+                safety: pc::HeaterSafetyConfig {
+                    max_temp_deviation: h.hotbed.safety.max_temp_deviation,
+                    min_temp_deviation: h.hotbed.safety.min_temp_deviation,
+                    heating_timeout_ms: h.hotbed.safety.heating_timeout_ms,
+                    sensor_fault_threshold: h.hotbed.safety.sensor_fault_threshold,
+                },
+            },
+            hotend: pc::HeaterPin {
+                pin: h.hotend.pin.clone(),
+                active_high: h.hotend.active_high,
+                pwm_freq_hz: h.hotend.pwm_freq_hz,
+                max_power: h.hotend.max_power,
+                safety: pc::HeaterSafetyConfig {
+                    max_temp_deviation: h.hotend.safety.max_temp_deviation,
+                    min_temp_deviation: h.hotend.safety.min_temp_deviation,
+                    heating_timeout_ms: h.hotend.safety.heating_timeout_ms,
+                    sensor_fault_threshold: h.hotend.safety.sensor_fault_threshold,
+                },
+            },
+        }
+    }).unwrap_or_default();
+
     pc::PrinterJsonConfig {
         version: configs.printer.version.clone(),
         printer_model: configs.printer.printer_model.clone(),
@@ -597,6 +705,8 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         gcode_settings,
         motor: motors,
         gpio,
+        temperature,
+        heater,
         ..Default::default()
     }
 }
