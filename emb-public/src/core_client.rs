@@ -357,26 +357,24 @@ impl CoreSocketClient {
         }
     }
 
-    /// Enter special mode (pre-buffering / print mode) on STM32 device.
-    /// Must be called before sending motion frames.
-    pub async fn serial_enter_special_mode(&self) -> Result<(), String> {
-        match self.send_request(&CoreRequest::Serial(SerialRequest::EnterSpecialMode)).await? {
+    /// 进入打印模式 - 打印开始时调用，启用 StatusReport 和运动执行
+    pub async fn serial_enter_print_mode(&self) -> Result<(), String> {
+        match self.send_request(&CoreRequest::Serial(SerialRequest::EnterPrintMode)).await? {
             CoreResponse::Serial(SerialResponse::ConfigResult { success: true, .. }) => Ok(()),
             CoreResponse::Serial(SerialResponse::ConfigResult { success: false, error }) => {
-                Err(error.unwrap_or_else(|| "EnterSpecialMode failed".to_string()))
+                Err(error.unwrap_or_else(|| "EnterPrintMode failed".to_string()))
             }
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),
         }
     }
 
-    /// Exit special mode on STM32 device.
-    /// Must be called after printing is complete and motion drain is done.
-    pub async fn serial_exit_special_mode(&self) -> Result<(), String> {
-        match self.send_request(&CoreRequest::Serial(SerialRequest::ExitSpecialMode)).await? {
+    /// 退出打印模式 - 打印结束时调用
+    pub async fn serial_exit_print_mode(&self) -> Result<(), String> {
+        match self.send_request(&CoreRequest::Serial(SerialRequest::ExitPrintMode)).await? {
             CoreResponse::Serial(SerialResponse::ConfigResult { success: true, .. }) => Ok(()),
             CoreResponse::Serial(SerialResponse::ConfigResult { success: false, error }) => {
-                Err(error.unwrap_or_else(|| "ExitSpecialMode failed".to_string()))
+                Err(error.unwrap_or_else(|| "ExitPrintMode failed".to_string()))
             }
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),

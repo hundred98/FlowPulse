@@ -163,10 +163,10 @@ pub enum SerialRequest {
     ConfigComplete,
     /// Initialize device sequence number (send reset, wait for ACK)
     InitDeviceSeq,
-    /// Enter special mode (pre-buffering / print mode) on device
-    EnterSpecialMode,
-    /// Exit special mode on device
-    ExitSpecialMode,
+    /// 进入打印模式 - 打印开始时调用，启用 StatusReport 和运动执行
+    EnterPrintMode,
+    /// 退出打印模式 - 打印结束时调用
+    ExitPrintMode,
 }
 
 /// Motion planning related requests

@@ -267,10 +267,10 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => log::warn!("Get position failed: {}", e),
     }
 
-    // Enter special mode (print mode) on STM32 — enables StatusReport + motion execution
-    match host.client().serial_enter_special_mode().await {
-        Ok(()) => {}, // log::info!("Entered special mode (print mode)"),
-        Err(e) => log::warn!("EnterSpecialMode failed: {} (motion may not work)", e),
+    // 进入打印模式 - 启用 StatusReport + 运动执行
+    match host.client().serial_enter_print_mode().await {
+        Ok(()) => {}, // log::info!("Entered print mode"),
+        Err(e) => log::warn!("EnterPrintMode failed: {} (motion may not work)", e),
     }
 
     // Load and parse G-code file
@@ -323,10 +323,10 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Exit special mode (print mode) on STM32
-    match host.client().serial_exit_special_mode().await {
-        Ok(()) => {}, // log::info!("Exited special mode"),
-        Err(e) => log::warn!("ExitSpecialMode failed: {}", e),
+    // 退出打印模式
+    match host.client().serial_exit_print_mode().await {
+        Ok(()) => {}, // log::info!("Exited print mode"),
+        Err(e) => log::warn!("ExitPrintMode failed: {}", e),
     }
 
     // Query and display statistics if requested
