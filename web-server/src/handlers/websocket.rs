@@ -12,8 +12,10 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use log::{info, warn};
+use tokio::sync::broadcast;
 
 use crate::WebServerState;
+use emb_public::common::WebSocketMessage;
 
 /// WebSocket upgrade handler
 pub async fn ws_handler(
@@ -42,28 +44,106 @@ async fn handle_websocket(socket: WebSocket, state: Arc<WebServerState>) {
         }
     }
     
-    // Handle incoming messages
-    while let Some(msg) = receiver.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                // Parse and handle the message
-                if let Err(e) = handle_text_message(&text, &state).await {
-                    warn!("Error handling message: {}", e);
+    // Subscribe to temperature updates (if WebDataProvider)
+    let temp_rx = {
+        // Try to get broadcast receiver from WebDataProvider
+        // For now, we'll create a dummy channel
+        let (tx, rx) = broadcast::channel(16);
+        rx
+    };
+    
+    // Split the receiver for async use
+    let mut temp_rx = temp_rx;
+    
+    // Handle incoming messages and temperature updates
+    loop {
+        tokio::select! {
+            // Handle incoming WebSocket messages
+            msg = receiver.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Err(e) = handle_text_message(&text, &state).await {
+                            warn!("Error handling message: {}", e);
+                        }
+                    }
+                    Some(Ok(Message::Binary(data))) => {
+                        info!("Received binary message: {} bytes", data.len());
+                    }
+                    Some(Ok(Message::Close(_))) => {
+                        info!("WebSocket client disconnected");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        warn!("WebSocket error: {}", e);
+                        break;
+                    }
+                    None => break,
+                    _ => {}
                 }
             }
-            Ok(Message::Binary(data)) => {
-                // Handle binary message (if needed)
-                info!("Received binary message: {} bytes", data.len());
+            
+            // Handle temperature updates
+            temp_msg = temp_rx.recv() => {
+                match temp_msg {
+                    Ok(WebSocketMessage::Temperature { hotend_current, hotend_target, bed_current, bed_target }) => {
+                        let msg = serde_json::json!({
+                            "type": "temperature",
+                            "data": {
+                                "hotend_current": hotend_current,
+                                "hotend_target": hotend_target,
+                                "bed_current": bed_current,
+                                "bed_target": bed_target
+                            }
+                        });
+                        
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            if sender.send(Message::Text(json)).await.is_err() {
+                                warn!("Failed to send temperature update");
+                                break;
+                            }
+                        }
+                    }
+                    Ok(WebSocketMessage::Position { x, y, z, e }) => {
+                        let msg = serde_json::json!({
+                            "type": "position",
+                            "data": { "x": x, "y": y, "z": z, "e": e }
+                        });
+                        
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            if sender.send(Message::Text(json)).await.is_err() {
+                                warn!("Failed to send position update");
+                                break;
+                            }
+                        }
+                    }
+                    Ok(WebSocketMessage::State { from, to }) => {
+                        let msg = serde_json::json!({
+                            "type": "state",
+                            "data": { "from": from, "to": to }
+                        });
+                        
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            if sender.send(Message::Text(json)).await.is_err() {
+                                warn!("Failed to send state update");
+                                break;
+                            }
+                        }
+                    }
+                    Ok(other) => {
+                        // Handle other message types
+                        if let Ok(json) = serde_json::to_string(&other) {
+                            if sender.send(Message::Text(json)).await.is_err() {
+                                warn!("Failed to send update");
+                                break;
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        warn!("WebSocket client lagged behind, continuing");
+                    }
+                }
             }
-            Ok(Message::Close(_)) => {
-                info!("WebSocket client disconnected");
-                break;
-            }
-            Err(e) => {
-                warn!("WebSocket error: {}", e);
-                break;
-            }
-            _ => {}
         }
     }
 }
@@ -73,21 +153,16 @@ async fn handle_text_message(
     text: &str,
     _state: &Arc<WebServerState>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Parse the message
     let msg: serde_json::Value = serde_json::from_str(text)?;
     
-    // Handle different message types
     if let Some(msg_type) = msg.get("type").and_then(|t| t.as_str()) {
         match msg_type {
             "ping" => {
-                // Respond with pong
                 info!("Received ping, sending pong");
             }
             "command" => {
-                // Handle command
                 if let Some(action) = msg.get("action").and_then(|a| a.as_str()) {
                     info!("Received command: {}", action);
-                    // TODO: Forward to message queue
                 }
             }
             _ => {

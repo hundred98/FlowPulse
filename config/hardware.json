@@ -79,6 +79,60 @@
       }
     }
   ],
+  "temperature": {
+    "hotbed": {
+      "sensor_type": "NTC100K",
+      "adc_pin": "PC0",
+      "beta": 3950,
+      "ntc_resistance_25c": 100000,
+      "pullup_resistor": 4700,
+      "min_temp": 0,
+      "max_temp": 130,
+      "kp": 325.10,
+      "ki": 63.35,
+      "kd": 417.10,
+      "pid_interval_ms": 100
+    },
+    "hotend": {
+      "sensor_type": "NTC100K",
+      "adc_pin": "PC1",
+      "beta": 3950,
+      "ntc_resistance_25c": 100000,
+      "pullup_resistor": 4700,
+      "min_temp": 0,
+      "max_temp": 250,
+      "kp": 14.669,
+      "ki": 0.572,
+      "kd": 94.068,
+      "pid_interval_ms": 100
+    }
+  },
+  "heater": {
+    "hotbed": {
+      "pin": "PA0",
+      "active_high": true,
+      "pwm_freq_hz": 10,
+      "max_power": 100,
+      "safety": {
+        "max_temp_deviation": 5,
+        "min_temp_deviation": -10,
+        "heating_timeout_ms": 300000,
+        "sensor_fault_threshold": 50
+      }
+    },
+    "hotend": {
+      "pin": "PE5",
+      "active_high": true,
+      "pwm_freq_hz": 10,
+      "max_power": 100,
+      "safety": {
+        "max_temp_deviation": 5,
+        "min_temp_deviation": -10,
+        "heating_timeout_ms": 300000,
+        "sensor_fault_threshold": 50
+      }
+    }
+  },
   "gpio": {
     "output": [
       {
@@ -128,7 +182,7 @@
       },
       {
         "name": "power_monitor",
-        "pin": "PC1",
+        "pin": "PA2",
         "type": "analog",
         "pull": "none",
         "adc_resolution": 12,

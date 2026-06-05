@@ -393,13 +393,10 @@ pub struct TempSensorParams {
     #[serde(rename = "adc_pin")]
     pub adc_pin: String,
     pub beta: u32,
-    pub r25: u32,
-    #[serde(rename = "r_series")]
-    pub r_series: u32,
-    #[serde(rename = "target_temp")]
-    #[serde(default)]
-    pub target_temp: i16,
-    #[serde(rename = "min_temp")]
+    #[serde(rename = "ntc_resistance_25c")]
+    pub ntc_resistance_25c: u32,  // NTC热敏电阻在25°C时的电阻值（Ω）
+    #[serde(rename = "pullup_resistor")]
+    pub pullup_resistor: u32,  // 上拉电阻值（Ω）
     #[serde(default)]
     pub min_temp: i16,
     #[serde(rename = "max_temp")]
@@ -418,9 +415,8 @@ impl Default for TempSensorParams {
             sensor_type: "NTC100K".to_string(),
             adc_pin: "PA0".to_string(),
             beta: 3950,
-            r25: 100000,
-            r_series: 4700,
-            target_temp: 0,
+            ntc_resistance_25c: 100000,
+            pullup_resistor: 4700,
             min_temp: -100,
             max_temp: 300,
             kp: 22.2,
@@ -454,13 +450,52 @@ pub struct HeaterPin {
     #[serde(rename = "active_high")]
     #[serde(default = "default_active_high")]
     pub active_high: bool,
+    #[serde(rename = "pwm_freq_hz", default = "default_heater_pwm_freq")]
+    pub pwm_freq_hz: u16,
+    #[serde(rename = "max_power", default = "default_max_power")]
+    pub max_power: u8,
+    #[serde(default)]
+    pub safety: HeaterSafetyConfig,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeaterSafetyConfig {
+    #[serde(default = "default_max_temp_deviation")]
+    pub max_temp_deviation: i16,  // 允许超过目标温度的最大偏差（°C）
+    #[serde(default = "default_min_temp_deviation")]
+    pub min_temp_deviation: i16,  // 允许低于目标温度的最大偏差（°C）
+    #[serde(default = "default_heating_timeout_ms")]
+    pub heating_timeout_ms: u32,  // 加热超时时间（毫秒）
+    #[serde(default = "default_sensor_fault_threshold")]
+    pub sensor_fault_threshold: u16,  // 传感器故障检测阈值（ADC读数）
+}
+
+impl Default for HeaterSafetyConfig {
+    fn default() -> Self {
+        Self {
+            max_temp_deviation: default_max_temp_deviation(),
+            min_temp_deviation: default_min_temp_deviation(),
+            heating_timeout_ms: default_heating_timeout_ms(),
+            sensor_fault_threshold: default_sensor_fault_threshold(),
+        }
+    }
+}
+
+fn default_heater_pwm_freq() -> u16 { 10 }  // 默认10Hz
+fn default_max_power() -> u8 { 100 }  // 默认最大功率100%
+fn default_max_temp_deviation() -> i16 { 5 }  // 默认允许超过目标温度5°C
+fn default_min_temp_deviation() -> i16 { -10 }  // 默认允许低于目标温度10°C
+fn default_heating_timeout_ms() -> u32 { 300000 }  // 默认加热超时5分钟
+fn default_sensor_fault_threshold() -> u16 { 50 }  // 默认ADC故障阈值50（接近0或4095）
 
 impl Default for HeaterPin {
     fn default() -> Self {
         Self {
             pin: "PA0".to_string(),
             active_high: true,
+            pwm_freq_hz: default_heater_pwm_freq(),
+            max_power: default_max_power(),
+            safety: HeaterSafetyConfig::default(),
         }
     }
 }

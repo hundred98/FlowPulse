@@ -4,6 +4,8 @@ use crate::common::pin_parser::parse_pin;
 pub const FRAME_SOF: u8 = 0xAA;
 pub const FRAME_EOF: u8 = 0x55;
 pub const FRAME_TYPE_CONFIG: u8 = 0x05;
+pub const FRAME_TYPE_SET_TEMP: u8 = 0x24;  // 设置目标温度（避免与服务端ConfigComplete=0x11冲突）
+pub const FRAME_TYPE_STATUS_R: u8 = 0x04;  // 状态响应（包含温度）
 
 // Config frame subtypes - must match STM32 firmware definitions (emb_protocol.h)
 pub const CONFIG_SUBTYPE_MOTOR: u8 = 0x01;
@@ -60,6 +62,18 @@ impl ConfigFrameBuilder {
 
 
         frames
+    }
+
+    /// 构建设置温度帧
+    /// heater_id: 0=热床, 1=热端
+    /// target_temp: 目标温度（摄氏度）
+    pub fn build_set_temp_frame(heater_id: u8, target_temp: f32) -> Vec<u8> {
+        let mut payload = vec![heater_id];
+
+        let temp_bytes = target_temp.to_le_bytes();
+        payload.extend_from_slice(&temp_bytes[..4]);
+
+        Self::wrap_frame(FRAME_TYPE_SET_TEMP, &payload)
     }
 
     fn build_motor_frame(motors: &[MotorParams]) -> Vec<u8> {
@@ -125,15 +139,15 @@ impl ConfigFrameBuilder {
     }
 
     fn build_temp_hotbed_frame(temp: &TempSensorParams) -> Vec<u8> {
-        Self::build_temp_frame(0x04, temp)
+        Self::build_temp_frame(0x20, 0, temp)  // CONFIG_SUB_TEMP_SENSOR, index=0 (热床)
     }
 
     fn build_temp_hotend_frame(temp: &TempSensorParams) -> Vec<u8> {
-        Self::build_temp_frame(0x05, temp)
+        Self::build_temp_frame(0x20, 1, temp)  // CONFIG_SUB_TEMP_SENSOR, index=1 (热端)
     }
 
-    fn build_temp_frame(subtype: u8, temp: &TempSensorParams) -> Vec<u8> {
-        let mut payload = vec![subtype];
+    fn build_temp_frame(subtype: u8, index: u8, temp: &TempSensorParams) -> Vec<u8> {
+        let mut payload = vec![subtype, index];  // 添加索引字段
 
         let adc = parse_pin(&temp.adc_pin);
         payload.push(adc.map(|p| p.port).unwrap_or(2));
@@ -142,11 +156,11 @@ impl ConfigFrameBuilder {
         let beta_bytes = temp.beta.to_le_bytes();
         payload.extend_from_slice(&beta_bytes[..2]);
 
-        let r25_bytes = temp.r25.to_le_bytes();
+        let r25_bytes = temp.ntc_resistance_25c.to_le_bytes();
         payload.extend_from_slice(&r25_bytes[..4]);
 
-        let r_series_bytes = temp.r_series.to_le_bytes();
-        payload.extend_from_slice(&r_series_bytes[..4]);
+        let pullup_bytes = temp.pullup_resistor.to_le_bytes();
+        payload.extend_from_slice(&pullup_bytes[..4]);
 
         let kp_bytes = temp.kp.to_le_bytes();
         let ki_bytes = temp.ki.to_le_bytes();
@@ -158,24 +172,49 @@ impl ConfigFrameBuilder {
         payload.push((temp.pid_interval_ms >> 0) as u8);
         payload.push((temp.pid_interval_ms >> 8) as u8);
 
+        // 添加安全限制参数
+        let min_temp_bytes = temp.min_temp.to_le_bytes();
+        payload.extend_from_slice(&min_temp_bytes[..2]);
+
+        let max_temp_bytes = temp.max_temp.to_le_bytes();
+        payload.extend_from_slice(&max_temp_bytes[..2]);
+
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
     }
 
     fn build_heater_hotbed_frame(heater: &HeaterPin) -> Vec<u8> {
-        Self::build_heater_frame(0x06, heater)
+        Self::build_heater_frame(0x21, 0, heater)  // CONFIG_SUB_HEATER, index=0 (热床)
     }
 
     fn build_heater_hotend_frame(heater: &HeaterPin) -> Vec<u8> {
-        Self::build_heater_frame(0x07, heater)
+        Self::build_heater_frame(0x21, 1, heater)  // CONFIG_SUB_HEATER, index=1 (热端)
     }
 
-    fn build_heater_frame(subtype: u8, heater: &HeaterPin) -> Vec<u8> {
-        let mut payload = vec![subtype];
+    fn build_heater_frame(subtype: u8, index: u8, heater: &HeaterPin) -> Vec<u8> {
+        let mut payload = vec![subtype, index];  // 添加索引字段
 
         let pin = parse_pin(&heater.pin);
         payload.push(pin.map(|p| p.port).unwrap_or(0xFF));
         payload.push(pin.map(|p| p.pin).unwrap_or(0xFF));
         payload.push(if heater.active_high { 1 } else { 0 });
+
+        // 添加PWM频率和最大功率
+        let pwm_freq_bytes = heater.pwm_freq_hz.to_le_bytes();
+        payload.extend_from_slice(&pwm_freq_bytes[..2]);
+        payload.push(heater.max_power);
+
+        // 添加安全配置
+        let max_temp_dev_bytes = heater.safety.max_temp_deviation.to_le_bytes();
+        payload.extend_from_slice(&max_temp_dev_bytes[..2]);
+
+        let min_temp_dev_bytes = heater.safety.min_temp_deviation.to_le_bytes();
+        payload.extend_from_slice(&min_temp_dev_bytes[..2]);
+
+        let heating_timeout_bytes = heater.safety.heating_timeout_ms.to_le_bytes();
+        payload.extend_from_slice(&heating_timeout_bytes[..4]);
+
+        let sensor_fault_bytes = heater.safety.sensor_fault_threshold.to_le_bytes();
+        payload.extend_from_slice(&sensor_fault_bytes[..2]);
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
     }

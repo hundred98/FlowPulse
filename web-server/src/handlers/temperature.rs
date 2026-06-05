@@ -9,6 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use log::info;
 
 use crate::WebServerState;
 
@@ -57,21 +58,32 @@ pub async fn set_temperature(
     State(state): State<Arc<WebServerState>>,
     Json(request): Json<SetTemperatureRequest>,
 ) -> Result<Json<ApiResponse>, StatusCode> {
-    // Send G-code commands to set temperature
+    // Set hotend temperature
     if let Some(hotend_temp) = request.hotend {
-        let cmd = format!("M104 S{}", hotend_temp);
+        // 使用新的配置协议发送温度设置命令
+        // heater_id: 1 = 热端
+        let cmd = format!("SET_TEMP:1:{}", hotend_temp);
+        
         if let Err(e) = state.data_provider.send_gcode(&cmd) {
             log::error!("Failed to set hotend temperature: {}", e);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
+        
+        info!("Set hotend temperature to {}°C", hotend_temp);
     }
     
+    // Set bed temperature
     if let Some(bed_temp) = request.bed {
-        let cmd = format!("M140 S{}", bed_temp);
+        // 使用新的配置协议发送温度设置命令
+        // heater_id: 0 = 热床
+        let cmd = format!("SET_TEMP:0:{}", bed_temp);
+        
         if let Err(e) = state.data_provider.send_gcode(&cmd) {
             log::error!("Failed to set bed temperature: {}", e);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
+        
+        info!("Set bed temperature to {}°C", bed_temp);
     }
     
     Ok(Json(ApiResponse {
