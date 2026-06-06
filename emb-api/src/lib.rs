@@ -59,8 +59,6 @@ pub enum SerialRequest {
         port: String,
         baud_rate: u32,
     },
-    /// Disconnect from serial port
-    Disconnect,
     /// Send a raw packed frame (SOF+len+type+payload+CRC+EOF) directly.
     /// Use this for config frames built by the client.
     SendRawBytes {
@@ -235,11 +233,6 @@ pub enum GpioEvent {
 pub enum SerialResponse {
     /// Connection result
     ConnectResult {
-        success: bool,
-        error: Option<String>,
-    },
-    /// Disconnection result
-    DisconnectResult {
         success: bool,
         error: Option<String>,
     },

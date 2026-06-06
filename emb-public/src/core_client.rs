@@ -269,18 +269,6 @@ impl CoreSocketClient {
         }
     }
 
-    /// Disconnect serial port.
-    pub async fn serial_disconnect(&self) -> Result<(), String> {
-        match self.send_request(&CoreRequest::Serial(SerialRequest::Disconnect)).await? {
-            CoreResponse::Serial(SerialResponse::DisconnectResult { success: true, .. }) => Ok(()),
-            CoreResponse::Serial(SerialResponse::DisconnectResult { success: false, error }) => {
-                Err(error.unwrap_or_else(|| "Disconnect failed".to_string()))
-            }
-            CoreResponse::Error(e) => Err(e.message),
-            other => Err(format!("Unexpected response: {:?}", other)),
-        }
-    }
-
     /// Send a raw packed frame to the device.
     pub async fn serial_send_raw(&self, data: &[u8]) -> Result<(), String> {
         match self.send_request(&CoreRequest::Serial(SerialRequest::SendRawBytes {

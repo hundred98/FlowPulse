@@ -87,7 +87,6 @@ fn create_debug_router(state: Arc<DebugState>) -> Router {
         .route("/api/status", get(get_status))
         .route("/api/config/load", post(load_configs))
         .route("/api/serial/connect", post(serial_connect))
-        .route("/api/serial/disconnect", post(serial_disconnect))
         .route("/api/gpio/set", get(gpio_set))
         .route("/api/gpio/query", get(gpio_query))
         .route("/api/gpio/report/stream", get(gpio_report_stream))
@@ -210,23 +209,6 @@ async fn serial_connect(
             }))
         }
         Err(e) => Json(ApiResponse::<StatusInfo>::error(format!("Connect failed: {}", e))),
-    }
-}
-
-async fn serial_disconnect(
-    State(state): State<Arc<DebugState>>,
-) -> impl IntoResponse {
-    log::info!("Disconnecting serial");
-    
-    match state.core_client.serial_disconnect().await {
-        Ok(()) => {
-            log::info!("Serial disconnected");
-            Json(ApiResponse::success(StatusInfo {
-                serial_connected: false,
-                serial_port: None,
-            }))
-        }
-        Err(e) => Json(ApiResponse::<StatusInfo>::error(format!("Disconnect failed: {}", e))),
     }
 }
 

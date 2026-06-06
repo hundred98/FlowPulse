@@ -70,7 +70,6 @@ async fn main() {
     match config_adapter::configure_device(&client, config_dir).await {
         Ok(configs) => {
             log::info!("✅ 配置发送成功");
-            log::info!("  - 电机数量: {}", configs.hardware.motor.len());
             log::info!("  - 打印机型号: {}", configs.printer.printer_model);
         }
         Err(e) => {
@@ -160,10 +159,6 @@ async fn main() {
     log::info!("🏁 测试完成");
     log::info!("========================================");
     
-    match client.serial_disconnect().await {
-        Ok(()) => log::info!("✅ 串口已断开"),
-        Err(e) => log::warn!("❌ 断开失败: {}", e),
-    }
     
     client.disconnect().await;
     log::info!("✅ 已断开服务器连接");

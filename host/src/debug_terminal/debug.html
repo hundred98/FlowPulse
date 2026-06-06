@@ -66,7 +66,6 @@
                             <input type="number" id="serial-baud" value="57600">
                         </div>
                         <button class="btn-success" onclick="connectSerial()">Connect</button>
-                        <button class="btn-danger" onclick="disconnectSerial()">Disconnect</button>
                     </div>
                 </div>
 
@@ -195,26 +194,6 @@
                     updateStatus(true, port);
                 } else {
                     log(`✗ Connect failed: ${data.error}`, 'error');
-                }
-            } catch (e) {
-                log(`✗ Request failed: ${e.message}`, 'error');
-            }
-        }
-
-        async function disconnectSerial() {
-            log('Disconnecting...', 'info');
-            
-            try {
-                const response = await fetch('/debug/api/serial/disconnect', {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                
-                if (data.success) {
-                    log('✓ Disconnected', 'success');
-                    updateStatus(false, null);
-                } else {
-                    log(`✗ Disconnect failed: ${data.error}`, 'error');
                 }
             } catch (e) {
                 log(`✗ Request failed: ${e.message}`, 'error');
