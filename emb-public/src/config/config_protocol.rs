@@ -105,7 +105,7 @@ impl ConfigFrameBuilder {
     pub fn build_set_temp_frame(heater_id: u8, target_temp: f32) -> Vec<u8> {
         let mut payload = vec![heater_id];
 
-        let temp_bytes = target_temp.to_le_bytes();
+        let temp_bytes = target_temp.to_be_bytes();
         payload.extend_from_slice(&temp_bytes[..4]);
 
         Self::wrap_frame(FRAME_TYPE_SET_TEMP, &payload)
@@ -188,18 +188,18 @@ impl ConfigFrameBuilder {
         payload.push(adc.map(|p| p.port).unwrap_or(2));
         payload.push(adc.map(|p| p.pin).unwrap_or(0));
 
-        let beta_bytes = temp.beta.to_le_bytes();
+        let beta_bytes = temp.beta.to_be_bytes();
         payload.extend_from_slice(&beta_bytes[..2]);
 
-        let r25_bytes = temp.ntc_resistance_25c.to_le_bytes();
+        let r25_bytes = temp.ntc_resistance_25c.to_be_bytes();
         payload.extend_from_slice(&r25_bytes[..4]);
 
-        let pullup_bytes = temp.pullup_resistor.to_le_bytes();
+        let pullup_bytes = temp.pullup_resistor.to_be_bytes();
         payload.extend_from_slice(&pullup_bytes[..4]);
 
-        let kp_bytes = temp.kp.to_le_bytes();
-        let ki_bytes = temp.ki.to_le_bytes();
-        let kd_bytes = temp.kd.to_le_bytes();
+        let kp_bytes = temp.kp.to_be_bytes();
+        let ki_bytes = temp.ki.to_be_bytes();
+        let kd_bytes = temp.kd.to_be_bytes();
         payload.extend_from_slice(&kp_bytes[..4]);
         payload.extend_from_slice(&ki_bytes[..4]);
         payload.extend_from_slice(&kd_bytes[..4]);
@@ -208,10 +208,10 @@ impl ConfigFrameBuilder {
         payload.push((temp.pid_interval_ms >> 8) as u8);
 
         // 添加安全限制参数
-        let min_temp_bytes = temp.min_temp.to_le_bytes();
+        let min_temp_bytes = temp.min_temp.to_be_bytes();
         payload.extend_from_slice(&min_temp_bytes[..2]);
 
-        let max_temp_bytes = temp.max_temp.to_le_bytes();
+        let max_temp_bytes = temp.max_temp.to_be_bytes();
         payload.extend_from_slice(&max_temp_bytes[..2]);
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
@@ -234,21 +234,21 @@ impl ConfigFrameBuilder {
         payload.push(if heater.active_high { 1 } else { 0 });
 
         // 添加PWM频率和最大功率
-        let pwm_freq_bytes = heater.pwm_freq_hz.to_le_bytes();
+        let pwm_freq_bytes = heater.pwm_freq_hz.to_be_bytes();
         payload.extend_from_slice(&pwm_freq_bytes[..2]);
         payload.push(heater.max_power);
 
         // 添加安全配置
-        let max_temp_dev_bytes = heater.safety.max_temp_deviation.to_le_bytes();
+        let max_temp_dev_bytes = heater.safety.max_temp_deviation.to_be_bytes();
         payload.extend_from_slice(&max_temp_dev_bytes[..2]);
 
-        let min_temp_dev_bytes = heater.safety.min_temp_deviation.to_le_bytes();
+        let min_temp_dev_bytes = heater.safety.min_temp_deviation.to_be_bytes();
         payload.extend_from_slice(&min_temp_dev_bytes[..2]);
 
-        let heating_timeout_bytes = heater.safety.heating_timeout_ms.to_le_bytes();
+        let heating_timeout_bytes = heater.safety.heating_timeout_ms.to_be_bytes();
         payload.extend_from_slice(&heating_timeout_bytes[..4]);
 
-        let sensor_fault_bytes = heater.safety.sensor_fault_threshold.to_le_bytes();
+        let sensor_fault_bytes = heater.safety.sensor_fault_threshold.to_be_bytes();
         payload.extend_from_slice(&sensor_fault_bytes[..2]);
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
