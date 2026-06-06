@@ -19,6 +19,7 @@ pub use printer_config::{
 pub use config_adapter::{
     load_configs, build_motion_config_json, build_printer_config,
     LoadedConfigs, HardwareConfig, MotionFileConfig, PrinterFileConfig,
+    configure_device,
 };
 
 pub use config_protocol::{

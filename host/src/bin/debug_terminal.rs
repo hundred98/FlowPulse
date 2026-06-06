@@ -316,29 +316,11 @@ async fn main() -> anyhow::Result<()> {
     // 设置GPIO Report回调（提前设置，实际订阅在串口连接后）
     {
         let tx = gpio_report_tx.clone();
-        core_client.set_gpio_report_callback(move |name, value, event| {
-            let action = event.as_ref().map(|e| e.action.clone());
-            log::info!("GPIO Report: {} = {} (event: {:?})", name, value, action);
+        core_client.set_gpio_report_callback(move |name, value| {
+            log::info!("GPIO Report: {} = {}", name, value);
 
-            // 推送到SSE流（包含事件信息）
-            let _ = tx.send(GpioReportEvent { name, value, action: action.clone() });
-
-            // 根据事件action执行客户端处理逻辑
-            if let Some(ref event_config) = event {
-                match event_config.action.as_str() {
-                    "filament_runout" => {
-                        log::warn!("🔴 Filament runout detected! Client handling.");
-                        // TODO: 暂停打印、提示用户更换耗材
-                    }
-                    "power_loss" => {
-                        log::error!("⚡ Power loss detected! Client handling.");
-                        // TODO: 保存打印状态、通知断电
-                    }
-                    other => {
-                        log::info!("📢 GPIO event triggered: {}", other);
-                    }
-                }
-            }
+            // 推送到SSE流（不包含事件信息，客户端自行处理）
+            let _ = tx.send(GpioReportEvent { name, value, action: None });
         }).await;
     }
     

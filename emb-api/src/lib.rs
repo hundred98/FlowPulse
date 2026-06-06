@@ -44,96 +44,12 @@ pub enum GpioRequest {
     QueryPin {
         name: String,
     },
-    SendGpioConfig {
-        output_pins: Vec<OutputGpioConfigApi>,
-        input_pins: Vec<InputGpioConfigApi>,
-    },
     /// 订阅GPIO Report事件
     SubscribeReport {
         /// 是否启用订阅
         enable: bool,
     },
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OutputGpioConfigApi {
-    pub name: String,
-    pub pin: String,
-    #[serde(rename = "type")]
-    pub pin_type: String,
-    #[serde(default = "default_true")]
-    pub active_high: bool,
-    #[serde(default = "default_pwm_freq")]
-    pub pwm_freq_hz: u16,
-    #[serde(default)]
-    pub default_value: f32,
-    #[serde(default)]
-    pub shutdown_value: f32,
-    #[serde(default = "default_max_value")]
-    pub max_value: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputGpioConfigApi {
-    pub name: String,
-    pub pin: String,
-    #[serde(rename = "type")]
-    pub pin_type: String,
-    #[serde(default)]
-    pub pull: String,
-    #[serde(default = "default_true")]
-    pub active_high: bool,
-    #[serde(default)]
-    pub debounce_ms: u16,
-    #[serde(default)]
-    pub event: Option<InputEventConfigApi>,
-    #[serde(default)]
-    pub report: Option<InputReportConfigApi>,
-    #[serde(default)]
-    pub calibration: Option<AnalogCalibrationConfigApi>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputEventConfigApi {
-    pub action: String,
-    #[serde(default)]
-    pub threshold_below: Option<f32>,
-    #[serde(default)]
-    pub threshold_above: Option<f32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputReportConfigApi {
-    #[serde(default)]
-    pub mode: String,
-    #[serde(default)]
-    pub trigger: Option<String>,
-    #[serde(default)]
-    pub interval_ms: Option<u16>,
-    #[serde(default)]
-    pub threshold: Option<f32>,
-    /// 事件配置（可选）：收到Report后触发事件
-    #[serde(default)]
-    pub event: Option<InputEventConfigApi>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnalogCalibrationConfigApi {
-    #[serde(default)]
-    pub offset: f32,
-    #[serde(default = "default_calib_scale")]
-    pub scale: f32,
-    #[serde(default)]
-    pub min_value: f32,
-    #[serde(default = "default_calib_max")]
-    pub max_value: f32,
-}
-
-fn default_true() -> bool { true }
-fn default_pwm_freq() -> u16 { 1000 }
-fn default_max_value() -> f32 { 1.0 }
-fn default_calib_scale() -> f32 { 1.0 }
-fn default_calib_max() -> f32 { 1.0 }
 
 /// Serial port related requests
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,12 +206,6 @@ pub enum GpioResponse {
     PinReport {
         name: String,
         value: f32,
-        /// 事件配置（从hardware.json中查找），客户端据此决定触发什么事件
-        event: Option<InputEventConfigApi>,
-    },
-    GpioConfigResult {
-        success: bool,
-        error: Option<String>,
     },
     /// 订阅结果
     SubscribeResult {

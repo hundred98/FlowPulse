@@ -48,23 +48,6 @@ async fn main() {
         }
     }
     
-    // 加载配置文件
-    let config_dir = "config";
-    log::info!("📁 加载配置文件: {}", config_dir);
-    
-    let configs = match config_adapter::load_configs(config_dir) {
-        Ok(c) => {
-            log::info!("✅ 配置加载成功");
-            log::info!("  - 电机数量: {}", c.hardware.motor.len());
-            log::info!("  - 打印机型号: {}", c.printer.printer_model);
-            c
-        }
-        Err(e) => {
-            log::error!("❌ 配置加载失败: {}", e);
-            return;
-        }
-    };
-    
     // 连接串口
     let serial_port = "COM7";
     let baud_rate = 57600;
@@ -80,28 +63,20 @@ async fn main() {
         }
     }
     
-    // 等待服务端发送 GPIO 配置
-    sleep(Duration::from_millis(1500)).await;
+    // 加载配置并发送到服务端和下位机
+    let config_dir = "config";
+    log::info!("📁 加载配置文件: {}", config_dir);
     
-    // 构建并发送配置帧
-    let printer_config = config_adapter::build_printer_config(&configs);
-    let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
-    
-    for frame_bytes in config_frames.iter() {
-        match client.serial_send_raw(frame_bytes).await {
-            Ok(()) => {}
-            Err(e) => log::warn!("配置帧发送失败: {}", e),
+    match config_adapter::configure_device(&client, config_dir).await {
+        Ok(configs) => {
+            log::info!("✅ 配置发送成功");
+            log::info!("  - 电机数量: {}", configs.hardware.motor.len());
+            log::info!("  - 打印机型号: {}", configs.printer.printer_model);
         }
-        sleep(Duration::from_millis(100)).await;
-    }
-    
-    // 等待配置处理完成
-    sleep(Duration::from_millis(500)).await;
-    
-    // 发送 ConfigComplete
-    match client.serial_config_complete().await {
-        Ok(()) => {}
-        Err(e) => log::warn!("ConfigComplete 发送失败: {}", e),
+        Err(e) => {
+            log::error!("❌ 配置发送失败: {}", e);
+            return;
+        }
     }
     
     // 初始化序列号

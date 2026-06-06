@@ -17,6 +17,8 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use super::printer_config as pc;
+use crate::CoreSocketClient;
+use super::config_protocol::ConfigFrameBuilder;
 
 // ── hardware.json structures ──────────────────────────────────
 
@@ -709,4 +711,54 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         heater,
         ..Default::default()
     }
+}
+
+/// Initialize device with all configurations.
+/// 
+/// This function performs the complete device initialization process:
+/// 1. Load configuration files from the specified directory
+/// 2. Send motion config to server (for motion planning)
+/// 3. Send hardware config frames to device (motor, temperature, heater, gpio, etc.)
+/// 4. Send ConfigComplete to device
+/// 
+/// # Arguments
+/// * `client` - The CoreSocketClient to use for sending data
+/// * `config_dir` - Path to the configuration directory (contains printer.json, motion.json, hardware.json)
+/// 
+/// # Returns
+/// * `Ok(LoadedConfigs)` if all configurations were sent successfully, returns the loaded configs
+/// * `Err(String)` if any step failed
+pub async fn configure_device(client: &CoreSocketClient, config_dir: &str) -> Result<LoadedConfigs, String> {
+    // Step 1: Load configuration files
+    let configs = load_configs(config_dir)?;
+    
+    // Step 2: Send motion config to server (for motion planning)
+    // This includes: max_velocity, junction_deviation, velocity_profile, etc.
+    let motion_config_json = build_motion_config_json(&configs)?;
+    client.config_update_motion(&motion_config_json).await
+        .map_err(|e| format!("Failed to send motion config: {}", e))?;
+    
+    // Step 3: Send hardware config frames to device
+    // This includes all hardware configurations from hardware.json:
+    // - Motor config (step_pin, dir_pin, enable_pin, steps_per_mm, etc.)
+    // - Temperature config (hotbed, hotend sensors and PID parameters)
+    // - Heater config (hotbed, hotend heaters and safety parameters)
+    // - GPIO config (output pins like box_fan, chamber_led; input pins like filament_sensor, door_sensor)
+    // - Limit switch config (if configured)
+    // - Fan config (if configured)
+    let printer_config = build_printer_config(&configs);
+    let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
+    
+    for frame_bytes in config_frames.iter() {
+        client.serial_send_raw(frame_bytes).await
+            .map_err(|e| format!("Failed to send config frame: {}", e))?;
+        // Small delay between frames
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    
+    // Step 4: Send ConfigComplete to notify device that all configs are sent
+    client.serial_config_complete().await
+        .map_err(|e| format!("Failed to send ConfigComplete: {}", e))?;
+    
+    Ok(configs)
 }

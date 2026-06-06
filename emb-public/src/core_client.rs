@@ -14,7 +14,7 @@ use emb_api::{
     SerialRequest, SerialResponse,
     MotionRequest, MotionResponse, ArcParamsApi,
     ConfigRequest, ConfigResponse, StatusResponse,
-    MotionStatsResponse, InputEventConfigApi,
+    MotionStatsResponse,
     encode_request, decode_response,
 };
 
@@ -47,8 +47,8 @@ pub struct CoreSocketClient {
     config: CoreClientConfig,
     stream: RwLock<Option<TcpStream>>,
     read_buf: Mutex<Vec<u8>>,
-    /// GPIO Report回调（可选），参数: (name, value, event_config)
-    gpio_report_callback: RwLock<Option<Box<dyn Fn(String, f32, Option<InputEventConfigApi>) + Send + Sync>>>,
+    /// GPIO Report回调（可选），参数: (name, value)
+    gpio_report_callback: RwLock<Option<Box<dyn Fn(String, f32) + Send + Sync>>>,
 }
 
 impl CoreSocketClient {
@@ -104,10 +104,10 @@ impl CoreSocketClient {
         info!("Disconnected from core server");
     }
     
-    /// 设置GPIO Report回调，参数: (name, value, event_config)
+    /// 设置GPIO Report回调，参数: (name, value)
     pub async fn set_gpio_report_callback<F>(&self, callback: F)
     where
-        F: Fn(String, f32, Option<InputEventConfigApi>) + Send + Sync + 'static,
+        F: Fn(String, f32) + Send + Sync + 'static,
     {
         let mut guard = self.gpio_report_callback.write().await;
         *guard = Some(Box::new(callback));
@@ -182,11 +182,11 @@ impl CoreSocketClient {
                             buf.drain(..consumed);
                             
                             // 检查是否是GPIO Report推送
-                            if let CoreResponse::Gpio(emb_api::GpioResponse::PinReport { name, value, event }) = &response {
-                                // 触发回调（携带event配置）
+                            if let CoreResponse::Gpio(emb_api::GpioResponse::PinReport { name, value }) = &response {
+                                // 触发回调
                                 let callback_guard = self.gpio_report_callback.read().await;
                                 if let Some(callback) = callback_guard.as_ref() {
-                                    callback(name.clone(), *value, event.clone());
+                                    callback(name.clone(), *value);
                                 }
                                 // 继续读取下一个消息
                                 continue;

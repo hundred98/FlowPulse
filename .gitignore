@@ -8,6 +8,7 @@ prints_history/
 # IDE 文件
 .vscode/
 .idea/
+.trae/
 
 # 日志
 *.log

@@ -34,6 +34,7 @@ pub use config::{
     load_configs, build_motion_config_json, build_printer_config,
     LoadedConfigs, HardwareConfig, MotionFileConfig, PrinterFileConfig,
     ConfigFrameBuilder, create_config_frames, validate_config,
+    configure_device,
 };
 
 // Re-export config submodules

@@ -1,4 +1,4 @@
-use super::printer_config::{PrinterJsonConfig, MotorParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams};
+use super::printer_config::{PrinterJsonConfig, MotorParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams, OutputPinParams, InputPinParams};
 use crate::common::pin_parser::parse_pin;
 
 pub const FRAME_SOF: u8 = 0xAA;
@@ -17,6 +17,28 @@ pub const CONFIG_SUBTYPE_GPIO: u8 = 0x06;
 pub const CONFIG_SUBTYPE_GPIO_OUTPUT: u8 = 0x07;  // Matches CONFIG_SUB_GPIO_OUTPUT on STM32
 pub const CONFIG_SUBTYPE_GPIO_INPUT: u8 = 0x08;   // Matches CONFIG_SUB_GPIO_INPUT on STM32
 pub const CONFIG_SUBTYPE_QUERY: u8 = 0x10;
+
+// GPIO constants
+pub const GPIO_TYPE_DIGITAL: u8 = 0;
+pub const GPIO_TYPE_PWM: u8 = 1;
+pub const GPIO_TYPE_ANALOG: u8 = 2;
+
+pub const GPIO_PULL_NONE: u8 = 0;
+pub const GPIO_PULL_UP: u8 = 1;
+pub const GPIO_PULL_DOWN: u8 = 2;
+
+pub const GPIO_EVENT_NONE: u8 = 0;
+pub const GPIO_EVENT_FILAMENT_RUNOUT: u8 = 1;
+pub const GPIO_EVENT_POWER_LOSS: u8 = 2;
+pub const GPIO_EVENT_CUSTOM: u8 = 3;
+
+pub const GPIO_REPORT_MODE_ON_CHANGE: u8 = 0;
+pub const GPIO_REPORT_MODE_INTERVAL: u8 = 1;
+pub const GPIO_REPORT_MODE_NONE: u8 = 2;
+
+pub const GPIO_TRIGGER_RISING: u8 = 0;
+pub const GPIO_TRIGGER_FALLING: u8 = 1;
+pub const GPIO_TRIGGER_BOTH: u8 = 2;
 
 pub struct ConfigFrameBuilder {
     #[allow(dead_code)]
@@ -60,6 +82,19 @@ impl ConfigFrameBuilder {
             }
         }
 
+        // GPIO output pins
+        for pin in &config.gpio.output {
+            if !pin.pin.is_empty() {
+                frames.extend(Self::build_gpio_output_frames(pin));
+            }
+        }
+
+        // GPIO input pins
+        for pin in &config.gpio.input {
+            if !pin.pin.is_empty() {
+                frames.extend(Self::build_gpio_input_frames(pin));
+            }
+        }
 
         frames
     }
@@ -233,6 +268,147 @@ impl ConfigFrameBuilder {
         payload.extend_from_slice(&freq_bytes[..2]);
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
+    }
+
+    fn build_gpio_output_frames(pin: &OutputPinParams) -> Vec<Vec<u8>> {
+        let mut frames = Vec::new();
+        let mut buf = Vec::new();
+
+        buf.push(CONFIG_SUBTYPE_GPIO_OUTPUT);
+        buf.push(0);  // pin_count = 0 表示追加模式
+
+        let parsed_pin = match parse_pin(&pin.pin) {
+            Some(p) => p,
+            None => return frames,
+        };
+
+        let pin_type = match pin.pin_type {
+            super::printer_config::OutputPinType::Pwm => GPIO_TYPE_PWM,
+            super::printer_config::OutputPinType::Digital => GPIO_TYPE_DIGITAL,
+        };
+
+        let effective_active_high = parsed_pin.inverted ^ pin.active_high;
+
+        let name_bytes = pin.name.as_bytes();
+        let mut name_buf = [0u8; 16];
+        let copy_len = name_bytes.len().min(16);
+        name_buf[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+        buf.extend_from_slice(&name_buf);
+
+        buf.push(parsed_pin.port);
+        buf.push(parsed_pin.pin);
+        buf.push(pin_type);
+        buf.push(if effective_active_high { 1 } else { 0 });
+
+        buf.extend_from_slice(&pin.pwm_freq_hz.to_le_bytes());
+        buf.extend_from_slice(&pin.default_value.to_be_bytes());
+        buf.extend_from_slice(&pin.shutdown_value.to_be_bytes());
+        buf.extend_from_slice(&pin.max_value.to_be_bytes());
+
+        buf.push(0);
+        buf.push(0);
+
+        frames.push(Self::wrap_frame(FRAME_TYPE_CONFIG, &buf));
+        frames
+    }
+
+    fn build_gpio_input_frames(pin: &InputPinParams) -> Vec<Vec<u8>> {
+        let mut frames = Vec::new();
+        let mut buf = Vec::new();
+
+        buf.push(CONFIG_SUBTYPE_GPIO_INPUT);
+        buf.push(0);  // pin_count = 0 表示追加模式
+
+        let parsed_pin = match parse_pin(&pin.pin) {
+            Some(p) => p,
+            None => return frames,
+        };
+
+        let pin_type = match pin.pin_type {
+            super::printer_config::InputPinType::Digital => GPIO_TYPE_DIGITAL,
+            super::printer_config::InputPinType::Analog => GPIO_TYPE_ANALOG,
+        };
+
+        let pull = match pin.pull.to_lowercase().as_str() {
+            "up" => GPIO_PULL_UP,
+            "down" => GPIO_PULL_DOWN,
+            _ => GPIO_PULL_NONE,
+        };
+
+        let effective_active_high = parsed_pin.inverted ^ pin.active_high;
+
+        let name_bytes = pin.name.as_bytes();
+        let mut name_buf = [0u8; 16];
+        let copy_len = name_bytes.len().min(16);
+        name_buf[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+        buf.extend_from_slice(&name_buf);
+
+        buf.push(parsed_pin.port);
+        buf.push(parsed_pin.pin);
+        buf.push(pin_type);
+        buf.push(pull);
+        buf.push(if effective_active_high { 1 } else { 0 });
+
+        buf.extend_from_slice(&pin.debounce_ms.to_le_bytes());
+
+        let (event_action, report_mode, report_trigger, report_interval_ms, report_threshold) = 
+            if let Some(ref report) = pin.report {
+                let mode = match report.mode.to_lowercase().as_str() {
+                    "on_change" => GPIO_REPORT_MODE_ON_CHANGE,
+                    "interval" => GPIO_REPORT_MODE_INTERVAL,
+                    _ => GPIO_REPORT_MODE_NONE,
+                };
+
+                let trigger = report.trigger.as_ref()
+                    .map(|t| match t.to_lowercase().as_str() {
+                        "rising" => GPIO_TRIGGER_RISING,
+                        "falling" => GPIO_TRIGGER_FALLING,
+                        "both" => GPIO_TRIGGER_BOTH,
+                        _ => GPIO_TRIGGER_RISING,
+                    })
+                    .unwrap_or(GPIO_TRIGGER_RISING);
+
+                let interval = report.interval_ms.unwrap_or(0) as u16;
+                let threshold = report.threshold.unwrap_or(0.01);
+
+                let event = if let Some(ref event) = pin.event {
+                    match event.action.to_lowercase().as_str() {
+                        "filament_runout" => GPIO_EVENT_FILAMENT_RUNOUT,
+                        "power_loss" => GPIO_EVENT_POWER_LOSS,
+                        "custom" => GPIO_EVENT_CUSTOM,
+                        _ => GPIO_EVENT_NONE,
+                    }
+                } else {
+                    GPIO_EVENT_NONE
+                };
+
+                (event, mode, trigger, interval, threshold)
+            } else {
+                (GPIO_EVENT_NONE, GPIO_REPORT_MODE_NONE, GPIO_TRIGGER_RISING, 0u16, 0.0f32)
+            };
+
+        buf.push(event_action);
+        buf.push(report_mode);
+        buf.push(report_trigger);
+        buf.extend_from_slice(&report_interval_ms.to_le_bytes());
+        buf.extend_from_slice(&report_threshold.to_be_bytes());
+
+        let (cal_offset, cal_scale, cal_min, cal_max) = 
+            if let Some(ref cal) = pin.calibration {
+                (cal.offset, cal.scale, cal.min_value, cal.max_value)
+            } else {
+                (0.0f32, 1.0f32, 0.0f32, 1.0f32)
+            };
+
+        buf.extend_from_slice(&cal_offset.to_be_bytes());
+        buf.extend_from_slice(&cal_scale.to_be_bytes());
+        buf.extend_from_slice(&cal_min.to_be_bytes());
+        buf.extend_from_slice(&cal_max.to_be_bytes());
+
+        buf.push(pin.adc_resolution);
+
+        frames.push(Self::wrap_frame(FRAME_TYPE_CONFIG, &buf));
+        frames
     }
 
     fn wrap_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {
