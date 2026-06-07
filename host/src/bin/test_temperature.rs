@@ -16,6 +16,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use emb_public::{CoreSocketClient, CoreClientConfig, ConfigFrameBuilder, config_adapter};
 
@@ -78,53 +79,61 @@ async fn main() {
         }
     }
     
-    // 初始化序列号
-    log::info!("🔢 初始化设备序列号...");
-    match client.serial_init_seq().await {
-        Ok(()) => log::info!("✅ 序列号初始化成功"),
-        Err(e) => log::warn!("❌ 序列号初始化失败: {}", e),
-    }
-    
-    // 监控温度数据（持续30秒）
+    // 监控温度数据（使用订阅方式）
     log::info!("========================================");
-    log::info!("📊 开始监控温度数据（30秒）");
+    log::info!("📊 开始监控温度数据（订阅方式，30秒）");
     log::info!("========================================");
     
-    for i in 1..=30 {
-        // 发送状态查询帧
-        match client.serial_send_frame(0x03, vec![]).await {  // 0x03 = StatusQuery
-            Ok(()) => {
-                // 等待响应
-                sleep(Duration::from_millis(100)).await;
-                
-                // 接收状态响应帧
-                match client.serial_recv_frame().await {
-                    Ok(Some((frame_type, payload))) => {
-                        // StatusResponse 帧格式：
-                        // [credits:1][pos_x:4][pos_y:4][pos_z:4][pos_e:4][temp_bed_cur:2][temp_bed_tgt:2][temp_nozzle_cur:2][temp_nozzle_tgt:2][status:1]
-                        // 温度数据从 payload[17] 开始
-                        if frame_type == 0x04 && payload.len() >= 25 {  // 0x04 = StatusResponse
-                            let temp_bed_cur = i16::from_be_bytes([payload[17], payload[18]]);
-                            let temp_bed_tgt = i16::from_be_bytes([payload[19], payload[20]]);
-                            let temp_nozzle_cur = i16::from_be_bytes([payload[21], payload[22]]);
-                            let temp_nozzle_tgt = i16::from_be_bytes([payload[23], payload[24]]);
-                            
-                            log::info!("🌡️  温度数据: 热床={}/{}°C, 热端={}/{}°C", 
-                                temp_bed_cur as f32 / 10.0, 
-                                temp_bed_tgt as f32 / 10.0,
-                                temp_nozzle_cur as f32 / 10.0, 
-                                temp_nozzle_tgt as f32 / 10.0);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Err(e) => log::warn!("❌ 状态查询失败: {}", e),
+    // 计数器：记录收到的状态数据数量
+    let status_count = Arc::new(AtomicU32::new(0));
+    let status_count_clone = status_count.clone();
+    
+    // 设置状态回调
+    client.set_status_report_callback(move |frame_type, payload| {
+        // StatusResponse 帧格式：
+        // [credits:1][pos_x:4][pos_y:4][pos_z:4][pos_e:4][temp_bed_cur:2][temp_bed_tgt:2][temp_nozzle_cur:2][temp_nozzle_tgt:2][status:1]
+        // 温度数据从 payload[17] 开始
+        if frame_type == 0x04 && payload.len() >= 25 {  // 0x04 = StatusResponse
+            let temp_bed_cur = i16::from_be_bytes([payload[17], payload[18]]);
+            let temp_bed_tgt = i16::from_be_bytes([payload[19], payload[20]]);
+            let temp_nozzle_cur = i16::from_be_bytes([payload[21], payload[22]]);
+            let temp_nozzle_tgt = i16::from_be_bytes([payload[23], payload[24]]);
+            
+            log::info!("🌡️  温度数据: 热床={}/{}°C, 热端={}/{}°C", 
+                temp_bed_cur as f32 / 10.0, 
+                temp_bed_tgt as f32 / 10.0,
+                temp_nozzle_cur as f32 / 10.0, 
+                temp_nozzle_tgt as f32 / 10.0);
+            
+            // 增加计数器
+            status_count_clone.fetch_add(1, Ordering::SeqCst);
         }
-        
-        log::info!("⏱️  监控中... {}/30 秒", i);
-        sleep(Duration::from_millis(900)).await;
+    }).await;
+    
+    // 订阅状态上报
+    match client.subscribe_status(true).await {
+        Ok(()) => log::info!("✅ 已订阅状态上报"),
+        Err(e) => {
+            log::error!("❌ 订阅失败: {}", e);
+            return;
+        }
     }
+    
+    // 等待30秒
+    for i in 1..=30 {
+        sleep(Duration::from_secs(1)).await;
+        let count = status_count.load(Ordering::SeqCst);
+        log::info!("⏱️  监控中... {}/30 秒, 已收到 {} 条状态数据", i, count);
+    }
+    
+    // 取消订阅
+    match client.subscribe_status(false).await {
+        Ok(()) => log::info!("✅ 已取消订阅"),
+        Err(e) => log::warn!("❌ 取消订阅失败: {}", e),
+    }
+    
+    // 清除回调
+    client.clear_status_report_callback().await;
     
     // 测试设置温度
     log::info!("========================================");

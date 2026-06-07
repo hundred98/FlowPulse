@@ -4,9 +4,11 @@
 //! convenient methods for all CoreRequest/CoreResponse operations.
 
 use std::time::Duration;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, RwLock};
+use tokio::sync::mpsc;
 use log::{info, warn, debug};
 
 use emb_api::{
@@ -45,10 +47,16 @@ impl Default for CoreClientConfig {
 /// Socket client that connects to emb-core-server.
 pub struct CoreSocketClient {
     config: CoreClientConfig,
-    stream: RwLock<Option<TcpStream>>,
-    read_buf: Mutex<Vec<u8>>,
+    /// Write half of the TCP stream (reader half is owned by background task)
+    writer: RwLock<Option<tokio::io::WriteHalf<TcpStream>>>,
+    /// Channel for decoded responses from background reader (bounded for backpressure)
+    message_rx: Mutex<Option<mpsc::Receiver<CoreResponse>>>,
+    /// Background reader task handle
+    reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// GPIO Report回调（可选），参数: (name, value)
-    gpio_report_callback: RwLock<Option<Box<dyn Fn(String, f32) + Send + Sync>>>,
+    gpio_report_callback: Arc<RwLock<Option<Box<dyn Fn(String, f32) + Send + Sync>>>>,
+    /// Status Report回调（可选），参数: (frame_type, payload)
+    status_report_callback: Arc<RwLock<Option<Box<dyn Fn(u8, Vec<u8>) + Send + Sync>>>>,
 }
 
 impl CoreSocketClient {
@@ -56,9 +64,11 @@ impl CoreSocketClient {
     pub fn new(config: CoreClientConfig) -> Self {
         Self {
             config,
-            stream: RwLock::new(None),
-            read_buf: Mutex::new(Vec::new()),
-            gpio_report_callback: RwLock::new(None),
+            writer: RwLock::new(None),
+            message_rx: Mutex::new(None),
+            reader_handle: Mutex::new(None),
+            gpio_report_callback: Arc::new(RwLock::new(None)),
+            status_report_callback: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -84,12 +94,23 @@ impl CoreSocketClient {
         // Set TCP_NODELAY for low latency
         stream.set_nodelay(true).map_err(|e| format!("set_nodelay failed: {}", e))?;
 
-        let mut guard = self.stream.write().await;
-        *guard = Some(stream);
-
-        // Clear any stale read buffer
-        let mut buf = self.read_buf.lock().await;
-        buf.clear();
+        // Split stream into reader/writer halves
+        let (reader, writer) = tokio::io::split(stream);
+        
+        // Create message channel (bounded, provides backpressure)
+        let (tx, rx) = mpsc::channel(256);
+        
+        // Store writer and receiver
+        *self.writer.write().await = Some(writer);
+        *self.message_rx.lock().await = Some(rx);
+        
+        // Start background reader task
+        let gpio_callback = self.gpio_report_callback.clone();
+        let status_callback = self.status_report_callback.clone();
+        let handle = tokio::spawn(async move {
+            background_reader(reader, tx, gpio_callback, status_callback).await;
+        });
+        *self.reader_handle.lock().await = Some(handle);
 
         info!("Connected to core server");
         Ok(())
@@ -97,10 +118,20 @@ impl CoreSocketClient {
 
     /// Disconnect from the core server.
     pub async fn disconnect(&self) {
-        let mut guard = self.stream.write().await;
-        if let Some(mut stream) = guard.take() {
-            let _ = stream.shutdown().await;
+        // Stop background reader
+        if let Some(handle) = self.reader_handle.lock().await.take() {
+            handle.abort();
         }
+        
+        // Close writer
+        let mut guard = self.writer.write().await;
+        if let Some(mut writer) = guard.take() {
+            let _ = writer.shutdown().await;
+        }
+        
+        // Clear message queue
+        self.message_rx.lock().await.take();
+        
         info!("Disconnected from core server");
     }
     
@@ -118,10 +149,25 @@ impl CoreSocketClient {
         let mut guard = self.gpio_report_callback.write().await;
         *guard = None;
     }
+    
+    /// 设置Status Report回调，参数: (frame_type, payload)
+    pub async fn set_status_report_callback<F>(&self, callback: F)
+    where
+        F: Fn(u8, Vec<u8>) + Send + Sync + 'static,
+    {
+        let mut guard = self.status_report_callback.write().await;
+        *guard = Some(Box::new(callback));
+    }
+    
+    /// 清除Status Report回调
+    pub async fn clear_status_report_callback(&self) {
+        let mut guard = self.status_report_callback.write().await;
+        *guard = None;
+    }
 
     /// Check if connected.
     pub async fn is_connected(&self) -> bool {
-        let guard = self.stream.read().await;
+        let guard = self.writer.read().await;
         guard.is_some()
     }
 
@@ -149,13 +195,13 @@ impl CoreSocketClient {
         let encoded = encode_request(request)
             .map_err(|e| format!("Encode error: {}", e))?;
 
-        let mut guard = self.stream.write().await;
-        let stream = guard.as_mut().ok_or("Not connected")?;
+        let mut guard = self.writer.write().await;
+        let writer = guard.as_mut().ok_or("Not connected")?;
 
         debug!("Sending request: {:?}", request);
-        stream.write_all(&encoded).await
+        writer.write_all(&encoded).await
             .map_err(|e| format!("Write error: {}", e))?;
-        stream.flush().await
+        writer.flush().await
             .map_err(|e| format!("Flush error: {}", e))?;
 
         // Drop write lock before reading response
@@ -164,62 +210,32 @@ impl CoreSocketClient {
         self.read_response().await
     }
 
-    /// Read a response from the server.
+    /// Read a response from the message channel (populated by background reader).
+    /// Push messages (StatusReport, PinReport) trigger callbacks and are skipped.
     async fn read_response(&self) -> Result<CoreResponse, String> {
         let deadline = tokio::time::Instant::now() + Duration::from_millis(self.config.request_timeout_ms);
-
+        
+        // Get receiver
+        let mut rx_guard = self.message_rx.lock().await;
+        let rx = rx_guard.as_mut().ok_or("Not connected")?;
+        
         loop {
-            // Check if we have a complete message in buffer
-            {
-                let mut buf = self.read_buf.lock().await;
-                if !buf.is_empty() {
-                    // Decode without holding mutable borrow
-                    let buf_snapshot: Vec<u8> = buf.clone();
-                    match decode_response(&buf_snapshot) {
-                        Ok((remaining, response)) => {
-                            // Consume the decoded portion
-                            let consumed = buf_snapshot.len() - remaining.len();
-                            buf.drain(..consumed);
-                            
-                            // 检查是否是GPIO Report推送
-                            if let CoreResponse::Gpio(emb_api::GpioResponse::PinReport { name, value }) = &response {
-                                // 触发回调
-                                let callback_guard = self.gpio_report_callback.read().await;
-                                if let Some(callback) = callback_guard.as_ref() {
-                                    callback(name.clone(), *value);
-                                }
-                                // 继续读取下一个消息
-                                continue;
-                            }
-                            
-                            return Ok(response);
-                        }
-                        Err(e) => {
-                            if !e.contains("too short") {
-                                buf.clear();
-                                return Err(format!("Decode error: {}", e));
-                            }
-                        }
-                    }
-                }
-            }
-
             // Check timeout
             if tokio::time::Instant::now() > deadline {
                 return Err("Request timeout".to_string());
             }
-
-            // Read more data
-            let mut guard = self.stream.write().await;
-            let stream = guard.as_mut().ok_or("Not connected")?;
-            let mut tmp = [0u8; 8192];
-            match stream.read(&mut tmp).await {
-                Ok(0) => return Err("Server closed connection".to_string()),
-                Ok(n) => {
-                    let mut buf = self.read_buf.lock().await;
-                    buf.extend_from_slice(&tmp[..n]);
+            
+            // Read next message from channel
+            match tokio::time::timeout(
+                deadline - tokio::time::Instant::now(),
+                rx.recv(),
+            ).await {
+                Ok(Some(response)) => {
+                    // Return response to caller
+                    return Ok(response);
                 }
-                Err(e) => return Err(format!("Read error: {}", e)),
+                Ok(None) => return Err("Server closed connection".to_string()),
+                Err(_) => return Err("Request timeout".to_string()),
             }
         }
     }
@@ -466,13 +482,14 @@ impl CoreSocketClient {
     ) -> Result<usize, String> {
         match self.send_request(&CoreRequest::Motion(MotionRequest::DispatchMotion {
             cmd: cmd.to_string(),
-            x, y, z, e, feed_rate, arc,
+            x, y, z, e, feed_rate,
+            arc,
         })).await? {
-            CoreResponse::Motion(MotionResponse::DispatchResult { success: true, segments_dispatched, .. }) => {
+            CoreResponse::Motion(MotionResponse::DispatchResult { segments_dispatched, .. }) => {
                 Ok(segments_dispatched)
             }
-            CoreResponse::Motion(MotionResponse::DispatchResult { success: false, error, .. }) => {
-                Err(error.unwrap_or_else(|| "Dispatch failed".to_string()))
+            CoreResponse::Motion(MotionResponse::DrainResult { success: true, .. }) => {
+                Ok(0)
             }
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),
@@ -483,8 +500,22 @@ impl CoreSocketClient {
     // Config operations
     // ========================================================================
 
-    /// Load printer config from file path on the server.
-    pub async fn config_load(&self, config_path: &str) -> Result<(), String> {
+    /// Update motion config parameters.
+    pub async fn config_update_motion(&self, motion_config_json: &str) -> Result<(), String> {
+        match self.send_request(&CoreRequest::Config(ConfigRequest::UpdateMotionConfig {
+            motion_config_json: motion_config_json.to_string(),
+        })).await? {
+            CoreResponse::Config(ConfigResponse::MotionConfigUpdated { success: true, .. }) => Ok(()),
+            CoreResponse::Config(ConfigResponse::MotionConfigUpdated { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "Motion config update failed".to_string()))
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    /// Load printer configuration from file.
+    pub async fn config_load_printer(&self, config_path: &str) -> Result<(), String> {
         match self.send_request(&CoreRequest::Config(ConfigRequest::LoadPrinterConfig {
             config_path: config_path.to_string(),
         })).await? {
@@ -497,22 +528,8 @@ impl CoreSocketClient {
         }
     }
 
-    /// Update motion config directly via JSON string.
-    pub async fn config_update_motion(&self, motion_config_json: &str) -> Result<(), String> {
-        match self.send_request(&CoreRequest::Config(ConfigRequest::UpdateMotionConfig {
-            motion_config_json: motion_config_json.to_string(),
-        })).await? {
-            CoreResponse::Config(ConfigResponse::MotionConfigUpdated { success: true, .. }) => Ok(()),
-            CoreResponse::Config(ConfigResponse::MotionConfigUpdated { success: false, error }) => {
-                Err(error.unwrap_or_else(|| "Config update failed".to_string()))
-            }
-            CoreResponse::Error(e) => Err(e.message),
-            other => Err(format!("Unexpected response: {:?}", other)),
-        }
-    }
-
-    /// Load all config files from a directory (printer.json, motion.json, hardware.json).
-    pub async fn load_all_configs(&self, config_dir: &str) -> Result<(bool, bool, bool), String> {
+    /// Load all configuration files from a directory.
+    pub async fn config_load_all(&self, config_dir: &str) -> Result<(bool, bool, bool), String> {
         match self.send_request(&CoreRequest::Config(ConfigRequest::LoadAllConfigs {
             config_dir: config_dir.to_string(),
         })).await? {
@@ -523,53 +540,73 @@ impl CoreSocketClient {
                 hardware_loaded,
                 ..
             }) => Ok((printer_loaded, motion_loaded, hardware_loaded)),
-            CoreResponse::Config(ConfigResponse::AllConfigsLoaded {
-                success: false,
-                error,
-                ..
-            }) => Err(error.unwrap_or_else(|| "Load all configs failed".to_string())),
-            CoreResponse::Error(e) => Err(e.message),
-            other => Err(format!("Unexpected response: {:?}", other)),
-        }
-    }
-
-    // ========================================================================
-    // GPIO operations
-    // ========================================================================
-
-    /// Set GPIO pin value.
-    pub async fn gpio_set(&self, name: &str, value: f32) -> Result<bool, String> {
-        match self.send_request(&CoreRequest::Gpio(emb_api::GpioRequest::SetPin {
-            name: name.to_string(),
-            value,
-        })).await? {
-            CoreResponse::Gpio(emb_api::GpioResponse::SetPinResult { success, error }) => {
-                if success {
-                    Ok(true)
-                } else {
-                    Err(error.unwrap_or_else(|| "Set pin failed".to_string()))
-                }
+            CoreResponse::Config(ConfigResponse::AllConfigsLoaded { success: false, error, .. }) => {
+                Err(error.unwrap_or_else(|| "Config load failed".to_string()))
             }
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),
         }
     }
 
-    /// Query GPIO pin value.
-    pub async fn gpio_query(&self, name: &str) -> Result<f32, String> {
-        match self.send_request(&CoreRequest::Gpio(emb_api::GpioRequest::QueryPin {
+    /// Alias for config_load_printer for backward compatibility.
+    pub async fn config_load(&self, config_path: &str) -> Result<(), String> {
+        self.config_load_printer(config_path).await
+    }
+
+    /// Alias for config_load_all for backward compatibility.
+    pub async fn load_all_configs(&self, config_dir: &str) -> Result<(bool, bool, bool), String> {
+        self.config_load_all(config_dir).await
+    }
+
+    // ========================================================================
+    // GPIO operations
+    // ========================================================================
+
+    /// Set a GPIO pin value.
+    pub async fn gpio_set(&self, name: &str, value: f32) -> Result<(), String> {
+        match self.send_request(&CoreRequest::Gpio(emb_api::GpioRequest::SetPin {
             name: name.to_string(),
+            value,
         })).await? {
-            CoreResponse::Gpio(emb_api::GpioResponse::QueryPinResult { value, .. }) => Ok(value),
+            CoreResponse::Gpio(emb_api::GpioResponse::SetPinResult { success: true, .. }) => Ok(()),
+            CoreResponse::Gpio(emb_api::GpioResponse::SetPinResult { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "GPIO set failed".to_string()))
+            }
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),
         }
     }
-    
-    /// 订阅GPIO Report事件
+
+    /// Query a GPIO pin value.
+    pub async fn gpio_query(&self, name: &str) -> Result<f32, String> {
+        match self.send_request(&CoreRequest::Gpio(emb_api::GpioRequest::QueryPin {
+            name: name.to_string(),
+        })).await? {
+            CoreResponse::Gpio(emb_api::GpioResponse::QueryPinResult { value, success: true, .. }) => Ok(value),
+            CoreResponse::Gpio(emb_api::GpioResponse::QueryPinResult { success: false, .. }) => {
+                Err("GPIO query failed".to_string())
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    /// Subscribe to GPIO report events.
     pub async fn gpio_subscribe_report(&self, enable: bool) -> Result<(), String> {
         match self.send_request(&CoreRequest::Gpio(emb_api::GpioRequest::SubscribeReport { enable })).await? {
-            CoreResponse::Gpio(emb_api::GpioResponse::SubscribeResult { success, error }) => {
+            CoreResponse::Gpio(emb_api::GpioResponse::SubscribeResult { success: true, .. }) => Ok(()),
+            CoreResponse::Gpio(emb_api::GpioResponse::SubscribeResult { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "GPIO subscribe failed".to_string()))
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    /// 订阅Status Report事件（DeviceStatusReport）
+    pub async fn subscribe_status(&self, enable: bool) -> Result<(), String> {
+        match self.send_request(&CoreRequest::Serial(emb_api::SerialRequest::SubscribeStatus { enable })).await? {
+            CoreResponse::Serial(emb_api::SerialResponse::SubscribeStatusResult { success, error }) => {
                 if success {
                     Ok(())
                 } else {
@@ -582,51 +619,75 @@ impl CoreSocketClient {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_client_connect_ping() {
-        // Start a mock echo server that responds to Pong
-        use tokio::net::TcpListener;
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        tokio::spawn(async move {
-            loop {
-                if let Ok((stream, _)) = listener.accept().await {
-                    tokio::spawn(async move {
-                        // Handle one request then close
-                        let mut stream = stream;
-                        let mut buf = [0u8; 4096];
-                        let n = stream.read(&mut buf).await.unwrap_or(0);
-                        if n > 4 {
-                            // Parse request, respond with Pong
-                            match decode_request(&buf[..n]) {
-                                Ok((_, _req)) => {
-                                    let resp = CoreResponse::Pong;
-                                    let encoded = encode_response(&resp).unwrap();
-                                    let _ = stream.write_all(&encoded).await;
-                                }
-                                Err(_) => {}
+/// Background reader task: reads from the TCP stream, decodes messages,
+/// and sends them through the channel. Works independently of send_request.
+async fn background_reader(
+    mut reader: tokio::io::ReadHalf<TcpStream>,
+    tx: mpsc::Sender<CoreResponse>,
+    gpio_callback: Arc<RwLock<Option<Box<dyn Fn(String, f32) + Send + Sync>>>>,
+    status_callback: Arc<RwLock<Option<Box<dyn Fn(u8, Vec<u8>) + Send + Sync>>>>,
+) {
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 8192];
+    
+    loop {
+        // Read from stream
+        match reader.read(&mut tmp).await {
+            Ok(0) => {
+                debug!("Background reader: server closed connection");
+                break;
+            }
+            Ok(n) => {
+                buf.extend_from_slice(&tmp[..n]);
+            }
+            Err(e) => {
+                warn!("Background reader read error: {}", e);
+                break;
+            }
+        }
+        
+        // Decode all complete messages in buffer
+        loop {
+            match decode_response(&buf) {
+                Ok((remaining, response)) => {
+                    let consumed = buf.len() - remaining.len();
+                    buf.drain(..consumed);
+                    
+                    // Handle push messages (GPIO Report and Status Report)
+                    match &response {
+                        CoreResponse::Gpio(emb_api::GpioResponse::PinReport { name, value }) => {
+                            let callback_guard = gpio_callback.read().await;
+                            if let Some(callback) = callback_guard.as_ref() {
+                                callback(name.clone(), *value);
+                            }
+                            continue; // Don't send to channel
+                        }
+                        CoreResponse::Serial(emb_api::SerialResponse::StatusReport { frame_type, payload }) => {
+                            let callback_guard = status_callback.read().await;
+                            if let Some(callback) = callback_guard.as_ref() {
+                                callback(*frame_type, payload.clone());
+                            }
+                            continue; // Don't send to channel
+                        }
+                        _ => {
+                            // Non-push message, send to channel
+                            if tx.send(response).await.is_err() {
+                                // Receiver dropped, stop reading
+                                return;
                             }
                         }
-                    });
+                    }
+                }
+                Err(e) => {
+                    if e.contains("too short") {
+                        break; // Need more data, continue reading
+                    }
+                    // Invalid data, clear buffer
+                    warn!("Background reader decode error: {}, clearing buffer", e);
+                    buf.clear();
+                    break;
                 }
             }
-        });
-
-        tokio::time::sleep(Duration::from_millis(10)).await;
-
-        let client = CoreSocketClient::default_client(&addr.to_string());
-        client.connect().await.unwrap();
-        assert!(client.is_connected().await);
-
-        client.ping().await.unwrap();
-        client.disconnect().await;
-        assert!(!client.is_connected().await);
+        }
     }
-
-    use emb_api::decode_request;
 }

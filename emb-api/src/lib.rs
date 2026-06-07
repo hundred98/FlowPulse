@@ -81,6 +81,11 @@ pub enum SerialRequest {
     EnterPrintMode,
     /// 退出打印模式 - 打印结束时调用
     ExitPrintMode,
+    /// 订阅状态上报（DeviceStatusReport）
+    SubscribeStatus {
+        /// 是否启用订阅
+        enable: bool,
+    },
 }
 
 /// Motion planning related requests
@@ -266,6 +271,16 @@ pub enum SerialResponse {
     },
     /// Sequence init result
     SeqInitResult,
+    /// 状态订阅结果
+    SubscribeStatusResult {
+        success: bool,
+        error: Option<String>,
+    },
+    /// 状态上报推送（服务端主动推送）
+    StatusReport {
+        frame_type: u8,
+        payload: Vec<u8>,
+    },
 }
 
 /// Motion planning related responses

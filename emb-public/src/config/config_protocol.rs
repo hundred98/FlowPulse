@@ -99,6 +99,15 @@ impl ConfigFrameBuilder {
         frames
     }
 
+    /// 构建状态查询帧（StatusQuery，帧类型 0x03）
+    /// 发送此帧后，下位机会:
+    /// 1. 立即回复 DeviceStatusReport
+    /// 2. 启动定时上报（periodic_report_enabled = 1）
+    pub fn build_status_query_frame() -> Vec<u8> {
+        // StatusQuery 帧无 payload，仅 TYPE=0x03
+        Self::wrap_frame(0x03, &[])
+    }
+
     /// 构建设置温度帧
     /// heater_id: 0=热床, 1=热端
     /// target_temp: 目标温度（摄氏度）
