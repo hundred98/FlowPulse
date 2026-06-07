@@ -717,9 +717,10 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
 /// 
 /// This function performs the complete device initialization process:
 /// 1. Load configuration files from the specified directory
-/// 2. Send motion config to server (for motion planning)
-/// 3. Send hardware config frames to device (motor, temperature, heater, gpio, etc.)
-/// 4. Send ConfigComplete to device
+/// 2. Connect to serial port
+/// 3. Send motion config to server (for motion planning)
+/// 4. Send hardware config frames to device (motor, temperature, heater, gpio, etc.)
+/// 5. Send ConfigComplete to device
 /// 
 /// # Arguments
 /// * `client` - The CoreSocketClient to use for sending data
@@ -732,13 +733,29 @@ pub async fn configure_device(client: &CoreSocketClient, config_dir: &str) -> Re
     // Step 1: Load configuration files
     let configs = load_configs(config_dir)?;
     
-    // Step 2: Send motion config to server (for motion planning)
+    // Step 2: Connect to serial port
+    // Read serial configuration from printer.json
+    if let Some(comm) = &configs.printer.communication {
+        if let Some(serial) = &comm.serial {
+            log::info!("🔌 连接串口: {} @ {}", serial.port, serial.baud_rate);
+            match client.serial_connect(&serial.port, serial.baud_rate).await {
+                Ok(()) => log::info!("✅ 串口连接成功"),
+                Err(e) => {
+                    log::error!("❌ 串口连接失败: {}", e);
+                    log::info!("💡 请确认下位机已连接到 {}", serial.port);
+                    return Err(format!("串口连接失败: {}", e));
+                }
+            }
+        }
+    }
+    
+    // Step 3: Send motion config to server (for motion planning)
     // This includes: max_velocity, junction_deviation, velocity_profile, etc.
     let motion_config_json = build_motion_config_json(&configs)?;
     client.config_update_motion(&motion_config_json).await
         .map_err(|e| format!("Failed to send motion config: {}", e))?;
     
-    // Step 3: Send hardware config frames to device
+    // Step 4: Send hardware config frames to device
     // This includes all hardware configurations from hardware.json:
     // - Motor config (step_pin, dir_pin, enable_pin, steps_per_mm, etc.)
     // - Temperature config (hotbed, hotend sensors and PID parameters)
@@ -756,7 +773,7 @@ pub async fn configure_device(client: &CoreSocketClient, config_dir: &str) -> Re
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     
-    // Step 4: Send ConfigComplete to notify device that all configs are sent
+    // Step 5: Send ConfigComplete to notify device that all configs are sent
     client.serial_config_complete().await
         .map_err(|e| format!("Failed to send ConfigComplete: {}", e))?;
     

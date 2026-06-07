@@ -49,22 +49,8 @@ async fn main() {
         }
     }
     
-    // 连接串口
-    let serial_port = "COM7";
-    let baud_rate = 57600;
-    
-    log::info!("🔌 连接串口: {} @ {}", serial_port, baud_rate);
-    
-    match client.serial_connect(serial_port, baud_rate).await {
-        Ok(()) => log::info!("✅ 串口连接成功"),
-        Err(e) => {
-            log::error!("❌ 串口连接失败: {}", e);
-            log::info!("💡 请确认下位机已连接到 {}", serial_port);
-            return;
-        }
-    }
-    
     // 加载配置并发送到服务端和下位机
+    // 注意：串口连接现在由 configure_device 函数内部处理，配置来自 printer.json
     let config_dir = "config";
     log::info!("📁 加载配置文件: {}", config_dir);
     
