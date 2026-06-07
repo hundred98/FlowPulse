@@ -188,7 +188,9 @@ impl ConfigFrameBuilder {
         payload.push(adc.map(|p| p.port).unwrap_or(2));
         payload.push(adc.map(|p| p.pin).unwrap_or(0));
 
-        let beta_bytes = temp.beta.to_be_bytes();
+        // beta 定义为 u32 但协议仅传输 2 字节（固件读 uint16_t），
+        // 必须转为 u16 后再大端序列化，避免取到高 2 字节的 0
+        let beta_bytes = (temp.beta as u16).to_be_bytes();
         payload.extend_from_slice(&beta_bytes[..2]);
 
         let r25_bytes = temp.ntc_resistance_25c.to_be_bytes();
