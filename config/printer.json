@@ -10,7 +10,8 @@
       "stop_bits": 1,
       "timeout_ms": 1000,
       "flow_control": false
-    }
+    },
+    "status_report_interval_ms": 1000
   },
   "gcode_settings": {
     "motion_batch_size": 4

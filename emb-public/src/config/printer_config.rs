@@ -32,7 +32,12 @@ pub struct PrinterJsonConfig {
 pub struct CommunicationConfig {
     #[serde(default)]
     pub serial: SerialPortConfig,
+    /// 状态上报间隔（毫秒），默认1000ms
+    #[serde(default = "default_status_report_interval_ms")]
+    pub status_report_interval_ms: u32,
 }
+
+fn default_status_report_interval_ms() -> u32 { 1000 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerialPortConfig {

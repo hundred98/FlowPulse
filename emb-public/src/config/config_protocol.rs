@@ -96,6 +96,9 @@ impl ConfigFrameBuilder {
             }
         }
 
+        // System config (status report interval)
+        frames.push(Self::build_system_frame(config.communication.status_report_interval_ms));
+
         frames
     }
 
@@ -420,6 +423,19 @@ impl ConfigFrameBuilder {
 
         frames.push(Self::wrap_frame(FRAME_TYPE_CONFIG, &buf));
         frames
+    }
+
+    /// 构建系统配置帧（CONFIG_SUBTYPE_SYSTEM = 0x05）
+    /// status_report_interval_ms: 状态上报间隔（毫秒）
+    fn build_system_frame(status_report_interval_ms: u32) -> Vec<u8> {
+        let mut buf = Vec::new();
+
+        buf.push(CONFIG_SUBTYPE_SYSTEM);
+        
+        // 状态上报间隔（大端字节序）
+        buf.extend_from_slice(&status_report_interval_ms.to_be_bytes());
+
+        Self::wrap_frame(FRAME_TYPE_CONFIG, &buf)
     }
 
     fn wrap_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {

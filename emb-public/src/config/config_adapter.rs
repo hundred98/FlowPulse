@@ -152,6 +152,9 @@ fn default_scale() -> f32 { 1.0 }
 #[derive(Debug, Deserialize)]
 pub struct CommunicationConfig {
     pub serial: Option<SerialConfig>,
+    /// 状态上报间隔（毫秒），可选
+    #[serde(default)]
+    pub status_report_interval_ms: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -525,6 +528,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
                 flow_control: s.flow_control,
             })
             .unwrap_or_default(),
+        status_report_interval_ms: comm.and_then(|c| c.status_report_interval_ms).unwrap_or(1000),
     };
 
     // Build printer params
