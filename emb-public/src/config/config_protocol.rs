@@ -206,8 +206,8 @@ impl ConfigFrameBuilder {
         payload.extend_from_slice(&ki_bytes[..4]);
         payload.extend_from_slice(&kd_bytes[..4]);
 
-        payload.push((temp.pid_interval_ms >> 0) as u8);
-        payload.push((temp.pid_interval_ms >> 8) as u8);
+        let pid_bytes = temp.pid_interval_ms.to_be_bytes();
+        payload.extend_from_slice(&pid_bytes[..2]);
 
         // 添加安全限制参数
         let min_temp_bytes = temp.min_temp.to_be_bytes();
