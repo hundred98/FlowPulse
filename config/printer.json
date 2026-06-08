@@ -15,5 +15,28 @@
   },
   "gcode_settings": {
     "motion_batch_size": 4
-  }
+  },
+  "temperature_presets": [
+    {
+      "name": "PLA",
+      "hotend_temp": 200.0,
+      "bed_temp": 60.0,
+      "chamber_temp": null,
+      "fan_speed": 255
+    },
+    {
+      "name": "ABS",
+      "hotend_temp": 240.0,
+      "bed_temp": 100.0,
+      "chamber_temp": 50.0,
+      "fan_speed": 0
+    },
+    {
+      "name": "PETG",
+      "hotend_temp": 230.0,
+      "bed_temp": 70.0,
+      "chamber_temp": null,
+      "fan_speed": 128
+    }
+  ]
 }

@@ -107,6 +107,12 @@ impl PresetManager {
         }
     }
 
+    /// Clear all presets
+    pub async fn clear(&self) {
+        let mut presets = self.presets.write().await;
+        presets.clear();
+    }
+
     /// Check if a preset exists
     pub async fn exists(&self, name: &str) -> bool {
         let presets = self.presets.read().await;

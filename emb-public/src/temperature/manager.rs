@@ -102,6 +102,33 @@ impl TemperatureManager {
         // TODO: Support additional heaters from config
 
         log::info!("Loaded {} heaters from config", heaters.len());
+        drop(heaters);
+
+        // Load temperature presets
+        self.load_presets(&config).await?;
+
+        Ok(())
+    }
+
+    /// Load temperature presets from configuration
+    async fn load_presets(&self, config: &crate::config::PrinterJsonConfig) -> EmbResult<()> {
+        // Clear existing presets
+        self.preset_manager.clear().await;
+
+        // Add presets from config
+        for preset_config in &config.temperature_presets {
+            let preset = TemperaturePreset {
+                name: preset_config.name.clone(),
+                hotend_temp: preset_config.hotend_temp,
+                bed_temp: preset_config.bed_temp,
+                chamber_temp: preset_config.chamber_temp,
+                fan_speed: preset_config.fan_speed,
+            };
+
+            self.preset_manager.add(preset).await?;
+        }
+
+        log::info!("Loaded {} temperature presets", config.temperature_presets.len());
         Ok(())
     }
 

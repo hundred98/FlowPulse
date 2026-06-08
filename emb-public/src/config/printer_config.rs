@@ -26,6 +26,8 @@ pub struct PrinterJsonConfig {
     pub pinout: PinoutInfo,
     #[serde(default)]
     pub gpio: GpioConfig,
+    #[serde(default)]
+    pub temperature_presets: Vec<TemperaturePresetConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -109,6 +111,16 @@ impl Default for PrinterJsonConfig {
             probe: ProbeParams::default(),
             pinout: PinoutInfo::default(),
             gpio: GpioConfig::default(),
+            temperature_presets: vec![
+                TemperaturePresetConfig::default(),
+                TemperaturePresetConfig {
+                    name: "ABS".to_string(),
+                    hotend_temp: 240.0,
+                    bed_temp: 100.0,
+                    chamber_temp: Some(50.0),
+                    fan_speed: 0,
+                },
+            ],
         }
     }
 }
@@ -666,6 +678,35 @@ pub struct AnalogCalibrationConfig {
 }
 
 fn default_scale() -> f32 { 1.0 }
+
+/// Temperature preset configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemperaturePresetConfig {
+    /// Preset name (e.g., "PLA", "ABS", "PETG")
+    pub name: String,
+    /// Hotend temperature in Celsius
+    pub hotend_temp: f32,
+    /// Bed temperature in Celsius
+    pub bed_temp: f32,
+    /// Chamber temperature in Celsius (optional)
+    #[serde(default)]
+    pub chamber_temp: Option<f32>,
+    /// Fan speed (0-255)
+    #[serde(default)]
+    pub fan_speed: u8,
+}
+
+impl Default for TemperaturePresetConfig {
+    fn default() -> Self {
+        Self {
+            name: "PLA".to_string(),
+            hotend_temp: 200.0,
+            bed_temp: 60.0,
+            chamber_temp: None,
+            fan_speed: 255,
+        }
+    }
+}
 
 pub fn parse_json_config(content: &str) -> Result<PrinterJsonConfig, String> {
     serde_json::from_str(content)
