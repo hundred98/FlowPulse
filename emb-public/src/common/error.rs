@@ -60,6 +60,15 @@ pub enum EmbError {
     
     #[error("Crypto error: {0}")]
     CryptoError(String),
+
+    #[error("Invalid parameter: {0}")]
+    InvalidParam(String),
+}
+
+impl From<String> for EmbError {
+    fn from(err: String) -> Self {
+        EmbError::Configuration(err)
+    }
 }
 
 pub type EmbResult<T> = Result<T, EmbError>;

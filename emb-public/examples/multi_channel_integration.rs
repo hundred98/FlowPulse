@@ -6,31 +6,35 @@
 use emb_public::{
     // Core components
     CoreSocketClient, CoreClientConfig,
-    
+
     // State management
     DeviceStateManager, DeviceStateConfig,
-    
+
     // State machine
     StateMachine, StateMachineConfig,
-    
+
     // Safety controller
     SafetyController, SafetyConfig,
-    
+
     // Print controller
     PrintController,
-    
+
+    // Temperature management
+    TemperatureManager,
+    temperature::TemperatureManagerConfig,
+
     // Message queue
     MessageQueue, MessageQueueConfig,
     Message, MessageType, MessagePriority,
     CommandHandler, StatusHandler, ErrorHandler,
-    
+
     // Event system
     SyncEventPublisher,
-    
+
     // Gateway channels
     ChannelManager, ChannelManagerConfig,
     WebSocketConfig, UnixSocketConfig, MqttConfig,
-    
+
     // Result type
     EmbResult,
 };
@@ -75,7 +79,13 @@ async fn main() -> EmbResult<()> {
     
     // Print controller
     let print_controller = Arc::new(PrintController::new());
-    
+
+    // Temperature manager
+    let temperature_manager = Arc::new(TemperatureManager::new(
+        core_client.clone(),
+        event_publisher.clone(),
+    ));
+
     log::info!("Core components created");
     
     // 2. Create message queue
@@ -94,6 +104,7 @@ async fn main() -> EmbResult<()> {
         device_state.clone(),
         state_machine.clone(),
         print_controller.clone(),
+        temperature_manager.clone(),
     ));
     message_queue.add_handler(MessageType::PrintStart, command_handler.clone()).await;
     message_queue.add_handler(MessageType::PrintPause, command_handler.clone()).await;
@@ -102,12 +113,13 @@ async fn main() -> EmbResult<()> {
     message_queue.add_handler(MessageType::TemperatureSet, command_handler.clone()).await;
     message_queue.add_handler(MessageType::MoveCommand, command_handler.clone()).await;
     message_queue.add_handler(MessageType::HomeCommand, command_handler.clone()).await;
-    
+
     // Status handler
     let status_handler = Arc::new(StatusHandler::new(
         device_state.clone(),
         state_machine.clone(),
         print_controller.clone(),
+        temperature_manager.clone(),
     ));
     message_queue.add_handler(MessageType::StateQuery, status_handler.clone()).await;
     message_queue.add_handler(MessageType::TemperatureGet, status_handler.clone()).await;
@@ -162,6 +174,7 @@ async fn main() -> EmbResult<()> {
         channel_manager_config,
         message_queue.clone(),
         device_state.clone(),
+        temperature_manager.clone(),
         event_publisher.clone(),
     ));
     

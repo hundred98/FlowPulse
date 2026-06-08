@@ -7,21 +7,25 @@ use std::sync::Arc;
 use emb_public::{
     // Core client
     CoreSocketClient,
-    
+
     // State management
     DeviceStateManager, DeviceStateConfig,
     StateMachine, StateMachineConfig,
     SafetyController, SafetyConfig,
     PrintController,
-    
+
+    // Temperature management
+    TemperatureManager,
+    temperature::TemperatureManagerConfig,
+
     // Message queue
     MessageQueue, MessageQueueConfig,
     CommandHandler, StatusHandler, ErrorHandler,
-    
+
     // Event system
     SyncEventPublisher,
     common::events::EventPublisher,  // Import EventPublisher trait
-    
+
     // Multi-channel access
     ChannelManager, ChannelManagerConfig,
     WebSocketConfig, UnixSocketConfig, MqttConfig,
@@ -43,13 +47,16 @@ pub struct AppState {
     
     /// Print controller for print job management
     pub print_controller: Arc<PrintController>,
-    
+
+    /// Temperature manager for temperature control
+    pub temperature_manager: Arc<TemperatureManager>,
+
     /// Message queue for asynchronous command processing
     pub message_queue: Arc<MessageQueue>,
-    
+
     /// Event publisher for event notifications
     pub event_publisher: Arc<SyncEventPublisher>,
-    
+
     /// Channel manager for multi-channel access
     pub channel_manager: Arc<ChannelManager>,
 }
@@ -82,7 +89,15 @@ impl AppState {
         
         // Create print controller
         let print_controller = Arc::new(PrintController::new());
-        
+
+        // Create temperature manager
+        let temperature_manager_config = TemperatureManagerConfig::default();
+        let temperature_manager = Arc::new(TemperatureManager::new(
+            core_client.clone(),
+            event_publisher.clone(),
+            temperature_manager_config,
+        ));
+
         // Create message queue
         let message_queue_config = MessageQueueConfig::default();
         let message_queue = Arc::new(MessageQueue::new(message_queue_config));
@@ -113,6 +128,7 @@ impl AppState {
             channel_manager_config,
             message_queue.clone(),
             device_state.clone(),
+            temperature_manager.clone(),
             event_publisher.clone(),
         ));
         
@@ -122,6 +138,7 @@ impl AppState {
             state_machine,
             safety_controller,
             print_controller,
+            temperature_manager,
             message_queue,
             event_publisher,
             channel_manager,
@@ -163,6 +180,7 @@ impl AppState {
             self.device_state.clone(),
             self.state_machine.clone(),
             self.print_controller.clone(),
+            self.temperature_manager.clone(),
         ));
         
         self.message_queue.add_handler(MessageType::PrintStart, command_handler.clone()).await;
@@ -178,6 +196,7 @@ impl AppState {
             self.device_state.clone(),
             self.state_machine.clone(),
             self.print_controller.clone(),
+            self.temperature_manager.clone(),
         ));
         
         self.message_queue.add_handler(MessageType::StateQuery, status_handler.clone()).await;

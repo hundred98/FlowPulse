@@ -4,6 +4,7 @@ use crate::{EmbResult, EmbError};
 use crate::state::{DeviceStateManager, Position};
 use crate::state_machine::{StateMachine, PrinterState, TransitionReason};
 use crate::print_control::PrintController;
+use crate::temperature::TemperatureManager;
 use crate::message_queue::{MessageHandler, Message, MessageType};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -12,12 +13,15 @@ use std::sync::Arc;
 pub struct CommandHandler {
     /// Device state manager
     device_state: Arc<DeviceStateManager>,
-    
+
     /// State machine
     state_machine: Arc<StateMachine>,
-    
+
     /// Print controller
     print_controller: Arc<PrintController>,
+
+    /// Temperature manager
+    temperature_manager: Arc<TemperatureManager>,
 }
 
 impl CommandHandler {
@@ -26,11 +30,13 @@ impl CommandHandler {
         device_state: Arc<DeviceStateManager>,
         state_machine: Arc<StateMachine>,
         print_controller: Arc<PrintController>,
+        temperature_manager: Arc<TemperatureManager>,
     ) -> Self {
         Self {
             device_state,
             state_machine,
             print_controller,
+            temperature_manager,
         }
     }
     
@@ -118,10 +124,10 @@ impl CommandHandler {
         let temperature = message.payload.get("temperature")
             .and_then(|v| v.as_f64())
             .ok_or_else(|| EmbError::MessageQueue("Missing temperature in temperature set command".to_string()))?;
-        
-        // Update temperature
-        self.device_state.update_temperature(heater.to_string(), temperature as f32).await;
-        
+
+        // Set temperature using TemperatureManager
+        self.temperature_manager.set_target(heater, temperature as f32).await?;
+
         log::info!("Temperature set: {} = {}", heater, temperature);
         Ok(())
     }

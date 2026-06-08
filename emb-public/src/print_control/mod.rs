@@ -5,5 +5,5 @@
 pub mod job;
 pub mod state_machine;
 
-pub use job::{PrintController, PrintJob, PrintState, TemperaturePreset};
+pub use job::{PrintController, PrintJob, PrintState};
 pub use state_machine::PrintStateMachine;

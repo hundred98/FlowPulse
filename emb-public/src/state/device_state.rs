@@ -4,12 +4,11 @@
 //! providing unified access to device status from the core server.
 
 use crate::common::{
-    EmbResult, EventPublisher, PrinterStatus, TempStatus, PositionData,
+    EmbResult, EventPublisher, PrinterStatus, PositionData,
     PrinterEvent, EventKind, EventSeverity,
 };
 use crate::core_client::CoreSocketClient;
 use std::sync::Arc;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc};
@@ -112,10 +111,7 @@ pub struct DeviceStateManager {
     
     /// Cached flow status
     flow_status: Arc<RwLock<FlowStatus>>,
-    
-    /// Cached temperatures
-    temperatures: Arc<RwLock<HashMap<String, f32>>>,
-    
+
     /// Last synchronization time
     last_sync: Arc<RwLock<Instant>>,
     
@@ -137,9 +133,6 @@ pub struct DeviceStateSnapshot {
     
     /// Flow status at snapshot
     pub flow_status: FlowStatus,
-    
-    /// Temperatures at snapshot
-    pub temperatures: HashMap<String, f32>,
 }
 
 impl DeviceStateManager {
@@ -156,7 +149,6 @@ impl DeviceStateManager {
             position: Arc::new(RwLock::new(Position::default())),
             motion_status: Arc::new(RwLock::new(MotionStatus::default())),
             flow_status: Arc::new(RwLock::new(FlowStatus::default())),
-            temperatures: Arc::new(RwLock::new(HashMap::new())),
             last_sync: Arc::new(RwLock::new(Instant::now())),
             history: Arc::new(RwLock::new(Vec::new())),
         }
@@ -235,12 +227,7 @@ impl DeviceStateManager {
     pub async fn get_flow_status(&self) -> FlowStatus {
         self.flow_status.read().await.clone()
     }
-    
-    /// Get current temperatures
-    pub async fn get_temperatures(&self) -> HashMap<String, f32> {
-        self.temperatures.read().await.clone()
-    }
-    
+
     /// Update position (called by sync loop or event handler)
     pub async fn update_position(&self, pos: Position) {
         let mut position = self.position.write().await;
@@ -279,33 +266,18 @@ impl DeviceStateManager {
             format!("Flow status updated: rate={}, active={}", status.flow_rate, status.is_active),
         ).with_severity(EventSeverity::Info));
     }
-    
-    /// Update temperature
-    pub async fn update_temperature(&self, heater: String, temp: f32) {
-        let mut temperatures = self.temperatures.write().await;
-        temperatures.insert(heater.clone(), temp);
-        
-        // Publish temperature update event
-        let _ = self.event_publisher.publish(PrinterEvent::new(
-            EventKind::TemperatureUpdate,
-            "device_state".to_string(),
-            format!("Temperature updated: {}={}", heater, temp),
-        ).with_severity(EventSeverity::Info));
-    }
-    
+
     /// Take a state snapshot
     pub async fn take_snapshot(&self) -> DeviceStateSnapshot {
         let position = self.position.read().await.clone();
         let motion_status = self.motion_status.read().await.clone();
         let flow_status = self.flow_status.read().await.clone();
-        let temperatures = self.temperatures.read().await.clone();
-        
+
         DeviceStateSnapshot {
             timestamp: Utc::now(),
             position,
             motion_status,
             flow_status,
-            temperatures,
         }
     }
     
@@ -345,19 +317,7 @@ impl DeviceStateManager {
         
         PrinterStatus::new(state.to_string())
     }
-    
-    /// Get temperature status (for FrontendDataProvider)
-    pub async fn get_temp_status(&self) -> TempStatus {
-        let temperatures = self.temperatures.read().await;
-        
-        let hotend_current = temperatures.get("hotend").copied().unwrap_or(0.0);
-        let hotend_target = temperatures.get("hotend_target").copied().unwrap_or(0.0);
-        let bed_current = temperatures.get("bed").copied().unwrap_or(0.0);
-        let bed_target = temperatures.get("bed_target").copied().unwrap_or(0.0);
-        
-        TempStatus::new(hotend_current, hotend_target, bed_current, bed_target)
-    }
-    
+
     /// Get position data (for FrontendDataProvider)
     pub async fn get_position_data(&self) -> PositionData {
         let position = self.position.read().await;

@@ -6,6 +6,7 @@
 use crate::{EmbResult};
 use crate::message_queue::{Message, MessageQueue};
 use crate::state::DeviceStateManager;
+use crate::temperature::TemperatureManager;
 use crate::common::{WebSocketMessage, SyncEventPublisher, PrinterEvent};
 use super::{WebSocketServer, WebSocketConfig, UnixSocketServer, UnixSocketConfig, MqttClient, MqttConfig};
 use std::sync::Arc;
@@ -66,6 +67,9 @@ pub struct ChannelManager {
     /// Device state manager
     #[allow(dead_code)]
     device_state: Arc<DeviceStateManager>,
+    /// Temperature manager
+    #[allow(dead_code)]
+    temperature_manager: Arc<TemperatureManager>,
     /// Event publisher
     #[allow(dead_code)]
     event_publisher: Arc<SyncEventPublisher>,
@@ -106,6 +110,7 @@ impl ChannelManager {
         config: ChannelManagerConfig,
         message_queue: Arc<MessageQueue>,
         device_state: Arc<DeviceStateManager>,
+        temperature_manager: Arc<TemperatureManager>,
         event_publisher: Arc<SyncEventPublisher>,
     ) -> Self {
         // Create WebSocket server if enabled
@@ -114,11 +119,12 @@ impl ChannelManager {
                 config.websocket.clone(),
                 message_queue.clone(),
                 device_state.clone(),
+                temperature_manager.clone(),
             )))
         } else {
             None
         };
-        
+
         // Create UnixSocket server if enabled
         let unix_socket_server = if config.enable_unix_socket {
             Some(Arc::new(UnixSocketServer::new(
@@ -129,18 +135,19 @@ impl ChannelManager {
         } else {
             None
         };
-        
+
         // Create MQTT client if enabled
         let mqtt_client = if config.enable_mqtt {
             Some(Arc::new(MqttClient::new(
                 config.mqtt.clone(),
                 message_queue.clone(),
                 device_state.clone(),
+                temperature_manager.clone(),
             )))
         } else {
             None
         };
-        
+
         Self {
             config,
             websocket_server,
@@ -148,6 +155,7 @@ impl ChannelManager {
             mqtt_client,
             message_queue,
             device_state,
+            temperature_manager,
             event_publisher,
             status: Arc::new(RwLock::new(ChannelManagerStatus::default())),
         }

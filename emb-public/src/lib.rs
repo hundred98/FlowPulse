@@ -14,6 +14,7 @@ pub mod gateway;
 pub mod state;  // New module (device_state, frontend_provider)
 pub mod safety;  // New module (safety controller)
 pub mod gcode;  // New module (gcode parser, reserved)
+pub mod temperature;  // New module (temperature management)
 
 // Re-export common types
 pub use common::{
@@ -53,7 +54,7 @@ pub use message_queue::{
 
 // Re-export print control types
 pub use print_control::{
-    PrintController, PrintJob, PrintState, TemperaturePreset,
+    PrintController, PrintJob, PrintState,
 };
 
 // Re-export gateway types
@@ -77,7 +78,14 @@ pub use state::{
 // Re-export safety types
 pub use safety::{
     SafetyController, SafetyConfig, TemperatureLimit, MotionLimit,
-    SafetyCheckResult,
+    SafetyCheckResult as SafetyControllerCheckResult,
+};
+
+// Re-export temperature types
+pub use temperature::{
+    TemperatureManager, TemperatureManagerConfig,
+    HeaterState, TemperaturePreset, TemperatureSafetyChecker, PresetManager,
+    SafetyLevel, SafetyAction, SafetyCheckResult,
 };
 
 // Re-export message queue handlers

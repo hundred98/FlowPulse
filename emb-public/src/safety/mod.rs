@@ -11,32 +11,24 @@ use std::collections::HashMap;
 /// Safety configuration
 #[derive(Debug, Clone)]
 pub struct SafetyConfig {
-    /// Temperature limits for heaters
-    pub temperature_limits: HashMap<String, TemperatureLimit>,
-    
     /// Motion limits for axes
     pub motion_limits: HashMap<String, MotionLimit>,
-    
+
     /// Emergency stop timeout (milliseconds)
     pub emergency_stop_timeout_ms: u64,
-    
+
     /// Enable safety checks
     pub enable_safety_checks: bool,
 }
 
 impl Default for SafetyConfig {
     fn default() -> Self {
-        let mut temperature_limits = HashMap::new();
-        temperature_limits.insert("hotend".to_string(), TemperatureLimit { min: 0.0, max: 300.0 });
-        temperature_limits.insert("bed".to_string(), TemperatureLimit { min: 0.0, max: 120.0 });
-        
         let mut motion_limits = HashMap::new();
         motion_limits.insert("x".to_string(), MotionLimit { min: 0.0, max: 300.0 });
         motion_limits.insert("y".to_string(), MotionLimit { min: 0.0, max: 300.0 });
         motion_limits.insert("z".to_string(), MotionLimit { min: 0.0, max: 400.0 });
-        
+
         Self {
-            temperature_limits,
             motion_limits,
             emergency_stop_timeout_ms: 1000,
             enable_safety_checks: true,
@@ -49,7 +41,7 @@ impl Default for SafetyConfig {
 pub struct TemperatureLimit {
     /// Minimum temperature
     pub min: f32,
-    
+
     /// Maximum temperature
     pub max: f32,
 }
@@ -132,34 +124,7 @@ impl SafetyController {
             emergency_stop_active: Arc::new(tokio::sync::RwLock::new(false)),
         }
     }
-    
-    /// Check temperature range
-    pub async fn check_temperature_range(&self, heater: &str, temperature: f32) -> SafetyCheckResult {
-        if !self.config.enable_safety_checks {
-            return SafetyCheckResult::passed("temperature_range".to_string());
-        }
-        
-        let limit = self.config.temperature_limits.get(heater);
-        if limit.is_none() {
-            return SafetyCheckResult::passed("temperature_range".to_string());
-        }
-        
-        let limit = limit.unwrap();
-        if temperature < limit.min {
-            let message = format!("Temperature {} too low: {} < {}", heater, temperature, limit.min);
-            self.publish_safety_alert(&message, EventSeverity::Warning);
-            return SafetyCheckResult::failed("temperature_range".to_string(), message, EventSeverity::Warning);
-        }
-        
-        if temperature > limit.max {
-            let message = format!("Temperature {} too high: {} > {}", heater, temperature, limit.max);
-            self.publish_safety_alert(&message, EventSeverity::Critical);
-            return SafetyCheckResult::failed("temperature_range".to_string(), message, EventSeverity::Critical);
-        }
-        
-        SafetyCheckResult::passed("temperature_range".to_string())
-    }
-    
+
     /// Check motion limits
     pub async fn check_motion_limits(&self, axis: &str, position: f32) -> SafetyCheckResult {
         if !self.config.enable_safety_checks {
@@ -231,14 +196,7 @@ impl SafetyController {
     /// Run all safety checks
     pub async fn run_all_checks(&self) -> Vec<SafetyCheckResult> {
         let mut results = Vec::new();
-        
-        // Check temperatures
-        let temperatures = self.device_state.get_temperatures().await;
-        for (heater, temp) in temperatures.iter() {
-            let result = self.check_temperature_range(heater, *temp).await;
-            results.push(result);
-        }
-        
+
         // Check positions
         let position = self.device_state.get_position().await;
         let axes = [("x", position.x), ("y", position.y), ("z", position.z)];
@@ -246,7 +204,7 @@ impl SafetyController {
             let result = self.check_motion_limits(axis, *pos).await;
             results.push(result);
         }
-        
+
         results
     }
     

@@ -13,17 +13,27 @@
 //! // Get configuration
 //! let config = ConfigManager::instance().get_config()?;
 //!
+//! // Register change callback
+//! ConfigManager::instance().on_config_change(Box::new(|config| {
+//!     log::info!("Config changed: {}", config.printer_model);
+//! }));
+//!
 //! // Reload configuration (user triggered)
 //! ConfigManager::instance().reload(&client).await?;
 //! ```
 
-use std::sync::RwLock;
+use std::sync::{RwLock, Arc};
 use once_cell::sync::Lazy;
 
 use super::printer_config::PrinterJsonConfig;
 use super::config_adapter::{load_configs, build_printer_config, build_motion_config_json, LoadedConfigs};
 use super::config_protocol::ConfigFrameBuilder;
 use crate::CoreSocketClient;
+
+/// Configuration change callback type.
+/// 
+/// Called when configuration is loaded or reloaded.
+pub type ConfigChangeCallback = Box<dyn Fn(&PrinterJsonConfig) + Send + Sync>;
 
 /// Global configuration manager singleton.
 /// 
@@ -40,6 +50,8 @@ struct ConfigInner {
     loaded_configs: Option<LoadedConfigs>,
     /// Configuration directory path
     config_dir: String,
+    /// Configuration change callbacks
+    callbacks: Vec<Arc<ConfigChangeCallback>>,
 }
 
 impl Default for ConfigInner {
@@ -48,6 +60,7 @@ impl Default for ConfigInner {
             printer_config: None,
             loaded_configs: None,
             config_dir: String::new(),
+            callbacks: Vec::new(),
         }
     }
 }
@@ -61,6 +74,40 @@ impl ConfigManager {
     /// Get the global ConfigManager instance.
     pub fn instance() -> &'static ConfigManager {
         &CONFIG_MANAGER
+    }
+
+    /// Register a callback to be called when configuration changes.
+    /// 
+    /// The callback will be called:
+    /// - After `load()` completes successfully
+    /// - After `reload()` completes successfully
+    /// 
+    /// # Arguments
+    /// * `callback` - Function to call with the new configuration
+    /// 
+    /// # Example
+    /// ```ignore
+    /// ConfigManager::instance().on_config_change(Box::new(|config| {
+    ///     log::info!("Temperature PID updated: kp={}", config.temperature.hotend.kp);
+    ///     // Update local cache or reinitialize
+    /// }));
+    /// ```
+    pub fn on_config_change(&self, callback: ConfigChangeCallback) {
+        let mut inner = match self.inner.write() {
+            Ok(guard) => guard,
+            Err(e) => {
+                log::error!("Failed to acquire lock for callback registration: {}", e);
+                return;
+            }
+        };
+        inner.callbacks.push(Arc::new(callback));
+    }
+
+    /// Clear all registered callbacks.
+    pub fn clear_callbacks(&self) {
+        if let Ok(mut inner) = self.inner.write() {
+            inner.callbacks.clear();
+        }
     }
 
     /// Load configuration files at startup.
@@ -80,10 +127,17 @@ impl ConfigManager {
         let configs = load_configs(config_dir)?;
         let printer_config = build_printer_config(&configs);
         
-        let mut inner = self.inner.write().map_err(|e| format!("Lock error: {}", e))?;
-        inner.config_dir = config_dir.to_string();
-        inner.printer_config = Some(printer_config);
-        inner.loaded_configs = Some(configs);
+        // Update cached config and get callbacks
+        let callbacks = {
+            let mut inner = self.inner.write().map_err(|e| format!("Lock error: {}", e))?;
+            inner.config_dir = config_dir.to_string();
+            inner.printer_config = Some(printer_config.clone());
+            inner.loaded_configs = Some(configs);
+            inner.callbacks.clone()
+        };
+        
+        // Notify all registered callbacks
+        Self::notify_callbacks(&callbacks, &printer_config);
         
         log::info!("✅ Configuration loaded successfully");
         Ok(())
@@ -96,6 +150,7 @@ impl ConfigManager {
     /// 2. Send motion config to server
     /// 3. Send hardware config frames to device (STM32)
     /// 4. Send ConfigComplete to device
+    /// 5. Notify all registered callbacks
     /// 
     /// # Arguments
     /// * `client` - The CoreSocketClient for communication
@@ -140,12 +195,16 @@ impl ConfigManager {
         client.serial_config_complete().await
             .map_err(|e| format!("Failed to send ConfigComplete: {}", e))?;
         
-        // Step 5: Update cached config
-        {
+        // Step 5: Update cached config and get callbacks
+        let callbacks = {
             let mut inner = self.inner.write().map_err(|e| format!("Lock error: {}", e))?;
-            inner.printer_config = Some(printer_config);
+            inner.printer_config = Some(printer_config.clone());
             inner.loaded_configs = Some(configs);
-        }
+            inner.callbacks.clone()
+        };
+        
+        // Step 6: Notify all registered callbacks
+        Self::notify_callbacks(&callbacks, &printer_config);
         
         log::info!("✅ Configuration reloaded successfully");
         Ok(())
@@ -188,11 +247,24 @@ impl ConfigManager {
     pub fn is_loaded(&self) -> bool {
         self.inner.read().map(|inner| inner.printer_config.is_some()).unwrap_or(false)
     }
+
+    /// Notify all registered callbacks with the new configuration.
+    fn notify_callbacks(callbacks: &[Arc<ConfigChangeCallback>], config: &PrinterJsonConfig) {
+        if callbacks.is_empty() {
+            return;
+        }
+        
+        log::debug!("📢 Notifying {} callback(s) of config change", callbacks.len());
+        for callback in callbacks {
+            callback(config);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn test_instance() {
@@ -203,9 +275,18 @@ mod tests {
     }
 
     #[test]
-    fn test_not_loaded() {
-        // Note: This test might fail if other tests have loaded config
-        // In real usage, is_loaded() should return false before load()
-        let _ = ConfigManager::instance();
+    fn test_callback_registration() {
+        // Use atomic to track callback invocations
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = counter.clone();
+        
+        // Register callback
+        ConfigManager::instance().on_config_change(Box::new(move |_config| {
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+        }));
+        
+        // Note: This test doesn't actually trigger the callback
+        // because we don't want to depend on file system
+        // In real usage, load() or reload() would trigger it
     }
 }

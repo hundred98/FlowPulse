@@ -4,6 +4,7 @@ use crate::{EmbResult, EmbError};
 use crate::state::DeviceStateManager;
 use crate::state_machine::StateMachine;
 use crate::print_control::PrintController;
+use crate::temperature::TemperatureManager;
 use crate::message_queue::{MessageHandler, Message, MessageType};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -13,12 +14,15 @@ use serde_json::json;
 pub struct StatusHandler {
     /// Device state manager
     device_state: Arc<DeviceStateManager>,
-    
+
     /// State machine
     state_machine: Arc<StateMachine>,
-    
+
     /// Print controller
     print_controller: Arc<PrintController>,
+
+    /// Temperature manager
+    temperature_manager: Arc<TemperatureManager>,
 }
 
 impl StatusHandler {
@@ -27,11 +31,13 @@ impl StatusHandler {
         device_state: Arc<DeviceStateManager>,
         state_machine: Arc<StateMachine>,
         print_controller: Arc<PrintController>,
+        temperature_manager: Arc<TemperatureManager>,
     ) -> Self {
         Self {
             device_state,
             state_machine,
             print_controller,
+            temperature_manager,
         }
     }
     
@@ -39,12 +45,18 @@ impl StatusHandler {
     async fn handle_state_query(&self, message: &mut Message) -> EmbResult<()> {
         // Get current printer state
         let state = self.state_machine.get_state();
-        
+
         // Get device state
         let position = self.device_state.get_position().await;
         let motion_status = self.device_state.get_motion_status().await;
-        let temperatures = self.device_state.get_temperatures().await;
-        
+        let heaters = self.temperature_manager.get_all_heaters().await;
+
+        // Convert heaters to simple temperature map
+        let temperatures: std::collections::HashMap<String, f32> = heaters
+            .iter()
+            .map(|(name, state)| (name.clone(), state.current_temp))
+            .collect();
+
         // Build response payload
         message.payload = json!({
             "state": format!("{:?}", state),
@@ -57,34 +69,53 @@ impl StatusHandler {
             "motion_status": format!("{:?}", motion_status),
             "temperatures": temperatures,
         });
-        
+
         log::debug!("State query: {:?}", state);
         Ok(())
     }
     
     /// Handle temperature get
     async fn handle_temperature_get(&self, message: &mut Message) -> EmbResult<()> {
-        // Get temperatures
-        let temperatures = self.device_state.get_temperatures().await;
-        
+        // Get heaters
+        let heaters = self.temperature_manager.get_all_heaters().await;
+
         // Check if specific heater is requested
         let heater = message.payload.get("heater").and_then(|v| v.as_str());
-        
+
         if let Some(heater_name) = heater {
             // Return specific heater temperature
-            let temp = temperatures.get(heater_name).copied().unwrap_or(0.0);
-            message.payload = json!({
-                "heater": heater_name,
-                "temperature": temp,
-            });
+            if let Some(heater_state) = heaters.get(heater_name) {
+                message.payload = json!({
+                    "heater": heater_name,
+                    "current_temp": heater_state.current_temp,
+                    "target_temp": heater_state.target_temp,
+                    "is_heating": heater_state.is_heating,
+                });
+            } else {
+                return Err(EmbError::InvalidParam(format!("Unknown heater: {}", heater_name)));
+            }
         } else {
-            // Return all temperatures
+            // Return all heaters
+            let temp_map: std::collections::HashMap<String, serde_json::Value> = heaters
+                .iter()
+                .map(|(name, state)| {
+                    (
+                        name.clone(),
+                        json!({
+                            "current_temp": state.current_temp,
+                            "target_temp": state.target_temp,
+                            "is_heating": state.is_heating,
+                        }),
+                    )
+                })
+                .collect();
+
             message.payload = json!({
-                "temperatures": temperatures,
+                "heaters": temp_map,
             });
         }
-        
-        log::debug!("Temperature get: {:?}", temperatures);
+
+        log::debug!("Temperature get: {} heaters", heaters.len());
         Ok(())
     }
     
@@ -94,8 +125,14 @@ impl StatusHandler {
         let position = self.device_state.get_position().await;
         let motion_status = self.device_state.get_motion_status().await;
         let flow_status = self.device_state.get_flow_status().await;
-        let temperatures = self.device_state.get_temperatures().await;
-        
+        let heaters = self.temperature_manager.get_all_heaters().await;
+
+        // Convert heaters to simple temperature map
+        let temperatures: std::collections::HashMap<String, f32> = heaters
+            .iter()
+            .map(|(name, state)| (name.clone(), state.current_temp))
+            .collect();
+
         // Build hardware status response
         message.payload = json!({
             "position": {
@@ -113,9 +150,10 @@ impl StatusHandler {
             "temperatures": temperatures,
             "is_stale": self.device_state.is_stale(5000).await,
         });
-        
+
         log::debug!("Hardware status query");
-        Ok(())
+        Ok(()
+)
     }
     
     /// Handle print progress query

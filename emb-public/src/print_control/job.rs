@@ -7,6 +7,7 @@ use crate::gcode::GCodeFileParser;
 use crate::common::EmbResult;
 use crate::state::DeviceStateManager;
 use crate::safety::SafetyController;
+use crate::temperature::TemperaturePreset;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrintState {
@@ -65,25 +66,6 @@ impl PrintJob {
                 .as_secs(),
             started_at: None,
             completed_at: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TemperaturePreset {
-    pub name: String,
-    pub hotend_temp: f32,
-    pub bed_temp: f32,
-    pub fan_speed: u8,
-}
-
-impl Default for TemperaturePreset {
-    fn default() -> Self {
-        Self {
-            name: "PLA".to_string(),
-            hotend_temp: 200.0,
-            bed_temp: 60.0,
-            fan_speed: 100,
         }
     }
 }
@@ -210,6 +192,7 @@ impl PrintController {
                     name: "ABS".to_string(),
                     hotend_temp: 240.0,
                     bed_temp: 100.0,
+                    chamber_temp: Some(50.0),
                     fan_speed: 0,
                 },
             ])),

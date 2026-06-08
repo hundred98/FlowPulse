@@ -5,6 +5,7 @@
 use crate::{EmbResult, EmbError};
 use crate::message_queue::{Message, MessageType, MessageQueue};
 use crate::state::DeviceStateManager;
+use crate::temperature::TemperatureManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,8 @@ pub struct MqttClient {
     message_queue: Arc<MessageQueue>,
     /// Device state manager
     device_state: Arc<DeviceStateManager>,
+    /// Temperature manager
+    temperature_manager: Arc<TemperatureManager>,
     /// Client status
     status: Arc<RwLock<MqttStatus>>,
     /// Subscribed topics
@@ -113,12 +116,14 @@ impl MqttClient {
         config: MqttConfig,
         message_queue: Arc<MessageQueue>,
         device_state: Arc<DeviceStateManager>,
+        temperature_manager: Arc<TemperatureManager>,
     ) -> Self {
         let broker_address = format!("{}:{}", config.broker_address, config.port);
         Self {
             config,
             message_queue,
             device_state,
+            temperature_manager,
             status: Arc::new(RwLock::new(MqttStatus {
                 broker_address,
                 ..Default::default()
@@ -227,8 +232,14 @@ impl MqttClient {
     pub async fn publish_status(&self) -> EmbResult<()> {
         // Get current device state
         let position = self.device_state.get_position().await;
-        let temperatures = self.device_state.get_temperatures().await;
-        
+        let heaters = self.temperature_manager.get_all_heaters().await;
+
+        // Convert heaters to simple temperature map
+        let temperatures: std::collections::HashMap<String, f32> = heaters
+            .iter()
+            .map(|(name, state)| (name.clone(), state.current_temp))
+            .collect();
+
         // Create status payload
         let status_payload = serde_json::json!({
             "position": {
@@ -249,10 +260,25 @@ impl MqttClient {
     
     /// Publish temperature update
     pub async fn publish_temperature(&self) -> EmbResult<()> {
-        let temperatures = self.device_state.get_temperatures().await;
-        
+        let heaters = self.temperature_manager.get_all_heaters().await;
+
+        // Convert heaters to detailed temperature map
+        let temp_map: std::collections::HashMap<String, serde_json::Value> = heaters
+            .iter()
+            .map(|(name, state)| {
+                (
+                    name.clone(),
+                    serde_json::json!({
+                        "current": state.current_temp,
+                        "target": state.target_temp,
+                        "is_heating": state.is_heating,
+                    }),
+                )
+            })
+            .collect();
+
         let temp_payload = serde_json::json!({
-            "temperatures": temperatures,
+            "heaters": temp_map,
             "timestamp": chrono::Utc::now().to_rfc3339(),
         });
         

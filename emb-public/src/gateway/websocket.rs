@@ -5,6 +5,7 @@
 use crate::{EmbResult, EmbError};
 use crate::message_queue::{Message, MessageType, MessageQueue};
 use crate::state::DeviceStateManager;
+use crate::temperature::TemperatureManager;
 use crate::common::WebSocketMessage;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -46,6 +47,8 @@ pub struct WebSocketServer {
     message_queue: Arc<MessageQueue>,
     /// Device state manager
     device_state: Arc<DeviceStateManager>,
+    /// Temperature manager
+    temperature_manager: Arc<TemperatureManager>,
     /// Active connections
     connections: Arc<RwLock<Vec<WebSocketConnection>>>,
     /// Server status
@@ -95,11 +98,13 @@ impl WebSocketServer {
         config: WebSocketConfig,
         message_queue: Arc<MessageQueue>,
         device_state: Arc<DeviceStateManager>,
+        temperature_manager: Arc<TemperatureManager>,
     ) -> Self {
         Self {
             config,
             message_queue,
             device_state,
+            temperature_manager,
             connections: Arc::new(RwLock::new(Vec::new())),
             status: Arc::new(RwLock::new(WebSocketStatus::default())),
         }
@@ -161,14 +166,20 @@ impl WebSocketServer {
     pub async fn broadcast_status(&self) -> EmbResult<()> {
         // Get current device state
         let position = self.device_state.get_position().await;
-        let temperatures = self.device_state.get_temperatures().await;
-        
+        let heaters = self.temperature_manager.get_all_heaters().await;
+
+        // Extract temperature values
+        let hotend_current = heaters.get("hotend").map(|h| h.current_temp).unwrap_or(0.0);
+        let hotend_target = heaters.get("hotend").map(|h| h.target_temp).unwrap_or(0.0);
+        let bed_current = heaters.get("bed").map(|h| h.current_temp).unwrap_or(0.0);
+        let bed_target = heaters.get("bed").map(|h| h.target_temp).unwrap_or(0.0);
+
         // Create temperature message
         let temp_msg = WebSocketMessage::Temperature {
-            hotend_current: *temperatures.get("hotend").unwrap_or(&0.0),
-            hotend_target: *temperatures.get("hotend_target").unwrap_or(&0.0),
-            bed_current: *temperatures.get("bed").unwrap_or(&0.0),
-            bed_target: *temperatures.get("bed_target").unwrap_or(&0.0),
+            hotend_current,
+            hotend_target,
+            bed_current,
+            bed_target,
         };
         
         // Create position message
