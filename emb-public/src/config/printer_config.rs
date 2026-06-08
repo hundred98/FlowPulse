@@ -28,6 +28,8 @@ pub struct PrinterJsonConfig {
     pub gpio: GpioConfig,
     #[serde(default)]
     pub temperature_presets: Vec<TemperaturePresetConfig>,
+    #[serde(default)]
+    pub temperature_safety: Option<TemperatureSafetyConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -121,6 +123,7 @@ impl Default for PrinterJsonConfig {
                     fan_speed: 0,
                 },
             ],
+            temperature_safety: None,
         }
     }
 }
@@ -704,6 +707,168 @@ impl Default for TemperaturePresetConfig {
             bed_temp: 60.0,
             chamber_temp: None,
             fan_speed: 255,
+        }
+    }
+}
+
+/// Temperature safety configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemperatureSafetyConfig {
+    /// Safety check interval in milliseconds
+    #[serde(default = "default_safety_check_interval_ms")]
+    pub safety_check_interval_ms: u64,
+
+    /// Temperature change threshold for triggering events (°C)
+    #[serde(default = "default_temp_change_threshold")]
+    pub temp_change_threshold: f32,
+
+    /// Per-heater safety configuration
+    #[serde(default)]
+    pub heaters: HashMap<String, TempHeaterSafetyConfig>,
+}
+
+fn default_safety_check_interval_ms() -> u64 { 1000 }
+fn default_temp_change_threshold() -> f32 { 1.0 }
+
+impl Default for TemperatureSafetyConfig {
+    fn default() -> Self {
+        Self {
+            safety_check_interval_ms: default_safety_check_interval_ms(),
+            temp_change_threshold: default_temp_change_threshold(),
+            heaters: HashMap::new(),
+        }
+    }
+}
+
+/// Per-heater safety configuration for temperature management
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TempHeaterSafetyConfig {
+    /// Sensor fault detection thresholds
+    pub sensor_fault: SensorFaultConfig,
+
+    /// Temperature deviation thresholds
+    pub deviation_thresholds: DeviationThresholdsConfig,
+
+    /// Heating delay in seconds (don't check low temp during this period)
+    #[serde(default = "default_heating_delay_secs")]
+    pub heating_delay_secs: u64,
+
+    /// Actions for different temperature conditions
+    pub actions: HeaterActionsConfig,
+}
+
+fn default_heating_delay_secs() -> u64 { 60 }
+
+impl Default for TempHeaterSafetyConfig {
+    fn default() -> Self {
+        Self {
+            sensor_fault: SensorFaultConfig::default(),
+            deviation_thresholds: DeviationThresholdsConfig::default(),
+            heating_delay_secs: default_heating_delay_secs(),
+            actions: HeaterActionsConfig::default(),
+        }
+    }
+}
+
+/// Sensor fault detection configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SensorFaultConfig {
+    /// Maximum temperature threshold (°C), above this is sensor fault
+    #[serde(default = "default_sensor_max_temp")]
+    pub max_temp: f32,
+
+    /// Minimum temperature threshold (°C), below this is sensor fault
+    #[serde(default = "default_sensor_min_temp")]
+    pub min_temp: f32,
+}
+
+fn default_sensor_max_temp() -> f32 { 300.0 }
+fn default_sensor_min_temp() -> f32 { -50.0 }
+
+impl Default for SensorFaultConfig {
+    fn default() -> Self {
+        Self {
+            max_temp: default_sensor_max_temp(),
+            min_temp: default_sensor_min_temp(),
+        }
+    }
+}
+
+/// Temperature deviation thresholds configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviationThresholdsConfig {
+    /// Warning level deviation (°C)
+    #[serde(default = "default_deviation_warning")]
+    pub warning: f32,
+
+    /// Critical level deviation (°C)
+    #[serde(default = "default_deviation_critical")]
+    pub critical: f32,
+
+    /// Emergency level deviation (°C)
+    #[serde(default = "default_deviation_emergency")]
+    pub emergency: f32,
+}
+
+fn default_deviation_warning() -> f32 { 10.0 }
+fn default_deviation_critical() -> f32 { 15.0 }
+fn default_deviation_emergency() -> f32 { 20.0 }
+
+impl Default for DeviationThresholdsConfig {
+    fn default() -> Self {
+        Self {
+            warning: default_deviation_warning(),
+            critical: default_deviation_critical(),
+            emergency: default_deviation_emergency(),
+        }
+    }
+}
+
+/// Heater actions configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeaterActionsConfig {
+    /// Actions for low temperature conditions
+    pub low_temp: TemperatureActionsConfig,
+
+    /// Actions for high temperature conditions
+    pub high_temp: TemperatureActionsConfig,
+}
+
+impl Default for HeaterActionsConfig {
+    fn default() -> Self {
+        Self {
+            low_temp: TemperatureActionsConfig::default(),
+            high_temp: TemperatureActionsConfig::default(),
+        }
+    }
+}
+
+/// Temperature actions configuration for different levels
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemperatureActionsConfig {
+    /// Action for warning level
+    #[serde(default = "default_warning_action")]
+    pub warning: String,
+
+    /// Action for critical level
+    #[serde(default = "default_critical_action")]
+    pub critical: String,
+
+    /// Action for emergency level
+    #[serde(default = "default_emergency_action")]
+    pub emergency: String,
+}
+
+fn default_warning_action() -> String { "warn".to_string() }
+fn default_critical_action() -> String { "pause_print".to_string() }
+fn default_emergency_action() -> String { "emergency_stop".to_string() }
+
+impl Default for TemperatureActionsConfig {
+    fn default() -> Self {
+        Self {
+            warning: default_warning_action(),
+            critical: default_critical_action(),
+            emergency: default_emergency_action(),
         }
     }
 }

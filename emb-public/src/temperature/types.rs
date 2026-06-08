@@ -29,6 +29,16 @@ pub struct HeaterState {
     /// Temperature limits (read from config)
     pub min_temp: f32,
     pub max_temp: f32,
+
+    /// Sensor fault detection thresholds
+    pub sensor_fault_max_temp: f32,
+    pub sensor_fault_min_temp: f32,
+
+    /// Heating start time (when target was set)
+    pub heating_start: Option<Instant>,
+
+    /// Sensor fault detected
+    pub sensor_fault: bool,
 }
 
 impl HeaterState {
@@ -43,6 +53,35 @@ impl HeaterState {
             last_update: Instant::now(),
             min_temp,
             max_temp,
+            sensor_fault_max_temp: 300.0,
+            sensor_fault_min_temp: -50.0,
+            heating_start: None,
+            sensor_fault: false,
+        }
+    }
+
+    /// Create a new heater state with sensor fault thresholds
+    pub fn with_sensor_fault_thresholds(
+        name: String,
+        heater_id: u8,
+        min_temp: f32,
+        max_temp: f32,
+        sensor_fault_max_temp: f32,
+        sensor_fault_min_temp: f32,
+    ) -> Self {
+        Self {
+            name,
+            heater_id,
+            current_temp: 0.0,
+            target_temp: 0.0,
+            is_heating: false,
+            last_update: Instant::now(),
+            min_temp,
+            max_temp,
+            sensor_fault_max_temp,
+            sensor_fault_min_temp,
+            heating_start: None,
+            sensor_fault: false,
         }
     }
 
@@ -50,22 +89,45 @@ impl HeaterState {
     pub fn update_current(&mut self, temp: f32) {
         self.current_temp = temp;
         self.last_update = Instant::now();
+
+        // Check for sensor fault (abnormal values)
+        self.sensor_fault = temp > self.sensor_fault_max_temp || temp < self.sensor_fault_min_temp;
     }
 
     /// Set target temperature
     pub fn set_target(&mut self, temp: f32) {
+        let was_heating = self.is_heating;
         self.target_temp = temp;
         self.is_heating = temp > 0.0;
+
+        // Track heating start time
+        if self.is_heating && !was_heating {
+            self.heating_start = Some(Instant::now());
+        } else if !self.is_heating {
+            self.heating_start = None;
+        }
     }
 
     /// Check if temperature is within safe range
     pub fn is_safe(&self) -> bool {
-        self.current_temp >= self.min_temp && self.current_temp <= self.max_temp
+        !self.sensor_fault && self.current_temp >= self.min_temp && self.current_temp <= self.max_temp
     }
 
     /// Get temperature deviation from target
     pub fn deviation(&self) -> f32 {
         self.current_temp - self.target_temp
+    }
+
+    /// Get heating duration (seconds)
+    pub fn heating_duration_secs(&self) -> f64 {
+        self.heating_start
+            .map(|start| start.elapsed().as_secs_f64())
+            .unwrap_or(0.0)
+    }
+
+    /// Check if sensor is faulty
+    pub fn has_sensor_fault(&self) -> bool {
+        self.sensor_fault
     }
 }
 
@@ -138,15 +200,6 @@ pub struct TemperatureManagerConfig {
 
     /// Enable automatic safety checks
     pub enable_auto_safety_check: bool,
-
-    /// Maximum temperature deviation before warning (°C)
-    pub max_deviation_warning: f32,
-
-    /// Maximum temperature deviation before critical (°C)
-    pub max_deviation_critical: f32,
-
-    /// Maximum temperature deviation before emergency stop (°C)
-    pub max_deviation_emergency: f32,
 }
 
 impl Default for TemperatureManagerConfig {
@@ -155,9 +208,6 @@ impl Default for TemperatureManagerConfig {
             safety_check_interval_ms: 1000,
             temp_change_threshold: 1.0,
             enable_auto_safety_check: true,
-            max_deviation_warning: 10.0,
-            max_deviation_critical: 15.0,
-            max_deviation_emergency: 20.0,
         }
     }
 }

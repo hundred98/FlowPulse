@@ -38,5 +38,59 @@
       "chamber_temp": null,
       "fan_speed": 128
     }
-  ]
+  ],
+  "temperature_safety": {
+    "safety_check_interval_ms": 1000,
+    "temp_change_threshold": 1.0,
+    "heaters": {
+      "hotend": {
+        "sensor_fault": {
+          "max_temp": 300.0,
+          "min_temp": -50.0
+        },
+        "deviation_thresholds": {
+          "warning": 10.0,
+          "critical": 15.0,
+          "emergency": 20.0
+        },
+        "heating_delay_secs": 60,
+        "actions": {
+          "low_temp": {
+            "warning": "warn",
+            "critical": "pause_print",
+            "emergency": "emergency_stop"
+          },
+          "high_temp": {
+            "warning": "warn",
+            "critical": "turn_off",
+            "emergency": "emergency_stop"
+          }
+        }
+      },
+      "bed": {
+        "sensor_fault": {
+          "max_temp": 200.0,
+          "min_temp": -50.0
+        },
+        "deviation_thresholds": {
+          "warning": 10.0,
+          "critical": 15.0,
+          "emergency": 20.0
+        },
+        "heating_delay_secs": 120,
+        "actions": {
+          "low_temp": {
+            "warning": "warn",
+            "critical": "warn",
+            "emergency": "turn_off"
+          },
+          "high_temp": {
+            "warning": "warn",
+            "critical": "turn_off",
+            "emergency": "emergency_stop"
+          }
+        }
+      }
+    }
+  }
 }

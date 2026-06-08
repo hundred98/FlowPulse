@@ -1,6 +1,6 @@
 //! 温度控制测试程序
 //!
-//! 测试配置下发和温度读取功能
+//! 测试 TemperatureManager 的功能
 //!
 //! 使用方法：
 //! 1. 启动 emb-core-server：
@@ -10,37 +10,41 @@
 //!
 //! 预期输出：
 //! - 服务端打印配置帧下发日志
-//! - 服务端打印 ConfigComplete 发送日志
-//! - 服务端打印温度数据上报日志
+//! - 温度管理器初始化成功
+//! - 温度预设加载成功
+//! - 温度设置和查询成功
 
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use std::sync::atomic::{AtomicU32, Ordering};
 
-use emb_public::{CoreSocketClient, CoreClientConfig, ConfigFrameBuilder, ConfigManager};
+use emb_public::{
+    CoreSocketClient, CoreClientConfig, ConfigManager,
+    temperature::{TemperatureManager, TemperatureManagerConfig},
+    common::SyncEventPublisher,
+};
 
 #[tokio::main]
 async fn main() {
     // 初始化日志
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    
+
     log::info!("========================================");
-    log::info!("温度控制测试程序");
+    log::info!("温度控制测试程序（使用 TemperatureManager）");
     log::info!("========================================");
     log::info!("💡 提示：服务端应使用 --features serial_debug 编译");
     log::info!("");
-    
+
     // 连接到核心服务器
     let server_addr = "127.0.0.1:9527";
     log::info!("📡 连接到核心服务器: {}", server_addr);
-    
+
     let config = CoreClientConfig {
         server_addr: server_addr.to_string(),
         ..CoreClientConfig::default()
     };
     let client = Arc::new(CoreSocketClient::new(config));
-    
+
     match client.connect().await {
         Ok(()) => log::info!("✅ 已连接到核心服务器"),
         Err(e) => {
@@ -48,23 +52,22 @@ async fn main() {
             return;
         }
     }
-    
-    // 加载配置并发送到服务端和下位机
+
+    // 加载配置
     let config_dir = "config";
     log::info!("📁 加载配置文件: {}", config_dir);
-    
-    // 使用 ConfigManager 加载配置
+
     if let Err(e) = ConfigManager::instance().load(config_dir) {
         log::error!("❌ 配置加载失败: {}", e);
         return;
     }
-    
+
     // 获取配置信息并连接串口
     match ConfigManager::instance().get_config() {
         Ok(config) => {
             log::info!("✅ 配置加载成功");
             log::info!("  - 打印机型号: {}", config.printer_model);
-            
+
             // 连接串口
             if !config.communication.serial.port.is_empty() {
                 let serial = &config.communication.serial;
@@ -84,7 +87,7 @@ async fn main() {
             return;
         }
     }
-    
+
     // 发送配置到服务端和下位机
     match ConfigManager::instance().reload(&client).await {
         Ok(()) => {
@@ -95,97 +98,180 @@ async fn main() {
             return;
         }
     }
-    
-    // 监控温度数据（使用订阅方式）
+
+    // 创建事件发布器（简化版，仅用于日志）
+    let event_publisher = Arc::new(SyncEventPublisher::new());
+
+    // 创建温度管理器
     log::info!("========================================");
-    log::info!("📊 开始监控温度数据（订阅方式，30秒）");
+    log::info!("🌡️  初始化温度管理器");
     log::info!("========================================");
-    
-    // 计数器：记录收到的状态数据数量
-    let status_count = Arc::new(AtomicU32::new(0));
-    let status_count_clone = status_count.clone();
-    
-    // 设置状态回调
-    client.set_status_report_callback(move |frame_type, payload| {
-        // StatusResponse 帧格式：
-        // [credits:1][pos_x:4][pos_y:4][pos_z:4][pos_e:4][temp_bed_cur:2][temp_bed_tgt:2][temp_nozzle_cur:2][temp_nozzle_tgt:2][status:1]
-        // 温度数据从 payload[17] 开始
-        if frame_type == 0x04 && payload.len() >= 25 {  // 0x04 = StatusResponse
-            let temp_bed_cur = i16::from_be_bytes([payload[17], payload[18]]);
-            let temp_bed_tgt = i16::from_be_bytes([payload[19], payload[20]]);
-            let temp_nozzle_cur = i16::from_be_bytes([payload[21], payload[22]]);
-            let temp_nozzle_tgt = i16::from_be_bytes([payload[23], payload[24]]);
-            
-            log::info!("🌡️  温度数据: 热床={}/{}°C, 热端={}/{}°C", 
-                temp_bed_cur as f32 / 10.0, 
-                temp_bed_tgt as f32 / 10.0,
-                temp_nozzle_cur as f32 / 10.0, 
-                temp_nozzle_tgt as f32 / 10.0);
-            
-            // 增加计数器
-            status_count_clone.fetch_add(1, Ordering::SeqCst);
-        }
-    }).await;
-    
-    // 订阅状态上报
-    match client.subscribe_status(true).await {
-        Ok(()) => log::info!("✅ 已订阅状态上报"),
+
+    let temperature_manager = Arc::new(TemperatureManager::new(
+        client.clone(),
+        event_publisher.clone(),
+        TemperatureManagerConfig::default(),
+        None,
+    ));
+
+    // 初始化温度管理器
+    match temperature_manager.initialize().await {
+        Ok(()) => log::info!("✅ 温度管理器初始化成功"),
         Err(e) => {
-            log::error!("❌ 订阅失败: {}", e);
+            log::error!("❌ 温度管理器初始化失败: {}", e);
             return;
         }
     }
-    
-    // 等待30秒
-    for i in 1..=30 {
-        sleep(Duration::from_secs(1)).await;
-        let count = status_count.load(Ordering::SeqCst);
-        log::info!("⏱️  监控中... {}/30 秒, 已收到 {} 条状态数据", i, count);
+
+    // 订阅温度更新
+    match temperature_manager.subscribe_temperature_updates().await {
+        Ok(()) => log::info!("✅ 已订阅温度更新"),
+        Err(e) => {
+            log::error!("❌ 订阅温度更新失败: {}", e);
+            return;
+        }
     }
-    
-    // 取消订阅
-    match client.subscribe_status(false).await {
-        Ok(()) => log::info!("✅ 已取消订阅"),
-        Err(e) => log::warn!("❌ 取消订阅失败: {}", e),
+
+    // 启动安全检查（在后台运行）
+    let temp_mgr_clone = temperature_manager.clone();
+    tokio::spawn(async move {
+        temp_mgr_clone.start_safety_check_loop().await;
+    });
+    log::info!("✅ 安全检查已启动（后台运行）");
+
+    // 查看温度预设
+    log::info!("========================================");
+    log::info!("📋 查看温度预设");
+    log::info!("========================================");
+
+    let presets = temperature_manager.get_presets().await;
+    log::info!("已加载 {} 个温度预设:", presets.len());
+
+    for preset in &presets {
+        log::info!("  - {}: 热端={}°C, 热床={}°C",
+            preset.name, preset.hotend_temp, preset.bed_temp);
     }
-    
-    // 清除回调
-    client.clear_status_report_callback().await;
-    
+
+    // 查询初始温度状态
+    log::info!("========================================");
+    log::info!("📊 查询初始温度状态");
+    log::info!("========================================");
+
+    let heaters = temperature_manager.get_all_heaters().await;
+    for (name, state) in &heaters {
+        log::info!("  {}: {}/{}°C, 加热={}",
+            name, state.current_temp, state.target_temp, state.is_heating);
+    }
+
     // 测试设置温度
     log::info!("========================================");
     log::info!("🔥 测试设置温度");
     log::info!("========================================");
-    
+
     // 设置热端温度为 50°C
     log::info!("📤 设置热端温度: 50°C");
-    let set_temp_frame = ConfigFrameBuilder::build_set_temp_frame(1, 50.0);
-    match client.serial_send_raw(&set_temp_frame).await {
-        Ok(()) => log::info!("✅ SetTemp 帧已发送"),
-        Err(e) => log::warn!("❌ SetTemp 帧发送失败: {}", e),
+    match temperature_manager.set_target("hotend", 50.0).await {
+        Ok(()) => log::info!("✅ 热端温度设置成功"),
+        Err(e) => log::warn!("❌ 热端温度设置失败: {}", e),
     }
-    
-    // 监控温度变化（10秒）
-    log::info!("📊 监控温度变化（10秒）...");
-    for i in 1..=10 {
+
+    // 设置热床温度为 40°C
+    log::info!("📤 设置热床温度: 40°C");
+    match temperature_manager.set_target("bed", 40.0).await {
+        Ok(()) => log::info!("✅ 热床温度设置成功"),
+        Err(e) => log::warn!("❌ 热床温度设置失败: {}", e),
+    }
+
+    // 查询温度状态
+    sleep(Duration::from_secs(1)).await;
+    let heaters = temperature_manager.get_all_heaters().await;
+    for (name, state) in &heaters {
+        log::info!("  {}: {}/{}°C, 加热={}",
+            name, state.current_temp, state.target_temp, state.is_heating);
+    }
+
+    // 测试应用预设
+    log::info!("========================================");
+    log::info!("🎯 测试应用温度预设");
+    log::info!("========================================");
+
+    if !presets.is_empty() {
+        let preset_name = &presets[0].name;
+        log::info!("📤 应用预设: {}", preset_name);
+
+        match temperature_manager.apply_preset(preset_name).await {
+            Ok(()) => {
+                log::info!("✅ 预设 '{}' 应用成功", preset_name);
+
+                // 查询温度状态
+                sleep(Duration::from_secs(1)).await;
+                let heaters = temperature_manager.get_all_heaters().await;
+                for (name, state) in &heaters {
+                    log::info!("  {}: {}/{}°C, 加热={}",
+                        name, state.current_temp, state.target_temp, state.is_heating);
+                }
+            }
+            Err(e) => log::warn!("❌ 预设应用失败: {}", e),
+        }
+    }
+
+    // 监控温度变化（30秒）
+    log::info!("========================================");
+    log::info!("📊 监控温度变化（30秒）");
+    log::info!("========================================");
+
+    for i in 1..=30 {
         sleep(Duration::from_secs(1)).await;
-        log::info!("⏱️  监控中... {}/10 秒", i);
+
+        // 查询温度状态
+        let heaters = temperature_manager.get_all_heaters().await;
+
+        // 打印温度信息
+        let hotend = heaters.get("hotend").map(|h| format!("{}/{}°C", h.current_temp, h.target_temp)).unwrap_or_else(|| "N/A".to_string());
+        let bed = heaters.get("bed").map(|h| format!("{}/{}°C", h.current_temp, h.target_temp)).unwrap_or_else(|| "N/A".to_string());
+
+        log::info!("⏱️  {}/30 秒 - 热端: {}, 热床: {}", i, hotend, bed);
     }
-    
-    // 关闭加热器
-    log::info!("📤 关闭热端加热器");
-    let set_temp_frame = ConfigFrameBuilder::build_set_temp_frame(1, 0.0);
-    match client.serial_send_raw(&set_temp_frame).await {
-        Ok(()) => log::info!("✅ SetTemp 帧已发送"),
-        Err(e) => log::warn!("❌ SetTemp 帧发送失败: {}", e),
+
+    // 测试安全检查
+    log::info!("========================================");
+    log::info!("⚠️  测试安全检查");
+    log::info!("========================================");
+
+    let safety_results = temperature_manager.check_safety().await;
+    if safety_results.is_empty() {
+        log::info!("✅ 安全检查通过，无异常");
+    } else {
+        log::warn!("⚠️  发现 {} 个安全问题:", safety_results.len());
+        for result in safety_results {
+            log::warn!("  - {}: {} (级别: {:?})",
+                result.heater, result.message, result.level);
+        }
     }
-    
+
+    // 关闭所有加热器
+    log::info!("========================================");
+    log::info!("🛑 关闭所有加热器");
+    log::info!("========================================");
+
+    match temperature_manager.turn_off_all().await {
+        Ok(()) => log::info!("✅ 所有加热器已关闭"),
+        Err(e) => log::warn!("❌ 关闭加热器失败: {}", e),
+    }
+
+    // 查询最终温度状态
+    sleep(Duration::from_secs(1)).await;
+    let heaters = temperature_manager.get_all_heaters().await;
+    for (name, state) in &heaters {
+        log::info!("  {}: {}/{}°C, 加热={}",
+            name, state.current_temp, state.target_temp, state.is_heating);
+    }
+
     // 断开连接
     log::info!("========================================");
     log::info!("🏁 测试完成");
     log::info!("========================================");
-    
-    
+
     client.disconnect().await;
     log::info!("✅ 已断开服务器连接");
 }

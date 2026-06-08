@@ -84,6 +84,8 @@ async fn main() -> EmbResult<()> {
     let temperature_manager = Arc::new(TemperatureManager::new(
         core_client.clone(),
         event_publisher.clone(),
+        TemperatureManagerConfig::default(),
+        None,
     ));
 
     log::info!("Core components created");

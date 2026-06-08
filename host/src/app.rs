@@ -96,6 +96,7 @@ impl AppState {
             core_client.clone(),
             event_publisher.clone(),
             temperature_manager_config,
+            None,  // Will be loaded from ConfigManager during initialization
         ));
 
         // Create message queue

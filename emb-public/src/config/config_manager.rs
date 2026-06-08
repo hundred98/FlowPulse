@@ -248,6 +248,80 @@ impl ConfigManager {
         self.inner.read().map(|inner| inner.printer_config.is_some()).unwrap_or(false)
     }
 
+    /// Update and save printer configuration to file.
+    ///
+    /// This updates the cached configuration and writes it back to printer.json.
+    /// Only printer.json is updated; other config files remain unchanged.
+    ///
+    /// # Arguments
+    /// * `updated_config` - The updated printer configuration
+    ///
+    /// # Returns
+    /// * `Ok(())` if save was successful
+    /// * `Err(String)` if any error occurred
+    pub fn save_printer_config(&self, updated_config: &PrinterJsonConfig) -> Result<(), String> {
+        log::info!("💾 Saving printer configuration...");
+
+        // Get config directory
+        let config_dir = {
+            let inner = self.inner.read().map_err(|e| format!("Lock error: {}", e))?;
+            inner.config_dir.clone()
+        };
+
+        if config_dir.is_empty() {
+            return Err("Configuration not loaded. Call load() first.".to_string());
+        }
+
+        // Build printer.json path
+        let printer_json_path = std::path::Path::new(&config_dir).join("printer.json");
+
+        // Serialize configuration to JSON
+        let json_content = serde_json::to_string_pretty(updated_config)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+        // Write to file
+        std::fs::write(&printer_json_path, json_content)
+            .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+        // Update cached config and get callbacks
+        let callbacks = {
+            let mut inner = self.inner.write().map_err(|e| format!("Lock error: {}", e))?;
+            inner.printer_config = Some(updated_config.clone());
+            inner.callbacks.clone()
+        };
+
+        // Notify all registered callbacks
+        Self::notify_callbacks(&callbacks, updated_config);
+
+        log::info!("✅ Printer configuration saved to: {}", printer_json_path.display());
+        Ok(())
+    }
+
+    /// Update temperature presets in the configuration.
+    ///
+    /// This is a convenience method that updates only the temperature_presets field
+    /// and saves the configuration.
+    ///
+    /// # Arguments
+    /// * `presets` - New temperature presets to save
+    ///
+    /// # Returns
+    /// * `Ok(())` if save was successful
+    /// * `Err(String)` if any error occurred
+    pub fn save_temperature_presets(
+        &self,
+        presets: &[super::printer_config::TemperaturePresetConfig],
+    ) -> Result<(), String> {
+        // Get current config
+        let mut config = self.get_config()?;
+
+        // Update presets
+        config.temperature_presets = presets.to_vec();
+
+        // Save updated config
+        self.save_printer_config(&config)
+    }
+
     /// Notify all registered callbacks with the new configuration.
     fn notify_callbacks(callbacks: &[Arc<ConfigChangeCallback>], config: &PrinterJsonConfig) {
         if callbacks.is_empty() {

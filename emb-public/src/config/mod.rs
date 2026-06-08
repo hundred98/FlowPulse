@@ -33,7 +33,9 @@ pub use config_manager::ConfigManager;
 pub use printer_config::{
     PrinterJsonConfig, PrinterParams, MotorParams, LimitSwitchParams,
     TemperatureParams, HeaterParams, FanParams, ProbeParams,
-    LimitSwitchAxis, TempSensorParams, HeaterPin,
+    LimitSwitchAxis, TempSensorParams, HeaterPin, TemperaturePresetConfig,
+    TemperatureSafetyConfig, TempHeaterSafetyConfig, SensorFaultConfig,
+    DeviationThresholdsConfig, HeaterActionsConfig, TemperatureActionsConfig,
 };
 
 // Re-export protocol types for frame building
