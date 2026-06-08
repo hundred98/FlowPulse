@@ -137,7 +137,7 @@
     "output": [
       {
         "name": "box_fan",
-        "pin": "PA8",
+        "pin": "PA6",
         "type": "pwm",
         "active_high": true,
         "pwm_freq_hz": 100,
@@ -147,7 +147,7 @@
       },
       {
         "name": "hotend_fan",
-        "pin": "PA7",
+        "pin": "PA5",
         "type": "pwm",
         "active_high": true,
         "pwm_freq_hz": 100,
@@ -157,7 +157,7 @@
       },
       {
         "name": "chamber_led",
-        "pin": "PA6",
+        "pin": "PA8",
         "type": "digital",
         "active_high": true,
         "default_value": 0
@@ -181,7 +181,7 @@
       },
       {
         "name": "door_sensor",
-        "pin": "PA5",
+        "pin": "PA7",
         "type": "digital",
         "pull": "up",
         "active_high": true,
@@ -215,13 +215,13 @@
   "fan": [
     {
       "index": 0,
-      "name": "box_fan",
-      "description": "Model cooling fan"
+      "name": "hotend_fan",
+      "description": "Hotend cooling fan"
     },
     {
       "index": 1,
-      "name": "hotend_fan",
-      "description": "Hotend cooling fan"
+      "name": "box_fan",
+      "description": "Box cooling fan"
     }
   ]
 }

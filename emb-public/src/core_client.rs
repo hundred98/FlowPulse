@@ -422,14 +422,23 @@ impl CoreSocketClient {
     }
 
     /// Wait for all pending motion frames to be sent and device buffer to drain.
+    /// Server internally blocks for ~5s per attempt. If drain hasn't completed,
+    /// retry every 5 seconds until drain completes.
     pub async fn motion_wait_drain(&self) -> Result<(), String> {
-        match self.send_request(&CoreRequest::Motion(MotionRequest::WaitMotionDrain)).await? {
-            CoreResponse::Motion(MotionResponse::DrainResult { success: true, .. }) => Ok(()),
-            CoreResponse::Motion(MotionResponse::DrainResult { success: false, error }) => {
-                Err(error.unwrap_or_else(|| "Drain failed".to_string()))
+        loop {
+            match self.send_request(&CoreRequest::Motion(MotionRequest::WaitMotionDrain)).await? {
+                CoreResponse::Motion(MotionResponse::DrainResult { success: true, .. }) => {
+                    return Ok(());
+                }
+                CoreResponse::Motion(MotionResponse::DrainResult { success: false, .. }) => {
+                    // Server internally blocks for ~5s before returning timeout.
+                    // The server's blocking acts as the natural retry interval.
+                    debug!("Motion drain not yet complete, retrying...");
+                    continue;
+                }
+                CoreResponse::Error(e) => return Err(e.message),
+                other => return Err(format!("Unexpected response: {:?}", other)),
             }
-            CoreResponse::Error(e) => Err(e.message),
-            other => Err(format!("Unexpected response: {:?}", other)),
         }
     }
 
