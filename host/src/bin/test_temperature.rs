@@ -18,7 +18,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use emb_public::{CoreSocketClient, CoreClientConfig, ConfigFrameBuilder, config_adapter};
+use emb_public::{CoreSocketClient, CoreClientConfig, ConfigFrameBuilder, ConfigManager};
 
 #[tokio::main]
 async fn main() {
@@ -50,14 +50,45 @@ async fn main() {
     }
     
     // 加载配置并发送到服务端和下位机
-    // 注意：串口连接现在由 configure_device 函数内部处理，配置来自 printer.json
     let config_dir = "config";
     log::info!("📁 加载配置文件: {}", config_dir);
     
-    match config_adapter::configure_device(&client, config_dir).await {
-        Ok(configs) => {
+    // 使用 ConfigManager 加载配置
+    if let Err(e) = ConfigManager::instance().load(config_dir) {
+        log::error!("❌ 配置加载失败: {}", e);
+        return;
+    }
+    
+    // 获取配置信息并连接串口
+    match ConfigManager::instance().get_config() {
+        Ok(config) => {
+            log::info!("✅ 配置加载成功");
+            log::info!("  - 打印机型号: {}", config.printer_model);
+            
+            // 连接串口
+            if !config.communication.serial.port.is_empty() {
+                let serial = &config.communication.serial;
+                log::info!("🔌 连接串口: {} @ {}", serial.port, serial.baud_rate);
+                match client.serial_connect(&serial.port, serial.baud_rate).await {
+                    Ok(()) => log::info!("✅ 串口连接成功"),
+                    Err(e) => {
+                        log::error!("❌ 串口连接失败: {}", e);
+                        log::info!("💡 请确认下位机已连接到 {}", serial.port);
+                        return;
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("❌ 获取配置失败: {}", e);
+            return;
+        }
+    }
+    
+    // 发送配置到服务端和下位机
+    match ConfigManager::instance().reload(&client).await {
+        Ok(()) => {
             log::info!("✅ 配置发送成功");
-            log::info!("  - 打印机型号: {}", configs.printer.printer_model);
         }
         Err(e) => {
             log::error!("❌ 配置发送失败: {}", e);

@@ -720,7 +720,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
 /// Initialize device with all configurations.
 /// 
 /// This function performs the complete device initialization process:
-/// 1. Load configuration files from the specified directory
+/// 1. Load configuration files via ConfigManager
 /// 2. Connect to serial port
 /// 3. Send motion config to server (for motion planning)
 /// 4. Send hardware config frames to device (motor, temperature, heater, gpio, etc.)
@@ -731,10 +731,13 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
 /// * `config_dir` - Path to the configuration directory (contains printer.json, motion.json, hardware.json)
 /// 
 /// # Returns
-/// * `Ok(LoadedConfigs)` if all configurations were sent successfully, returns the loaded configs
+/// * `Ok(())` if all configurations were sent successfully
 /// * `Err(String)` if any step failed
-pub async fn configure_device(client: &CoreSocketClient, config_dir: &str) -> Result<LoadedConfigs, String> {
-    // Step 1: Load configuration files
+pub async fn configure_device(client: &CoreSocketClient, config_dir: &str) -> Result<(), String> {
+    use super::config_manager::ConfigManager;
+    
+    // Step 1: Load configuration files via ConfigManager
+    ConfigManager::instance().load(config_dir)?;
     let configs = load_configs(config_dir)?;
     
     // Step 2: Connect to serial port
@@ -781,5 +784,5 @@ pub async fn configure_device(client: &CoreSocketClient, config_dir: &str) -> Re
     client.serial_config_complete().await
         .map_err(|e| format!("Failed to send ConfigComplete: {}", e))?;
     
-    Ok(configs)
+    Ok(())
 }

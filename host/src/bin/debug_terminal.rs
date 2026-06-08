@@ -20,7 +20,7 @@ use tower_http::cors::{Any, CorsLayer};
 use axum::http::Method;
 use tokio::sync::broadcast;
 
-use emb_public::{CoreSocketClient, ConfigFrameBuilder, config_adapter};
+use emb_public::{CoreSocketClient, ConfigFrameBuilder, ConfigManager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GpioSetRequest {
@@ -168,37 +168,40 @@ async fn serial_connect(
                 .map(|p| p.join("config"))
                 .unwrap_or_else(|_| std::path::PathBuf::from("config"));
             
-            match config_adapter::load_configs(&config_dir.to_string_lossy()) {
-                Ok(configs) => {
+            match ConfigManager::instance().load(&config_dir.to_string_lossy()) {
+                Ok(()) => {
                     log::info!("Configs loaded successfully");
                     
-                    let printer_config = config_adapter::build_printer_config(&configs);
-                    let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
-                    
-                    if config_frames.is_empty() {
-                        log::info!("No config frames to send (GPIO config sent by server)");
-                    } else {
-                        log::info!("Sending {} config frames to device...", config_frames.len());
-                        
-                        for frame_bytes in &config_frames {
-                            match state.core_client.serial_send_raw(frame_bytes).await {
-                                Ok(()) => log::debug!("Config frame sent: {} bytes", frame_bytes.len()),
-                                Err(e) => log::warn!("Failed to send config frame: {}", e),
+                    match ConfigManager::instance().get_config() {
+                        Ok(printer_config) => {
+                            let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
+                            
+                            if config_frames.is_empty() {
+                                log::info!("No config frames to send (GPIO config sent by server)");
+                            } else {
+                                log::info!("Sending {} config frames to device...", config_frames.len());
+                                
+                                for frame_bytes in &config_frames {
+                                    match state.core_client.serial_send_raw(frame_bytes).await {
+                                        Ok(()) => log::debug!("Config frame sent: {} bytes", frame_bytes.len()),
+                                        Err(e) => log::warn!("Failed to send config frame: {}", e),
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                }
+                                
+                                log::info!("All config frames sent");
                             }
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            
+                            // Wait for server's ConfigComplete to be processed
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            
+                            match state.core_client.serial_init_seq().await {
+                                Ok(()) => log::info!("Device seq initialized"),
+                                Err(e) => log::warn!("Init seq failed: {}", e),
+                            }
                         }
-                        
-                        log::info!("All config frames sent");
+                        Err(e) => log::warn!("Failed to get config: {}", e),
                     }
-                    
-                    // Wait for server's ConfigComplete to be processed
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    
-                    match state.core_client.serial_init_seq().await {
-                        Ok(()) => log::info!("Device seq initialized"),
-                        Err(e) => log::warn!("Init seq failed: {}", e),
-                    }
-                    
                 }
                 Err(e) => log::warn!("Failed to load configs for serial init: {}", e),
             }

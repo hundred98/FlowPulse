@@ -28,17 +28,16 @@ pub use core_client::{CoreSocketClient, CoreClientConfig};
 
 // Re-export config types
 pub use config::{
+    ConfigManager,
     PrinterJsonConfig, PrinterParams, MotorParams, LimitSwitchParams,
     TemperatureParams, HeaterParams, FanParams, ProbeParams,
-    load_config_from_file, parse_json_config,
-    load_configs, build_motion_config_json, build_printer_config,
-    LoadedConfigs, HardwareConfig, MotionFileConfig, PrinterFileConfig,
+    LimitSwitchAxis, TempSensorParams, HeaterPin,
     ConfigFrameBuilder, create_config_frames, validate_config,
-    configure_device,
 };
 
-// Re-export config submodules
-pub use config::{config_adapter, config_protocol};
+// Note: config_adapter is kept internal for ConfigManager use
+// Use ConfigManager::load() and ConfigManager::reload() instead of
+// load_configs, load_config_from_file, or configure_device
 
 // Re-export state machine types
 pub use state_machine::{

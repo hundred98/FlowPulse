@@ -10,8 +10,8 @@ mod app;
 
 use printer_host_v2::{PrinterHostV2, HostV2Config};
 use app::AppState;
-use emb_public::config_adapter;
-use emb_public::config_protocol::ConfigFrameBuilder;
+use emb_public::ConfigManager;
+use emb_public::ConfigFrameBuilder;
 use std::env;
 
 /// Simple G-code line parser: extracts G-code command letter/number and parameters.
@@ -158,20 +158,26 @@ async fn main() -> anyhow::Result<()> {
     log::info!("Enable services: {}", enable_services);
 
     // Load config files (hardware.json + motion.json + printer.json)
-    let configs = config_adapter::load_configs(config_dir)
+    ConfigManager::instance().load(config_dir)
         .unwrap_or_else(|e| {
             log::error!("Failed to load configs: {}", e);
             std::process::exit(1);
         });
 
+    let printer_config = ConfigManager::instance().get_config()
+        .unwrap_or_else(|e| {
+            log::error!("Failed to get config: {}", e);
+            std::process::exit(1);
+        });
+
     log::info!(
         "Loaded {} motors, printer model: {}",
-        configs.hardware.motor.len(),
-        configs.printer.printer_model,
+        printer_config.motor.len(),
+        printer_config.printer_model,
     );
 
     // Merge configs into MotionConfig JSON
-    let motion_json = config_adapter::build_motion_config_json(&configs).unwrap_or_else(|e| {
+    let motion_json = ConfigManager::instance().get_motion_config_json().unwrap_or_else(|e| {
         log::error!("Failed to build motion config: {}", e);
         std::process::exit(1);
     });
@@ -208,14 +214,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Step 2: Connect serial port to STM32 (through server proxy)
-    let serial_cfg = &configs.printer.communication.as_ref()
-        .and_then(|c| c.serial.as_ref());
-    let (serial_port, serial_baud) = match serial_cfg {
-        Some(cfg) => (cfg.port.clone(), cfg.baud_rate),
-        None => {
-            log::error!("No serial config found in printer.json");
-            std::process::exit(1);
-        }
+    let (serial_port, serial_baud) = {
+        let serial = &printer_config.communication.serial;
+        (serial.port.clone(), serial.baud_rate)
     };
 
     log::info!("Connecting serial {} @ {} baud...", serial_port, serial_baud);
@@ -234,8 +235,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Step 3.5: Send config frames to STM32 device (motor pins, etc.)
-    let printer_config = config_adapter::build_printer_config(&configs);
-
     let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
     log::info!("Sending {} config frames to device...", config_frames.len());
 
