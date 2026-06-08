@@ -110,6 +110,12 @@ pub enum MotionRequest {
         /// Arc parameters (for G2/G3)
         arc: Option<ArcParamsApi>,
     },
+    /// 执行M指令（同步执行）
+    /// 前面的运动会规划到速度0停止，然后执行M指令
+    ExecuteMCommand {
+        /// M指令
+        command: MCommand,
+    },
     /// Reset position to origin
     ResetPosition,
     /// Set current position (G92)
@@ -144,6 +150,113 @@ pub struct ArcParamsApi {
     pub direction: u8,
 }
 
+/// M指令执行类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MExecutionType {
+    /// 同步等待型 - 需要等待条件满足（如温度达到）
+    SyncWait,
+    /// 同步设置型 - 执行后立即继续
+    SyncSet,
+    /// 运动参数型 - 更新运动参数后继续
+    MotionParam,
+}
+
+/// M指令定义
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MCommand {
+    // === 同步等待型 ===
+    /// M109 - 设置热端温度并等待
+    WaitHotendTemp {
+        /// 工具编号
+        tool: u8,
+        /// 目标温度 (°C)
+        temp: f32,
+    },
+    /// M190 - 设置热床温度并等待
+    WaitBedTemp {
+        /// 目标温度 (°C)
+        temp: f32,
+    },
+
+    // === 同步设置型 ===
+    /// M104 - 设置热端温度
+    SetHotendTemp {
+        /// 工具编号
+        tool: u8,
+        /// 目标温度 (°C)
+        temp: f32,
+    },
+    /// M140 - 设置热床温度
+    SetBedTemp {
+        /// 目标温度 (°C)
+        temp: f32,
+    },
+    /// M106 - 设置风扇速度
+    SetFanSpeed {
+        /// 风扇索引
+        index: u8,
+        /// 速度 (0-255)
+        speed: u8,
+    },
+    /// M107 - 关闭风扇
+    FanOff {
+        /// 风扇索引
+        index: u8,
+    },
+    /// M82 - 挤出机绝对模式
+    ExtruderAbsoluteMode,
+    /// M83 - 挤出机相对模式
+    ExtruderRelativeMode,
+
+    // === 运动参数型 ===
+    /// M201 - 设置加速度
+    SetAcceleration {
+        x: Option<f32>,
+        y: Option<f32>,
+        z: Option<f32>,
+        e: Option<f32>,
+    },
+    /// M203 - 设置最大速度
+    SetMaxVelocity {
+        x: Option<f32>,
+        y: Option<f32>,
+        z: Option<f32>,
+        e: Option<f32>,
+    },
+    /// M204 - 设置加速度参数
+    SetAccelParams {
+        /// 移动加速度
+        travel: Option<f32>,
+        /// 打印加速度
+        print: Option<f32>,
+        /// 回抽加速度
+        retract: Option<f32>,
+    },
+    /// M92 - 设置步进电机每毫米步数
+    SetStepsPerMm {
+        x: Option<f32>,
+        y: Option<f32>,
+        z: Option<f32>,
+        e: Option<f32>,
+    },
+}
+
+impl MCommand {
+    /// 获取执行类型
+    pub fn execution_type(&self) -> MExecutionType {
+        match self {
+            MCommand::WaitHotendTemp { .. } | MCommand::WaitBedTemp { .. } => {
+                MExecutionType::SyncWait
+            }
+            MCommand::SetAcceleration { .. }
+            | MCommand::SetMaxVelocity { .. }
+            | MCommand::SetAccelParams { .. }
+            | MCommand::SetStepsPerMm { .. } => MExecutionType::MotionParam,
+            _ => MExecutionType::SyncSet,
+        }
+    }
+}
+
 /// Configuration related requests
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConfigRequest {
@@ -157,11 +270,44 @@ pub enum ConfigRequest {
         /// Motion config JSON
         motion_config_json: String,
     },
+    /// Update fan config (index to GPIO name mapping)
+    UpdateFanConfig {
+        /// Fan config JSON
+        fan_config_json: String,
+    },
     /// Load all configuration files from a directory
     LoadAllConfigs {
         /// Path to the config directory containing printer.json, motion.json, hardware.json
         config_dir: String,
     },
+}
+
+/// Fan configuration entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FanConfigEntry {
+    /// Fan index (used in M106/M107 P parameter)
+    pub index: u8,
+    /// GPIO name (must match a GPIO output definition)
+    pub name: String,
+    /// Optional description
+    #[serde(default)]
+    pub description: String,
+}
+
+/// Fan configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FanConfig {
+    /// Fan entries
+    pub fans: Vec<FanConfigEntry>,
+}
+
+impl FanConfig {
+    /// Get GPIO name for a fan index
+    pub fn get_name(&self, index: u8) -> Option<&str> {
+        self.fans.iter()
+            .find(|f| f.index == index)
+            .map(|f| f.name.as_str())
+    }
 }
 
 // ============================================================================
@@ -292,6 +438,11 @@ pub enum MotionResponse {
         segments_dispatched: usize,
         error: Option<String>,
     },
+    /// M指令执行结果
+    MCommandResult {
+        success: bool,
+        error: Option<String>,
+    },
     /// Current position
     PositionResult {
         x: f32,
@@ -382,6 +533,11 @@ pub enum ConfigResponse {
     },
     /// Motion config update result
     MotionConfigUpdated {
+        success: bool,
+        error: Option<String>,
+    },
+    /// Fan config update result
+    FanConfigUpdated {
         success: bool,
         error: Option<String>,
     },

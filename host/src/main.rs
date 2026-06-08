@@ -12,118 +12,167 @@ use printer_host_v2::{PrinterHostV2, HostV2Config};
 use app::AppState;
 use emb_public::ConfigManager;
 use emb_public::ConfigFrameBuilder;
+use emb_public::gcode::{GCodeParser, ParsedCommand, CommandKind, MotionCommand};
+use emb_api::MCommand;
 use std::env;
 
-/// Simple G-code line parser: extracts G-code command letter/number and parameters.
-/// Only handles G0/G1/G2/G3/G28/G92.
-struct GCodeLine {
-    cmd: String,
-    x: Option<f32>,
-    y: Option<f32>,
-    z: Option<f32>,
-    e: Option<f32>,
-    f: Option<f32>,
-    i: Option<f32>,
-    j: Option<f32>,
-}
-
-fn parse_gcode_line(line: &str) -> Option<GCodeLine> {
-    let line = line.trim();
-    if line.is_empty() || line.starts_with(';') || line.starts_with('(') {
-        return None;
-    }
-
-    let cmd_start = line.chars().position(|c| c.is_ascii_alphabetic())?;
-    let rest = &line[cmd_start..];
-
-    let tokens: Vec<&str> = rest.split_whitespace().collect();
-    if tokens.is_empty() {
-        return None;
-    }
-
-    let cmd = tokens[0].to_uppercase();
-    if !cmd.starts_with('G') {
-        return None;
-    }
-
-    let mut parsed = GCodeLine {
-        cmd,
-        x: None, y: None, z: None, e: None, f: None, i: None, j: None,
-    };
-
-    for token in &tokens[1..] {
-        let token = token.to_uppercase();
-        let key = token.chars().next()?;
-        let val: Option<f32> = token[1..].parse().ok();
-        match key {
-            'X' => parsed.x = val,
-            'Y' => parsed.y = val,
-            'Z' => parsed.z = val,
-            'E' => parsed.e = val,
-            'F' => parsed.f = val,
-            'I' => parsed.i = val,
-            'J' => parsed.j = val,
-            _ => {}
-        }
-    }
-
-    Some(parsed)
-}
-
-/// Execute a single parsed G-code line.
+/// Execute a parsed G-code command.
 /// Planning + mm→steps + serial dispatch all happen in emb-core-server.
-async fn execute_gcode(
+async fn execute_parsed_command(
     host: &PrinterHostV2,
-    gcode: &GCodeLine,
-    line_num: usize,
+    parsed: &ParsedCommand,
     total_segments: &mut usize,
 ) -> Result<(), String> {
-    match gcode.cmd.as_str() {
-        "G0" | "G00" | "G1" | "G01" => {
-            let dispatched = host.client().motion_dispatch(
-                &gcode.cmd, gcode.x, gcode.y, gcode.z, gcode.e, gcode.f,
-            ).await?;
+    match &parsed.kind {
+        CommandKind::Motion(motion) => {
+            execute_motion_command(host, motion, parsed.line_number, total_segments).await
+        }
+        CommandKind::Machine(m_command) => {
+            execute_m_command(host, m_command, parsed.line_number).await
+        }
+        CommandKind::Empty => Ok(()),
+        CommandKind::Unsupported { raw } => {
+            log::debug!("  [L{:03}] Skipping unsupported: {}", parsed.line_number, raw);
+            Ok(())
+        }
+    }
+}
+
+/// Execute a motion command (G0/G1/G2/G3/G28/G92/etc.)
+async fn execute_motion_command(
+    host: &PrinterHostV2,
+    motion: &MotionCommand,
+    line_num: u32,
+    total_segments: &mut usize,
+) -> Result<(), String> {
+    match motion {
+        MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
+            let cmd = if *is_rapid { "G0" } else { "G1" };
+            let dispatched = host.client().motion_dispatch(cmd, *x, *y, *z, *e, *f).await?;
             *total_segments += dispatched;
-            if dispatched > 0 {
-                // log::info!("  [L{:03}] {} => {} segments (total: {})",
-                //     line_num, gcode.cmd, dispatched, total_segments);
-            } else {
-                log::debug!("  [L{:03}] {} => 0 segments (skipped, distance too small)", line_num, gcode.cmd);
+            if dispatched == 0 {
+                log::debug!("  [L{:03}] {} => 0 segments (skipped, distance too small)", line_num, cmd);
             }
             Ok(())
         }
-        "G2" | "G02" | "G3" | "G03" => {
-            let i = gcode.i.unwrap_or(0.0);
-            let j = gcode.j.unwrap_or(0.0);
+        MotionCommand::ArcMove { x, y, z, e, f, i, j, is_cw } => {
+            let cmd = if *is_cw { "G2" } else { "G3" };
             let dispatched = host.client().motion_dispatch_arc(
-                &gcode.cmd, gcode.x, gcode.y, gcode.z, gcode.e, gcode.f,
+                cmd, *x, *y, *z, *e, *f,
                 Some(emb_api::ArcParamsApi {
-                    i, j,
-                    direction: if gcode.cmd.ends_with('2') { 0 } else { 1 },
+                    i: *i,
+                    j: *j,
+                    direction: if *is_cw { 0 } else { 1 },
                 }),
             ).await?;
             *total_segments += dispatched;
-            if dispatched > 0 {
-                // log::info!("  [L{:03}] {} => {} segments (total: {})",
-                //     line_num, gcode.cmd, dispatched, total_segments);
+            Ok(())
+        }
+        MotionCommand::Home { x, y, z } => {
+            // G28 - 如果指定了轴，只回零指定轴；否则回零所有轴
+            if *x || *y || *z {
+                // 暂不支持单轴回零，回零所有轴
+                log::warn!("  [L{:03}] G28 partial home not supported, homing all axes", line_num);
             }
-            Ok(())
-        }
-        "G28" => {
-            let dispatched = host.client().motion_dispatch(
-                "G28", None, None, None, None, None,
-            ).await?;
+            let dispatched = host.client().motion_dispatch("G28", None, None, None, None, None).await?;
             *total_segments += dispatched;
-            // log::info!("  [L{:03}] G28 HOME => {} segments", line_num, dispatched);
             Ok(())
         }
-        "G92" => {
-            host.set_position(gcode.x, gcode.y, gcode.z, gcode.e).await?;
-            // log::info!("  [L{:03}] G92 SET POSITION => OK", line_num);
+        MotionCommand::SetPosition { x, y, z, e } => {
+            host.set_position(*x, *y, *z, *e).await?;
             Ok(())
         }
-        other => {
-            log::debug!("  [L{:03}] Skipping unsupported: {}", line_num, other);
+        MotionCommand::AbsolutePositioning => {
+            log::debug!("  [L{:03}] G90 Absolute positioning (handled by slicer)", line_num);
+            Ok(())
+        }
+        MotionCommand::RelativePositioning => {
+            log::debug!("  [L{:03}] G91 Relative positioning (handled by slicer)", line_num);
+            Ok(())
+        }
+        MotionCommand::Inches => {
+            log::warn!("  [L{:03}] G20 Inches mode not supported, using mm", line_num);
+            Ok(())
+        }
+        MotionCommand::Millimeters => {
+            log::debug!("  [L{:03}] G21 Millimeters mode", line_num);
+            Ok(())
+        }
+    }
+}
+
+/// Execute an M command (machine control)
+async fn execute_m_command(
+    host: &PrinterHostV2,
+    m_command: &MCommand,
+    line_num: u32,
+) -> Result<(), String> {
+    match m_command {
+        // 温度控制
+        MCommand::SetHotendTemp { tool, temp } => {
+            log::info!("  [L{:03}] M104: Set hotend {} temp to {:.1}°C", line_num, tool, temp);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
+            Ok(())
+        }
+        MCommand::WaitHotendTemp { tool, temp } => {
+            log::info!("  [L{:03}] M109: Wait for hotend {} temp to reach {:.1}°C", line_num, tool, temp);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
+            Ok(())
+        }
+        MCommand::SetBedTemp { temp } => {
+            log::info!("  [L{:03}] M140: Set bed temp to {:.1}°C", line_num, temp);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
+            Ok(())
+        }
+        MCommand::WaitBedTemp { temp } => {
+            log::info!("  [L{:03}] M190: Wait for bed temp to reach {:.1}°C", line_num, temp);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
+            Ok(())
+        }
+
+        // 风扇控制
+        MCommand::SetFanSpeed { index, speed } => {
+            log::info!("  [L{:03}] M106: Set fan {} speed to {}", line_num, index, speed);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
+            Ok(())
+        }
+        MCommand::FanOff { index } => {
+            log::info!("  [L{:03}] M107: Turn off fan {}", line_num, index);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
+            Ok(())
+        }
+
+        // 挤出机模式
+        MCommand::ExtruderAbsoluteMode => {
+            log::info!("  [L{:03}] M82: Extruder absolute mode", line_num);
+            // 挤出机模式由客户端管理，服务端只记录日志
+            Ok(())
+        }
+        MCommand::ExtruderRelativeMode => {
+            log::info!("  [L{:03}] M83: Extruder relative mode", line_num);
+            // 挤出机模式由客户端管理，服务端只记录日志
+            Ok(())
+        }
+
+        // 运动参数
+        MCommand::SetAcceleration { x, y, z, e } => {
+            log::info!("  [L{:03}] M201: Set acceleration X={:?} Y={:?} Z={:?} E={:?}", line_num, x, y, z, e);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
+            Ok(())
+        }
+        MCommand::SetMaxVelocity { x, y, z, e } => {
+            log::info!("  [L{:03}] M203: Set max velocity X={:?} Y={:?} Z={:?} E={:?}", line_num, x, y, z, e);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
+            Ok(())
+        }
+        MCommand::SetAccelParams { travel, print, retract } => {
+            log::info!("  [L{:03}] M204: Set accel params T={:?} P={:?} R={:?}", line_num, travel, print, retract);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
+            Ok(())
+        }
+        MCommand::SetStepsPerMm { x, y, z, e } => {
+            log::info!("  [L{:03}] M92: Set steps/mm X={:?} Y={:?} Z={:?} E={:?}", line_num, x, y, z, e);
+            host.client().motion_execute_m_command(m_command.clone()).await?;
             Ok(())
         }
     }
@@ -234,6 +283,17 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => log::warn!("Send motion config failed (using defaults): {}", e),
     }
 
+    // Step 3.1: Send FanConfig to server
+    match ConfigManager::instance().get_fan_config() {
+        Ok(fan_config) => {
+            match host.client().config_update_fan(&fan_config).await {
+                Ok(()) => log::info!("Fan config sent to server"),
+                Err(e) => log::warn!("Send fan config failed: {}", e),
+            }
+        }
+        Err(e) => log::warn!("Get fan config failed: {}", e),
+    }
+
     // Step 3.5: Send config frames to STM32 device (motor pins, etc.)
     let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
     log::info!("Sending {} config frames to device...", config_frames.len());
@@ -283,17 +343,24 @@ async fn main() -> anyhow::Result<()> {
     let mut errors = 0usize;
     let start_time = std::time::Instant::now();
 
-    // log::info!("=== Printing {} ({} lines) ===", gcode_path, lines.len());
+    log::info!("=== Printing {} ({} lines) ===", gcode_path, lines.len());
 
     for (idx, line) in lines.iter().enumerate() {
-        let line_num = idx + 1;
+        let line_num = (idx + 1) as u32;
 
-        if let Some(gcode) = parse_gcode_line(line) {
-            match execute_gcode(&host, &gcode, line_num, &mut total_segments).await {
-                Ok(()) => executed += 1,
-                Err(e) => {
-                    log::error!("  [L{:03}] ERROR: {}", line_num, e);
-                    errors += 1;
+        if let Some(parsed) = GCodeParser::parse_line(line, line_num) {
+            match &parsed.kind {
+                CommandKind::Empty => {
+                    skipped += 1;
+                }
+                _ => {
+                    match execute_parsed_command(&host, &parsed, &mut total_segments).await {
+                        Ok(()) => executed += 1,
+                        Err(e) => {
+                            log::error!("  [L{:03}] ERROR: {}", line_num, e);
+                            errors += 1;
+                        }
+                    }
                 }
             }
         } else {
@@ -302,7 +369,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let elapsed = start_time.elapsed();
-    // log::info!("=== Print complete ===");
+    log::info!("=== Print complete ===");
     log::info!("  Lines: {} executed, {} skipped, {} errors", executed, skipped, errors);
     log::info!("  Total segments dispatched: {}", total_segments);
     log::info!("  Time: {:.2}s", elapsed.as_secs_f64());

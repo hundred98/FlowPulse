@@ -146,6 +146,16 @@
         "max_value": 1.0
       },
       {
+        "name": "hotend_fan",
+        "pin": "PA7",
+        "type": "pwm",
+        "active_high": true,
+        "pwm_freq_hz": 100,
+        "default_value": 0.0,
+        "shutdown_value": 0.0,
+        "max_value": 1.0
+      },
+      {
         "name": "chamber_led",
         "pin": "PA6",
         "type": "digital",
@@ -201,5 +211,17 @@
         }
       }
     ]
-  }
+  },
+  "fan": [
+    {
+      "index": 0,
+      "name": "box_fan",
+      "description": "Model cooling fan"
+    },
+    {
+      "index": 1,
+      "name": "hotend_fan",
+      "description": "Hotend cooling fan"
+    }
+  ]
 }

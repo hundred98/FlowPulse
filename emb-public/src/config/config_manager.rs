@@ -180,6 +180,24 @@ impl ConfigManager {
         client.config_update_motion(&motion_config_json).await
             .map_err(|e| format!("Failed to send motion config to server: {}", e))?;
         
+        // Step 2.5: Send fan config to server
+        log::info!("📤 Sending fan config to server...");
+        let fan_config = emb_api::FanConfig {
+            fans: configs.hardware.fan.as_ref()
+                .map(|fan_list| {
+                    fan_list.iter()
+                        .map(|f| emb_api::FanConfigEntry {
+                            index: f.index,
+                            name: f.name.clone(),
+                            description: f.description.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        client.config_update_fan(&fan_config).await
+            .map_err(|e| format!("Failed to send fan config to server: {}", e))?;
+        
         // Step 3: Send hardware config frames to device
         log::info!("📤 Sending hardware config to device...");
         let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
@@ -235,6 +253,33 @@ impl ConfigManager {
         let configs = inner.loaded_configs.as_ref()
             .ok_or_else(|| "Configuration not loaded. Call load() first.".to_string())?;
         build_motion_config_json(configs)
+    }
+
+    /// Get the fan configuration.
+    /// 
+    /// This is used to send fan index to GPIO name mapping to the server.
+    /// 
+    /// # Returns
+    /// * `Ok(FanConfig)` if configuration is loaded
+    /// * `Err(String)` if configuration has not been loaded
+    pub fn get_fan_config(&self) -> Result<emb_api::FanConfig, String> {
+        let inner = self.inner.read().map_err(|e| format!("Lock error: {}", e))?;
+        let configs = inner.loaded_configs.as_ref()
+            .ok_or_else(|| "Configuration not loaded. Call load() first.".to_string())?;
+        
+        let fans = configs.hardware.fan.as_ref()
+            .map(|fan_list| {
+                fan_list.iter()
+                    .map(|f| emb_api::FanConfigEntry {
+                        index: f.index,
+                        name: f.name.clone(),
+                        description: f.description.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        
+        Ok(emb_api::FanConfig { fans })
     }
 
     /// Get the configuration directory path.

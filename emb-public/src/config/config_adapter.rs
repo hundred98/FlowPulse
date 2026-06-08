@@ -29,6 +29,16 @@ pub struct HardwareConfig {
     pub gpio: Option<GpioConfig>,
     pub temperature: Option<TemperatureHardwareConfig>,
     pub heater: Option<HeaterHardwareConfig>,
+    pub fan: Option<Vec<FanHardwareConfig>>,
+}
+
+/// Fan hardware configuration
+#[derive(Debug, Deserialize)]
+pub struct FanHardwareConfig {
+    pub index: u8,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Debug, Deserialize)]

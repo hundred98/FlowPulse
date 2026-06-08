@@ -14,9 +14,9 @@ use log::{info, warn, debug};
 use emb_api::{
     CoreRequest, CoreResponse,
     SerialRequest, SerialResponse,
-    MotionRequest, MotionResponse, ArcParamsApi,
+    MotionRequest, MotionResponse, ArcParamsApi, MCommand,
     ConfigRequest, ConfigResponse, StatusResponse,
-    MotionStatsResponse,
+    MotionStatsResponse, FanConfig,
     encode_request, decode_response,
 };
 
@@ -433,6 +433,19 @@ impl CoreSocketClient {
         }
     }
 
+    /// Execute an M command (machine control).
+    /// The server will wait for previous motion to complete before executing.
+    pub async fn motion_execute_m_command(&self, command: MCommand) -> Result<(), String> {
+        match self.send_request(&CoreRequest::Motion(MotionRequest::ExecuteMCommand { command })).await? {
+            CoreResponse::Motion(MotionResponse::MCommandResult { success: true, .. }) => Ok(()),
+            CoreResponse::Motion(MotionResponse::MCommandResult { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "M command failed".to_string()))
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
     /// Query motion and serial statistics.
     pub async fn motion_query_stats(&self) -> Result<MotionStatsResponse, String> {
         match self.send_request(&CoreRequest::Motion(MotionRequest::QueryStats)).await? {
@@ -508,6 +521,22 @@ impl CoreSocketClient {
             CoreResponse::Config(ConfigResponse::MotionConfigUpdated { success: true, .. }) => Ok(()),
             CoreResponse::Config(ConfigResponse::MotionConfigUpdated { success: false, error }) => {
                 Err(error.unwrap_or_else(|| "Motion config update failed".to_string()))
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    /// Update fan config (index to GPIO name mapping).
+    pub async fn config_update_fan(&self, fan_config: &FanConfig) -> Result<(), String> {
+        let fan_config_json = serde_json::to_string(fan_config)
+            .map_err(|e| format!("Failed to serialize fan config: {}", e))?;
+        match self.send_request(&CoreRequest::Config(ConfigRequest::UpdateFanConfig {
+            fan_config_json,
+        })).await? {
+            CoreResponse::Config(ConfigResponse::FanConfigUpdated { success: true, .. }) => Ok(()),
+            CoreResponse::Config(ConfigResponse::FanConfigUpdated { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "Fan config update failed".to_string()))
             }
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),

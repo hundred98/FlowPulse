@@ -1,8 +1,26 @@
 //! G-code parsing module
 //!
 //! This module provides G-code parsing and processing functionality.
-//! Reserved for future implementation.
 
+mod types;
+mod parser;
+mod converter;
+
+// Re-export types
+pub use types::{
+    ParsedCommand, CommandKind, MotionCommand,
+    MotionParams, AccelParams,
+};
+
+// Re-export parser
+pub use parser::GCodeParser;
+
+// Re-export converter
+pub use converter::{
+    MCommandConverter, DeviceCommand, ConvertError,
+};
+
+// Legacy types (kept for compatibility)
 use crate::state::Position;
 
 /// G-code command type
@@ -99,7 +117,7 @@ impl GCodeFileParser {
         // TODO: Implement full parsing
         Vec::new()
     }
-    
+
     /// Get progress percentage
     pub fn progress(&self) -> f32 {
         if self.total_lines == 0 {
