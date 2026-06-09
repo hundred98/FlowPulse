@@ -137,7 +137,7 @@
     "output": [
       {
         "name": "box_fan",
-        "pin": "PA6",
+        "pin": "PA5",
         "type": "pwm",
         "active_high": true,
         "pwm_freq_hz": 100,
@@ -147,7 +147,7 @@
       },
       {
         "name": "hotend_fan",
-        "pin": "PA5",
+        "pin": "PA6",
         "type": "pwm",
         "active_high": true,
         "pwm_freq_hz": 100,

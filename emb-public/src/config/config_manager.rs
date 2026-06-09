@@ -27,7 +27,7 @@ use once_cell::sync::Lazy;
 
 use super::printer_config::PrinterJsonConfig;
 use super::config_adapter::{load_configs, build_printer_config, build_motion_config_json, LoadedConfigs};
-use super::config_protocol::ConfigFrameBuilder;
+use super::config_protocol::{ConfigFrameBuilder, validate_config};
 use crate::CoreSocketClient;
 
 /// Configuration change callback type.
@@ -127,6 +127,9 @@ impl ConfigManager {
         let configs = load_configs(config_dir)?;
         let printer_config = build_printer_config(&configs);
         
+        // Validate configuration before using it
+        validate_config(&printer_config)?;
+        
         // Update cached config and get callbacks
         let callbacks = {
             let mut inner = self.inner.write().map_err(|e| format!("Lock error: {}", e))?;
@@ -173,6 +176,9 @@ impl ConfigManager {
         // Step 1: Re-read configuration files
         let configs = load_configs(&config_dir)?;
         let printer_config = build_printer_config(&configs);
+        
+        // Step 1.5: Validate configuration before using it
+        validate_config(&printer_config)?;
         
         // Step 2: Send motion config to server
         log::info!("📤 Sending motion config to server...");

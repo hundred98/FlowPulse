@@ -305,7 +305,8 @@ impl ConfigFrameBuilder {
 
         let name_bytes = pin.name.as_bytes();
         let mut name_buf = [0u8; 16];
-        let copy_len = name_bytes.len().min(16);
+        // Max 15 chars to leave room for null terminator (char name[16] in firmware)
+        let copy_len = name_bytes.len().min(15);
         name_buf[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
         buf.extend_from_slice(&name_buf);
 
@@ -353,7 +354,8 @@ impl ConfigFrameBuilder {
 
         let name_bytes = pin.name.as_bytes();
         let mut name_buf = [0u8; 16];
-        let copy_len = name_bytes.len().min(16);
+        // Max 15 chars to leave room for null terminator (char name[16] in firmware)
+        let copy_len = name_bytes.len().min(15);
         name_buf[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
         buf.extend_from_slice(&name_buf);
 
@@ -497,6 +499,25 @@ pub fn validate_config(config: &PrinterJsonConfig) -> Result<(), String> {
         }
         if !motor.driver.uart_pin.is_empty() && parse_pin(&motor.driver.uart_pin).is_none() {
             return Err(format!("Motor {} has invalid driver.uart_pin: {}", i, motor.driver.uart_pin));
+        }
+    }
+
+    // Validate GPIO name length (max 15 chars to fit char name[16] with null terminator)
+    for (i, pin) in config.gpio.output.iter().enumerate() {
+        if pin.name.len() > 15 {
+            return Err(format!(
+                "GPIO output pin {} name '{}' is too long (max 15 chars, got {})",
+                i, pin.name, pin.name.len()
+            ));
+        }
+    }
+
+    for (i, pin) in config.gpio.input.iter().enumerate() {
+        if pin.name.len() > 15 {
+            return Err(format!(
+                "GPIO input pin {} name '{}' is too long (max 15 chars, got {})",
+                i, pin.name, pin.name.len()
+            ));
         }
     }
 
