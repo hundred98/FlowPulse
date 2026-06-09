@@ -136,16 +136,6 @@
   "gpio": {
     "output": [
       {
-        "name": "box_fan",
-        "pin": "PA5",
-        "type": "pwm",
-        "active_high": true,
-        "pwm_freq_hz": 100,
-        "default_value": 0.0,
-        "shutdown_value": 0.0,
-        "max_value": 1.0
-      },
-      {
         "name": "hotend_fan",
         "pin": "PA6",
         "type": "pwm",
@@ -154,19 +144,12 @@
         "default_value": 0.0,
         "shutdown_value": 0.0,
         "max_value": 1.0
-      },
-      {
-        "name": "chamber_led",
-        "pin": "PA8",
-        "type": "digital",
-        "active_high": true,
-        "default_value": 0
       }
     ],
     "input": [
       {
         "name": "filament_sensor",
-        "pin": "PC5",
+        "pin": "PA4",
         "type": "digital",
         "pull": "up",
         "active_high": true,
@@ -180,19 +163,8 @@
         }
       },
       {
-        "name": "door_sensor",
-        "pin": "PA7",
-        "type": "digital",
-        "pull": "up",
-        "active_high": true,
-        "report": {
-          "mode": "interval",
-          "interval_ms": 10000
-        }
-      },
-      {
         "name": "power_monitor",
-        "pin": "PA2",
+        "pin": "PA13",
         "type": "analog",
         "pull": "none",
         "adc_resolution": 12,
@@ -217,11 +189,6 @@
       "index": 0,
       "name": "hotend_fan",
       "description": "Hotend cooling fan"
-    },
-    {
-      "index": 1,
-      "name": "box_fan",
-      "description": "Box cooling fan"
     }
   ]
 }

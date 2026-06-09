@@ -62,7 +62,6 @@ pub use gateway::{
     CommunicationGateway, CommunicationChannel,
     ChannelType, ChannelStatus, ChannelConfig, ChannelStats, Direction,
     SerialChannelStats,
-    WebSocketServer, WebSocketConfig, WebSocketConnection, WebSocketStatus,
     UnixSocketServer, UnixSocketConfig, UnixSocketConnection, UnixSocketStatus, UnixSocketClientType,
     MqttClient, MqttConfig, MqttStatus, MqttTopicType,
     ChannelManager, ChannelManagerConfig, ChannelManagerStatus,

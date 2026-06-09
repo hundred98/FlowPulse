@@ -25,11 +25,13 @@ use emb_public::{
     // Event system
     SyncEventPublisher,
     common::events::EventPublisher,  // Import EventPublisher trait
+    common::WebSocketMessage,
 
     // Multi-channel access
     ChannelManager, ChannelManagerConfig,
-    WebSocketConfig, UnixSocketConfig, MqttConfig,
+    UnixSocketConfig, MqttConfig,
 };
+use tokio::sync::broadcast;
 
 /// Application state containing all core components
 pub struct AppState {
@@ -59,11 +61,17 @@ pub struct AppState {
 
     /// Channel manager for multi-channel access
     pub channel_manager: Arc<ChannelManager>,
+
+    /// Broadcast sender for WebSocket updates (temperature, position, etc.)
+    pub websocket_broadcast_tx: broadcast::Sender<WebSocketMessage>,
 }
 
 impl AppState {
     /// Create a new application state with all components
     pub fn new(core_client: Arc<CoreSocketClient>) -> Self {
+        // Create broadcast channel for WebSocket updates
+        let (websocket_broadcast_tx, _websocket_broadcast_rx) = broadcast::channel(32);
+        
         // Create event publisher
         let event_publisher = Arc::new(SyncEventPublisher::new());
         
@@ -105,13 +113,6 @@ impl AppState {
         
         // Create channel manager
         let channel_manager_config = ChannelManagerConfig {
-            websocket: WebSocketConfig {
-                bind_address: "127.0.0.1".to_string(),
-                port: 8080,
-                max_connections: 10,
-                enable_auth: false,
-                auth_token: None,
-            },
             unix_socket: UnixSocketConfig {
                 socket_path: "/tmp/flowpulse.sock".to_string(),
                 max_connections: 5,
@@ -119,7 +120,6 @@ impl AppState {
                 enable_hmi_mode: false,
             },
             mqtt: MqttConfig::default(),
-            enable_websocket: true,
             enable_unix_socket: true,
             enable_mqtt: false,
             status_broadcast_interval: 1,
@@ -143,6 +143,7 @@ impl AppState {
             message_queue,
             event_publisher,
             channel_manager,
+            websocket_broadcast_tx,
         }
     }
     
@@ -157,6 +158,10 @@ impl AppState {
         } else {
             log::info!("Core client connection verified");
         }
+        
+        // Initialize temperature manager (load heaters from config)
+        log::info!("Initializing temperature manager...");
+        self.temperature_manager.initialize().await?;
         
         // Register message handlers
         self.register_handlers().await?;
@@ -261,6 +266,51 @@ impl AppState {
                         format!("Status broadcast failed: {}", e),
                     );
                     event_publisher_clone.publish(error_event).await;
+                }
+            }
+        });
+        
+        // Start temperature subscription (get real temperature from device)
+        if let Err(e) = self.temperature_manager.subscribe_temperature_updates().await {
+            log::warn!("Failed to subscribe temperature updates: {}", e);
+        } else {
+            log::info!("Temperature subscription started");
+        }
+        
+        // Start temperature broadcast loop
+        let temperature_manager_clone = self.temperature_manager.clone();
+        let websocket_broadcast_tx_clone = self.websocket_broadcast_tx.clone();
+        tokio::spawn(async move {
+            log::info!("Temperature broadcast loop started");
+            let mut counter = 0u32;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                
+                // Get temperature status
+                let temp_status = temperature_manager_clone.get_temp_status().await;
+                
+                // Log every 2 seconds (4 iterations)
+                counter += 1;
+                if counter % 4 == 0 {
+                    log::info!(
+                        "Temperature: hotend={}/{}°C, bed={}/{}°C",
+                        temp_status.hotend_current,
+                        temp_status.hotend_target,
+                        temp_status.bed_current,
+                        temp_status.bed_target
+                    );
+                }
+                
+                // Broadcast temperature update
+                let msg = WebSocketMessage::Temperature {
+                    hotend_current: temp_status.hotend_current,
+                    hotend_target: temp_status.hotend_target,
+                    bed_current: temp_status.bed_current,
+                    bed_target: temp_status.bed_target,
+                };
+                
+                if websocket_broadcast_tx_clone.send(msg).is_err() {
+                    log::warn!("Failed to broadcast temperature update");
                 }
             }
         });

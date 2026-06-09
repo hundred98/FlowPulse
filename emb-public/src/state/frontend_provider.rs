@@ -172,17 +172,100 @@ pub struct WebDataProvider {
     
     /// Cached position data
     cached_position: Arc<RwLock<PositionData>>,
+    
+    /// Shutdown flag
+    shutdown: Arc<RwLock<bool>>,
 }
 
 impl WebDataProvider {
     /// Create a new Web data provider
     pub fn new(broadcast_tx: broadcast::Sender<crate::common::WebSocketMessage>) -> Self {
-        Self {
-            broadcast_tx,
+        let provider = Self {
+            broadcast_tx: broadcast_tx.clone(),
             cached_status: Arc::new(RwLock::new(PrinterStatus::idle())),
             cached_temp: Arc::new(RwLock::new(TempStatus::new(0.0, 0.0, 0.0, 0.0))),
             cached_position: Arc::new(RwLock::new(PositionData::zero())),
-        }
+            shutdown: Arc::new(RwLock::new(false)),
+        };
+        
+        // Start background task to subscribe to temperature updates
+        provider.start_update_loop();
+        
+        provider
+    }
+    
+    /// Start background task to subscribe to updates
+    fn start_update_loop(&self) {
+        let mut rx = self.broadcast_tx.subscribe();
+        let cached_temp = self.cached_temp.clone();
+        let cached_position = self.cached_position.clone();
+        let cached_status = self.cached_status.clone();
+        let shutdown = self.shutdown.clone();
+        
+        tokio::spawn(async move {
+            log::info!("WebDataProvider update loop started");
+            loop {
+                // Check shutdown flag
+                if *shutdown.read().unwrap() {
+                    break;
+                }
+                
+                // Receive message
+                match rx.recv().await {
+                    Ok(msg) => {
+                        match msg {
+                            crate::common::WebSocketMessage::Temperature {
+                                hotend_current,
+                                hotend_target,
+                                bed_current,
+                                bed_target,
+                            } => {
+                                log::debug!(
+                                    "WebDataProvider received temperature: hotend={}/{}°C, bed={}/{}°C",
+                                    hotend_current, hotend_target, bed_current, bed_target
+                                );
+                                let mut cached = cached_temp.write().unwrap();
+                                *cached = TempStatus::new(
+                                    hotend_current,
+                                    hotend_target,
+                                    bed_current,
+                                    bed_target,
+                                );
+                            }
+                            crate::common::WebSocketMessage::Position { x, y, z, e } => {
+                                let mut cached = cached_position.write().unwrap();
+                                *cached = PositionData::new(x, y, z, e);
+                            }
+                            crate::common::WebSocketMessage::State { from: _, to } => {
+                                let mut cached = cached_status.write().unwrap();
+                                *cached = PrinterStatus::new(to);
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        log::warn!("WebDataProvider broadcast channel closed");
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        log::warn!("WebDataProvider broadcast channel lagged");
+                        // Continue on lagged, just skip old messages
+                        continue;
+                    }
+                }
+            }
+        });
+    }
+    
+    /// Shutdown the update loop
+    pub fn shutdown(&self) {
+        let mut shutdown = self.shutdown.write().unwrap();
+        *shutdown = true;
+    }
+    
+    /// Get broadcast sender for external use
+    pub fn get_broadcast_sender(&self) -> broadcast::Sender<crate::common::WebSocketMessage> {
+        self.broadcast_tx.clone()
     }
     
     /// Broadcast message to WebSocket clients
@@ -201,6 +284,44 @@ impl WebDataProvider {
         self.broadcast(crate::common::WebSocketMessage::State {
             from: cached.state.clone(),
             to: status.state,
+        })?;
+        
+        Ok(())
+    }
+    
+    /// Update temperature and broadcast to WebSocket clients
+    pub fn update_temperature(&self, temp: TempStatus) -> EmbResult<()> {
+        // Update cached temperature
+        {
+            let mut cached = self.cached_temp.write().unwrap();
+            *cached = temp.clone();
+        }
+        
+        // Broadcast temperature update
+        self.broadcast(crate::common::WebSocketMessage::Temperature {
+            hotend_current: temp.hotend_current,
+            hotend_target: temp.hotend_target,
+            bed_current: temp.bed_current,
+            bed_target: temp.bed_target,
+        })?;
+        
+        Ok(())
+    }
+    
+    /// Update position and broadcast to WebSocket clients
+    pub fn update_position(&self, position: PositionData) -> EmbResult<()> {
+        // Update cached position
+        {
+            let mut cached = self.cached_position.write().unwrap();
+            *cached = position;
+        }
+        
+        // Broadcast position update
+        self.broadcast(crate::common::WebSocketMessage::Position {
+            x: position.x,
+            y: position.y,
+            z: position.z,
+            e: position.e,
         })?;
         
         Ok(())

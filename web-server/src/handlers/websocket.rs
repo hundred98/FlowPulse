@@ -44,16 +44,8 @@ async fn handle_websocket(socket: WebSocket, state: Arc<WebServerState>) {
         }
     }
     
-    // Subscribe to temperature updates (if WebDataProvider)
-    let temp_rx = {
-        // Try to get broadcast receiver from WebDataProvider
-        // For now, we'll create a dummy channel
-        let (_tx, rx) = broadcast::channel(16);
-        rx
-    };
-    
-    // Split the receiver for async use
-    let mut temp_rx = temp_rx;
+    // Subscribe to broadcast channel for temperature updates
+    let mut temp_rx = state.broadcast_tx.subscribe();
     
     // Handle incoming messages and temperature updates
     loop {

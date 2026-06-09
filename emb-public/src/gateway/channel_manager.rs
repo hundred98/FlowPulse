@@ -1,14 +1,17 @@
 //! Channel Manager for unified access
 //!
-//! Manages all communication channels (WebSocket, UnixSocket, MQTT) and provides
+//! Manages all communication channels (UnixSocket, MQTT) and provides
 //! a unified interface for message routing and state synchronization.
+//!
+//! Note: WebSocket functionality has been moved to `web-server` module.
+//! Use `web-server::WebServer` for WebSocket support.
 
 use crate::{EmbResult};
 use crate::message_queue::{Message, MessageQueue};
 use crate::state::DeviceStateManager;
 use crate::temperature::TemperatureManager;
-use crate::common::{WebSocketMessage, SyncEventPublisher, PrinterEvent};
-use super::{WebSocketServer, WebSocketConfig, UnixSocketServer, UnixSocketConfig, MqttClient, MqttConfig};
+use crate::common::{SyncEventPublisher, PrinterEvent};
+use super::{UnixSocketServer, UnixSocketConfig, MqttClient, MqttConfig};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
@@ -17,14 +20,10 @@ use log::{info, warn};
 /// Channel manager configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelManagerConfig {
-    /// WebSocket configuration
-    pub websocket: WebSocketConfig,
     /// UnixSocket configuration
     pub unix_socket: UnixSocketConfig,
     /// MQTT configuration
     pub mqtt: MqttConfig,
-    /// Enable WebSocket channel
-    pub enable_websocket: bool,
     /// Enable UnixSocket channel
     pub enable_unix_socket: bool,
     /// Enable MQTT channel
@@ -36,10 +35,8 @@ pub struct ChannelManagerConfig {
 impl Default for ChannelManagerConfig {
     fn default() -> Self {
         Self {
-            websocket: WebSocketConfig::default(),
             unix_socket: UnixSocketConfig::default(),
             mqtt: MqttConfig::default(),
-            enable_websocket: true,
             enable_unix_socket: true,
             enable_mqtt: false,
             status_broadcast_interval: 1,
@@ -52,9 +49,6 @@ pub struct ChannelManager {
     /// Manager configuration
     #[allow(dead_code)]
     config: ChannelManagerConfig,
-    /// WebSocket server
-    #[allow(dead_code)]
-    websocket_server: Option<Arc<WebSocketServer>>,
     /// UnixSocket server
     #[allow(dead_code)]
     unix_socket_server: Option<Arc<UnixSocketServer>>,
@@ -80,8 +74,6 @@ pub struct ChannelManager {
 /// Channel manager status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelManagerStatus {
-    /// WebSocket server status
-    pub websocket_running: bool,
     /// UnixSocket server status
     pub unix_socket_running: bool,
     /// MQTT client status
@@ -95,7 +87,6 @@ pub struct ChannelManagerStatus {
 impl Default for ChannelManagerStatus {
     fn default() -> Self {
         Self {
-            websocket_running: false,
             unix_socket_running: false,
             mqtt_connected: false,
             total_messages_routed: 0,
@@ -113,18 +104,6 @@ impl ChannelManager {
         temperature_manager: Arc<TemperatureManager>,
         event_publisher: Arc<SyncEventPublisher>,
     ) -> Self {
-        // Create WebSocket server if enabled
-        let websocket_server = if config.enable_websocket {
-            Some(Arc::new(WebSocketServer::new(
-                config.websocket.clone(),
-                message_queue.clone(),
-                device_state.clone(),
-                temperature_manager.clone(),
-            )))
-        } else {
-            None
-        };
-
         // Create UnixSocket server if enabled
         let unix_socket_server = if config.enable_unix_socket {
             Some(Arc::new(UnixSocketServer::new(
@@ -150,7 +129,6 @@ impl ChannelManager {
 
         Self {
             config,
-            websocket_server,
             unix_socket_server,
             mqtt_client,
             message_queue,
@@ -163,13 +141,6 @@ impl ChannelManager {
     
     /// Start all enabled channels
     pub async fn start_all(&self) -> EmbResult<()> {
-        // Start WebSocket server
-        if let Some(ref ws_server) = self.websocket_server {
-            ws_server.start().await?;
-            self.status.write().await.websocket_running = true;
-            info!("WebSocket server started");
-        }
-        
         // Start UnixSocket server
         if let Some(ref unix_server) = self.unix_socket_server {
             unix_server.start().await?;
@@ -193,13 +164,6 @@ impl ChannelManager {
     
     /// Stop all channels
     pub async fn stop_all(&self) -> EmbResult<()> {
-        // Stop WebSocket server
-        if let Some(ref ws_server) = self.websocket_server {
-            ws_server.stop().await?;
-            self.status.write().await.websocket_running = false;
-            info!("WebSocket server stopped");
-        }
-        
         // Stop UnixSocket server
         if let Some(ref unix_server) = self.unix_socket_server {
             unix_server.stop().await?;
@@ -226,13 +190,6 @@ impl ChannelManager {
         // Route to specific channel if destination is specified
         if let Some(dest) = destination {
             match dest.as_str() {
-                "websocket" => {
-                    if let Some(ref ws_server) = self.websocket_server {
-                        // Convert to WebSocket message and send
-                        let ws_msg = self.convert_to_websocket_message(msg)?;
-                        ws_server.send_to_clients(ws_msg).await?;
-                    }
-                },
                 "unix_socket" => {
                     if let Some(ref unix_server) = self.unix_socket_server {
                         // Broadcast to UnixSocket clients
@@ -262,12 +219,6 @@ impl ChannelManager {
     
     /// Broadcast message to all active channels
     pub async fn broadcast_message(&self, msg: Message) -> EmbResult<()> {
-        // Broadcast to WebSocket clients
-        if let Some(ref ws_server) = self.websocket_server {
-            let ws_msg = self.convert_to_websocket_message(msg.clone())?;
-            ws_server.send_to_clients(ws_msg).await?;
-        }
-        
         // Broadcast to UnixSocket clients
         if let Some(ref unix_server) = self.unix_socket_server {
             unix_server.broadcast(msg.payload.clone()).await?;
@@ -291,11 +242,6 @@ impl ChannelManager {
     
     /// Broadcast status to all channels
     pub async fn broadcast_status(&self) -> EmbResult<()> {
-        // Broadcast to WebSocket
-        if let Some(ref ws_server) = self.websocket_server {
-            ws_server.broadcast_status().await?;
-        }
-        
         // Publish to MQTT
         if let Some(ref mqtt_client) = self.mqtt_client {
             mqtt_client.publish_status().await?;
@@ -307,24 +253,9 @@ impl ChannelManager {
         Ok(())
     }
     
-    /// Convert queue message to WebSocket message
-    fn convert_to_websocket_message(&self, _msg: Message) -> EmbResult<WebSocketMessage> {
-        // TODO: Implement proper conversion based on message type
-        
-        Ok(WebSocketMessage::State {
-            from: "unknown".to_string(),
-            to: "unknown".to_string(),
-        })
-    }
-    
     /// Get manager status
     pub async fn get_status(&self) -> ChannelManagerStatus {
         self.status.read().await.clone()
-    }
-    
-    /// Get WebSocket server
-    pub fn get_websocket_server(&self) -> Option<Arc<WebSocketServer>> {
-        self.websocket_server.clone()
     }
     
     /// Get UnixSocket server
@@ -366,7 +297,6 @@ mod tests {
     #[test]
     fn test_channel_manager_config_default() {
         let config = ChannelManagerConfig::default();
-        assert!(config.enable_websocket);
         assert!(config.enable_unix_socket);
         assert!(!config.enable_mqtt);
         assert_eq!(config.status_broadcast_interval, 1);

@@ -183,6 +183,12 @@ impl TemperatureManager {
 
         // Set status report callback
         self.client.set_status_report_callback(move |frame_type, payload| {
+            log::info!(
+                "Received StatusReport: frame_type=0x{:02X}, payload_len={}",
+                frame_type,
+                payload.len()
+            );
+
             // StatusResponse frame format:
             // [credits:1][pos_x:4][pos_y:4][pos_z:4][pos_e:4]
             // [temp_bed_cur:2][temp_bed_tgt:2]
@@ -196,7 +202,7 @@ impl TemperatureManager {
                 let temp_nozzle_cur = i16::from_be_bytes([payload[21], payload[22]]) as f32 / 10.0;
                 let temp_nozzle_tgt = i16::from_be_bytes([payload[23], payload[24]]) as f32 / 10.0;
 
-                log::debug!(
+                log::info!(
                     "Temperature update: bed={}/{}°C, hotend={}/{}°C",
                     temp_bed_cur, temp_bed_tgt,
                     temp_nozzle_cur, temp_nozzle_tgt
@@ -232,6 +238,12 @@ impl TemperatureManager {
                         ).with_severity(EventSeverity::Info),
                     );
                 });
+            } else {
+                log::warn!(
+                    "Invalid StatusReport: frame_type=0x{:02X}, expected=0x04, payload_len={}",
+                    frame_type,
+                    payload.len()
+                );
             }
         }).await;
 

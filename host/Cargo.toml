@@ -19,6 +19,7 @@ path = "src/bin/debug_terminal.rs"
 # Internal crates
 emb-public = { workspace = true }
 emb-api = { workspace = true }
+web-server = { path = "../web-server" }
 
 # Async runtime
 tokio = { workspace = true, features = ["signal"] }

@@ -6,6 +6,14 @@ authors.workspace = true
 description = "FlowPulse Web Server - Axum-based REST API and WebSocket server"
 license.workspace = true
 
+[lib]
+name = "web_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "web-server"
+path = "src/main.rs"
+
 [dependencies]
 # Workspace dependencies
 tokio = { workspace = true }
