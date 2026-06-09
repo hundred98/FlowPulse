@@ -130,12 +130,6 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => log::warn!("⚠️  Init seq failed: {}", e),
     }
 
-    // Enter print mode - enable StatusReport + motion execution
-    match host.client().serial_enter_print_mode().await {
-        Ok(()) => log::info!("✅ Entered print mode"),
-        Err(e) => log::warn!("⚠️  EnterPrintMode failed: {} (motion may not work)", e),
-    }
-
     // Step 7: Create application state
     let app_state = AppState::new(host.client());
     

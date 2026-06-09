@@ -203,7 +203,6 @@ impl WebDataProvider {
         let shutdown = self.shutdown.clone();
         
         tokio::spawn(async move {
-            log::info!("WebDataProvider update loop started");
             loop {
                 // Check shutdown flag
                 if *shutdown.read().unwrap() {
@@ -220,10 +219,6 @@ impl WebDataProvider {
                                 bed_current,
                                 bed_target,
                             } => {
-                                log::debug!(
-                                    "WebDataProvider received temperature: hotend={}/{}°C, bed={}/{}°C",
-                                    hotend_current, hotend_target, bed_current, bed_target
-                                );
                                 let mut cached = cached_temp.write().unwrap();
                                 *cached = TempStatus::new(
                                     hotend_current,
@@ -244,11 +239,9 @@ impl WebDataProvider {
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        log::warn!("WebDataProvider broadcast channel closed");
                         break;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        log::warn!("WebDataProvider broadcast channel lagged");
                         // Continue on lagged, just skip old messages
                         continue;
                     }

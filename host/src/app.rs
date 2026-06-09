@@ -281,25 +281,11 @@ impl AppState {
         let temperature_manager_clone = self.temperature_manager.clone();
         let websocket_broadcast_tx_clone = self.websocket_broadcast_tx.clone();
         tokio::spawn(async move {
-            log::info!("Temperature broadcast loop started");
-            let mut counter = 0u32;
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 
                 // Get temperature status
                 let temp_status = temperature_manager_clone.get_temp_status().await;
-                
-                // Log every 2 seconds (4 iterations)
-                counter += 1;
-                if counter % 4 == 0 {
-                    log::info!(
-                        "Temperature: hotend={}/{}°C, bed={}/{}°C",
-                        temp_status.hotend_current,
-                        temp_status.hotend_target,
-                        temp_status.bed_current,
-                        temp_status.bed_target
-                    );
-                }
                 
                 // Broadcast temperature update
                 let msg = WebSocketMessage::Temperature {
