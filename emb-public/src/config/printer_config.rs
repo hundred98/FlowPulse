@@ -413,8 +413,6 @@ pub struct TempSensorParams {
     #[serde(rename = "adc_pin")]
     pub adc_pin: String,
     pub beta: u32,
-    #[serde(rename = "ntc_resistance_25c")]
-    pub ntc_resistance_25c: u32,  // NTC热敏电阻在25°C时的电阻值（Ω）
     #[serde(rename = "pullup_resistor")]
     pub pullup_resistor: u32,  // 上拉电阻值（Ω）
     #[serde(default)]
@@ -435,7 +433,6 @@ impl Default for TempSensorParams {
             sensor_type: "NTC100K".to_string(),
             adc_pin: "PA0".to_string(),
             beta: 3950,
-            ntc_resistance_25c: 100000,
             pullup_resistor: 4700,
             min_temp: -100,
             max_temp: 300,

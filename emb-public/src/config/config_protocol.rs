@@ -205,7 +205,14 @@ impl ConfigFrameBuilder {
         let beta_bytes = (temp.beta as u16).to_be_bytes();
         payload.extend_from_slice(&beta_bytes[..2]);
 
-        let r25_bytes = temp.ntc_resistance_25c.to_be_bytes();
+        // Infer ntc_resistance_25c from sensor_type
+        let ntc_resistance_25c = match temp.sensor_type.as_str() {
+            "NTC100K" => 100000u32,
+            "NTC50K" => 50000u32,
+            "NTC10K" => 10000u32,
+            _ => 100000u32, // Default to 100K
+        };
+        let r25_bytes = ntc_resistance_25c.to_be_bytes();
         payload.extend_from_slice(&r25_bytes[..4]);
 
         let pullup_bytes = temp.pullup_resistor.to_be_bytes();
