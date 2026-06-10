@@ -117,8 +117,9 @@ impl ConfigFrameBuilder {
     pub fn build_set_temp_frame(heater_id: u8, target_temp: f32) -> Vec<u8> {
         let mut payload = vec![heater_id];
 
+        // STM32 expects float in big-endian format (matches read_float_be in protocol_handler.c)
         let temp_bytes = target_temp.to_be_bytes();
-        payload.extend_from_slice(&temp_bytes[..4]);
+        payload.extend_from_slice(&temp_bytes);
 
         Self::wrap_frame(FRAME_TYPE_SET_TEMP, &payload)
     }
@@ -269,8 +270,8 @@ impl ConfigFrameBuilder {
         let heating_timeout_bytes = heater.safety.heating_timeout_ms.to_be_bytes();
         payload.extend_from_slice(&heating_timeout_bytes[..4]);
 
-        let sensor_fault_bytes = heater.safety.sensor_fault_threshold.to_be_bytes();
-        payload.extend_from_slice(&sensor_fault_bytes[..2]);
+        // STM32 expects 1 byte for sensor_fault_threshold
+        payload.push(heater.safety.sensor_fault_threshold as u8);
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
     }

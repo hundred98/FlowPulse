@@ -17,6 +17,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tokio::sync::broadcast;
 use log::info;
 use emb_public::state::FrontendDataProvider;
+use emb_public::TemperatureManager;
 
 pub use config::WebServerConfig;
 
@@ -28,6 +29,8 @@ pub struct WebServerState {
     pub data_provider: Arc<dyn FrontendDataProvider>,
     /// Broadcast sender for WebSocket updates
     pub broadcast_tx: broadcast::Sender<emb_public::common::WebSocketMessage>,
+    /// Temperature manager for temperature control
+    pub temperature_manager: Arc<TemperatureManager>,
 }
 
 /// Web Server
@@ -42,11 +45,13 @@ impl WebServer {
         config: WebServerConfig,
         data_provider: Arc<dyn FrontendDataProvider>,
         broadcast_tx: broadcast::Sender<emb_public::common::WebSocketMessage>,
+        temperature_manager: Arc<TemperatureManager>,
     ) -> Self {
         let state = Arc::new(WebServerState {
             config,
             data_provider,
             broadcast_tx,
+            temperature_manager,
         });
         
         Self { state }
@@ -132,13 +137,27 @@ impl WebServer {
 mod tests {
     use super::*;
     use emb_public::state::WebDataProvider;
+    use emb_public::core_client::CoreSocketClient;
+    use emb_public::SyncEventPublisher;
+    use emb_public::temperature::TemperatureManagerConfig;
 
     #[test]
     fn test_web_server_creation() {
         let config = WebServerConfig::default();
         let (tx, _rx) = broadcast::channel(16);
         let provider = Arc::new(WebDataProvider::new(tx.clone()));
-        let server = WebServer::new(config, provider, tx);
+        
+        // Create a mock temperature manager for testing
+        let core_client = Arc::new(CoreSocketClient::new("127.0.0.1:9527".to_string()));
+        let event_publisher = Arc::new(SyncEventPublisher::new());
+        let temp_manager = Arc::new(TemperatureManager::new(
+            core_client,
+            event_publisher,
+            TemperatureManagerConfig::default(),
+            None,
+        ));
+        
+        let server = WebServer::new(config, provider, tx, temp_manager);
         assert_eq!(server.state.config.port, 8080);
     }
 }

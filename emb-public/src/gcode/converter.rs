@@ -107,13 +107,14 @@ impl MCommandConverter {
 
     /// 获取风扇名称
     fn get_fan_name(&self, index: u8) -> Result<String, ConvertError> {
-        // 根据索引映射到配置文件中的GPIO名称
-        // 这里使用默认映射，实际应该从配置文件读取
-        match index {
-            0 => Ok("box_fan".to_string()),
-            1 => Ok("hotend_fan".to_string()),
-            _ => Err(ConvertError::InvalidFanIndex(index)),
-        }
+        use crate::config::ConfigManager;
+
+        let config = ConfigManager::instance().get_config()
+            .map_err(|e| ConvertError::MissingConfig(e))?;
+
+        config.fan.get(index as usize)
+            .map(|fan| fan.name.clone())
+            .ok_or(ConvertError::InvalidFanIndex(index))
     }
 
     /// 转换为GPIO请求

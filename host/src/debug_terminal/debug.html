@@ -73,7 +73,7 @@
                     <h2>📤 GPIO Output Control</h2>
                     <div class="form-group">
                         <label>Pin Name</label>
-                        <input type="text" id="output-name" value="box_fan" placeholder="e.g. box_fan, led">
+                        <input type="text" id="output-name" value="hotend_fan" placeholder="e.g. hotend_fan, led">
                     </div>
                     <div class="form-group">
                         <label>Value (0.0 - 1.0)</label>
@@ -105,8 +105,8 @@
 
                 <div class="card">
                     <h2>📋 Quick Commands</h2>
-                    <button class="btn-secondary" onclick="setGpioByName('box_fan', 0)">box_fan OFF</button>
-                    <button class="btn-secondary" onclick="setGpioByName('box_fan', 1)">box_fan ON</button>
+                    <button class="btn-secondary" onclick="setGpioByName('hotend_fan', 0)">hotend_fan OFF</button>
+                    <button class="btn-secondary" onclick="setGpioByName('hotend_fan', 1)">hotend_fan ON</button>
                     <button class="btn-secondary" onclick="queryGpioByName('filament_sensor')">Query filament_sensor</button>
                 </div>
             </div>

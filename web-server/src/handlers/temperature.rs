@@ -60,30 +60,24 @@ pub async fn set_temperature(
 ) -> Result<Json<ApiResponse>, StatusCode> {
     // Set hotend temperature
     if let Some(hotend_temp) = request.hotend {
-        // 使用新的配置协议发送温度设置命令
-        // heater_id: 1 = 热端
-        let cmd = format!("SET_TEMP:1:{}", hotend_temp);
-        
-        if let Err(e) = state.data_provider.send_gcode(&cmd) {
-            log::error!("Failed to set hotend temperature: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        match state.temperature_manager.set_target("hotend", hotend_temp).await {
+            Ok(()) => info!("Set hotend temperature to {}°C", hotend_temp),
+            Err(e) => {
+                log::error!("Failed to set hotend temperature: {}", e);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
         }
-        
-        info!("Set hotend temperature to {}°C", hotend_temp);
     }
     
     // Set bed temperature
     if let Some(bed_temp) = request.bed {
-        // 使用新的配置协议发送温度设置命令
-        // heater_id: 0 = 热床
-        let cmd = format!("SET_TEMP:0:{}", bed_temp);
-        
-        if let Err(e) = state.data_provider.send_gcode(&cmd) {
-            log::error!("Failed to set bed temperature: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        match state.temperature_manager.set_target("bed", bed_temp).await {
+            Ok(()) => info!("Set bed temperature to {}°C", bed_temp),
+            Err(e) => {
+                log::error!("Failed to set bed temperature: {}", e);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
         }
-        
-        info!("Set bed temperature to {}°C", bed_temp);
     }
     
     Ok(Json(ApiResponse {

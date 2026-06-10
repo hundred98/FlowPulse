@@ -119,7 +119,7 @@
       }
     },
     "hotend": {
-      "pin": "PE5",
+      "pin": "PB0",
       "active_high": true,
       "pwm_freq_hz": 10,
       "max_power": 100,

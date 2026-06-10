@@ -33,7 +33,7 @@ pub struct HardwareConfig {
 }
 
 /// Fan hardware configuration
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FanHardwareConfig {
     pub index: u8,
     pub name: String,
@@ -710,6 +710,23 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         }
     }).unwrap_or_default();
 
+    // Build fans
+    let fans: Vec<pc::FanParams> = configs.hardware.fan.as_ref()
+        .map(|fan_list| {
+            let mut sorted_fans = fan_list.clone();
+            sorted_fans.sort_by_key(|f| f.index);
+
+            sorted_fans.into_iter().map(|f| {
+                pc::FanParams {
+                    name: f.name.clone(),
+                    pin: String::new(),
+                    active_high: true,
+                    pwm_freq_hz: 100,
+                }
+            }).collect()
+        })
+        .unwrap_or_default();
+
     pc::PrinterJsonConfig {
         version: configs.printer.version.clone(),
         printer_model: configs.printer.printer_model.clone(),
@@ -720,6 +737,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         gpio,
         temperature,
         heater,
+        fan: fans,
         ..Default::default()
     }
 }

@@ -266,8 +266,17 @@ impl TemperatureManager {
         // Build config frame
         let frame = ConfigFrameBuilder::build_set_temp_frame(heater_id, temp);
 
+        // Debug: log frame content
+        log::info!("Temperature set frame: {:02X?}", frame);
+        log::info!("Sending temperature frame: heater_id={}, temp={}°C, frame_len={} bytes",
+            heater_id, temp, frame.len());
+
         // Send to device
-        self.client.serial_send_raw(&frame).await?;
+        self.client.serial_send_raw(&frame).await
+            .map_err(|e| {
+                log::error!("Failed to send temperature frame: {}", e);
+                EmbError::Communication(e)
+            })?;
 
         // Publish event
         let _ = self.event_publisher.publish(
