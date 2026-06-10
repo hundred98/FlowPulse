@@ -79,6 +79,32 @@
       }
     }
   ],
+  "limit_switch": {
+    "x": {
+      "pin": "PA15",
+      "pull": "up",
+      "active_high": false,
+      "position_endstop": 0,
+      "homing_speed_mm_per_s": 25,
+      "homing_dir": 0
+    },
+    "y": {
+      "pin": "PD2",
+      "pull": "up",
+      "active_high": false,
+      "position_endstop": 0,
+      "homing_speed_mm_per_s": 25,
+      "homing_dir": 0
+    },
+    "z": {
+      "pin": "PC8",
+      "pull": "up",
+      "active_high": false,
+      "position_endstop": 0,
+      "homing_speed_mm_per_s": 25,
+      "homing_dir": 0
+    }
+  },
   "temperature": {
     "hotbed": {
       "sensor_type": "NTC100K",

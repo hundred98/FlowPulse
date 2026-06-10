@@ -341,17 +341,6 @@ pub struct LimitSwitchParams {
     pub x: LimitSwitchAxis,
     pub y: LimitSwitchAxis,
     pub z: LimitSwitchAxis,
-    #[serde(rename = "homing_speed_mm_per_s")]
-    pub homing_speed_mm_per_s: u16,
-    #[serde(rename = "homing_dir_x")]
-    #[serde(default)]
-    pub homing_dir_x: u8,
-    #[serde(rename = "homing_dir_y")]
-    #[serde(default)]
-    pub homing_dir_y: u8,
-    #[serde(rename = "homing_dir_z")]
-    #[serde(default)]
-    pub homing_dir_z: u8,
 }
 
 impl Default for LimitSwitchParams {
@@ -360,10 +349,6 @@ impl Default for LimitSwitchParams {
             x: LimitSwitchAxis::default(),
             y: LimitSwitchAxis::default(),
             z: LimitSwitchAxis::default(),
-            homing_speed_mm_per_s: 25,
-            homing_dir_x: 0,
-            homing_dir_y: 0,
-            homing_dir_z: 0,
         }
     }
 }
@@ -378,15 +363,23 @@ pub struct LimitSwitchAxis {
     #[serde(rename = "position_endstop")]
     #[serde(default)]
     pub position_endstop: Option<f32>,
+    #[serde(rename = "homing_speed_mm_per_s", default = "default_homing_speed")]
+    pub homing_speed_mm_per_s: u16,
+    #[serde(rename = "homing_dir", default)]
+    pub homing_dir: u8,
 }
+
+fn default_homing_speed() -> u16 { 25 }
 
 impl Default for LimitSwitchAxis {
     fn default() -> Self {
         Self {
-            pin: "PA0".to_string(),
+            pin: String::new(),  // Empty string means not configured
             pull: "up".to_string(),
             active_high: false,
             position_endstop: None,
+            homing_speed_mm_per_s: 25,
+            homing_dir: 0,
         }
     }
 }
@@ -431,7 +424,7 @@ impl Default for TempSensorParams {
     fn default() -> Self {
         Self {
             sensor_type: "NTC100K".to_string(),
-            adc_pin: "PA0".to_string(),
+            adc_pin: String::new(),  // Empty string means not configured
             beta: 3950,
             pullup_resistor: 4700,
             min_temp: -100,
@@ -508,7 +501,7 @@ fn default_sensor_fault_threshold() -> u16 { 50 }  // 默认ADC故障阈值50（
 impl Default for HeaterPin {
     fn default() -> Self {
         Self {
-            pin: "PA0".to_string(),
+            pin: String::new(),  // Empty string means not configured
             active_high: true,
             pwm_freq_hz: default_heater_pwm_freq(),
             max_power: default_max_power(),
@@ -535,7 +528,7 @@ impl Default for FanParams {
     fn default() -> Self {
         Self {
             name: "Fan".to_string(),
-            pin: "PA0".to_string(),
+            pin: String::new(),  // Empty string means not configured
             active_high: true,
             pwm_freq_hz: 100,
         }
@@ -556,7 +549,7 @@ pub struct ProbeParams {
 impl Default for ProbeParams {
     fn default() -> Self {
         Self {
-            pin: "PA0".to_string(),
+            pin: String::new(),  // Empty string means not configured
             pull: "up".to_string(),
             active_high: false,
         }
@@ -909,10 +902,30 @@ mod tests {
                 }
             ],
             "limit_switch": {
-                "x": { "pin": "PA15", "pull": "up", "active_high": false, "position_endstop": 0 },
-                "y": { "pin": "!PD2", "pull": "up", "active_high": false, "position_endstop": 0 },
-                "z": { "pin": "!PC8", "pull": "up", "active_high": false, "position_endstop": 0.5 },
-                "homing_speed_mm_per_s": 20
+                "x": {
+                    "pin": "PA15",
+                    "pull": "up",
+                    "active_high": false,
+                    "position_endstop": 0,
+                    "homing_speed_mm_per_s": 20,
+                    "homing_dir": 0
+                },
+                "y": {
+                    "pin": "!PD2",
+                    "pull": "up",
+                    "active_high": false,
+                    "position_endstop": 0,
+                    "homing_speed_mm_per_s": 20,
+                    "homing_dir": 0
+                },
+                "z": {
+                    "pin": "!PC8",
+                    "pull": "up",
+                    "active_high": false,
+                    "position_endstop": 0.5,
+                    "homing_speed_mm_per_s": 20,
+                    "homing_dir": 0
+                }
             },
             "temperature": {
                 "hotbed": {

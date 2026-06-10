@@ -57,7 +57,10 @@ impl ConfigFrameBuilder {
             frames.push(Self::build_motor_frame(&config.motor));
         }
 
-        if config.limit_switch.x.pin != "PA0" || config.limit_switch.y.pin != "PA0" || config.limit_switch.z.pin != "PA0" {
+        // Always send limit switch config if pins are configured
+        if !config.limit_switch.x.pin.is_empty()
+            || !config.limit_switch.y.pin.is_empty()
+            || !config.limit_switch.z.pin.is_empty() {
             let limit_frame = Self::build_limit_switch_frame(&config.limit_switch);
             frames.push(limit_frame);
         }
@@ -157,11 +160,12 @@ impl ConfigFrameBuilder {
         payload.extend_from_slice(&Self::limit_axis_to_bytes(&limit.y));
         payload.extend_from_slice(&Self::limit_axis_to_bytes(&limit.z));
 
-        payload.push((limit.homing_speed_mm_per_s >> 0) as u8);
-        payload.push((limit.homing_speed_mm_per_s >> 8) as u8);
-        payload.push(limit.homing_dir_x);
-        payload.push(limit.homing_dir_y);
-        payload.push(limit.homing_dir_z);
+        // Use homing parameters from each axis
+        payload.push((limit.x.homing_speed_mm_per_s >> 0) as u8);
+        payload.push((limit.x.homing_speed_mm_per_s >> 8) as u8);
+        payload.push(limit.x.homing_dir);
+        payload.push(limit.y.homing_dir);
+        payload.push(limit.z.homing_dir);
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
     }
