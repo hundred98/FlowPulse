@@ -313,6 +313,14 @@ impl CoreSocketClient {
         }
     }
 
+    /// Send a PID temperature tune frame (frame_type = 0x02 TEMPERATURE).
+    ///
+    /// The payload should already contain the sub-frame type as the first byte.
+    pub async fn send_temperature_tune_frame(&self, payload: &[u8]) -> Result<(), String> {
+        // TEMPERATURE frame type = 0x02
+        self.serial_send_frame(0x02, payload.to_vec()).await
+    }
+
     /// Receive next available frame (non-blocking).
     pub async fn serial_recv_frame(&self) -> Result<Option<(u8, Vec<u8>)>, String> {
         match self.send_request(&CoreRequest::Serial(SerialRequest::RecvFrame)).await? {

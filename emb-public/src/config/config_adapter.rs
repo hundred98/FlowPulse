@@ -14,7 +14,7 @@
 //!   MotionConfig → send to server via CoreSocketClient::config_update_motion()
 //!   PrinterJsonConfig → send to STM32 via ConfigFrameBuilder
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use super::printer_config as pc;
 use crate::CoreSocketClient;
@@ -22,7 +22,7 @@ use super::config_protocol::ConfigFrameBuilder;
 
 // ── hardware.json structures ──────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HardwareConfig {
     pub communication: Option<CommunicationConfig>,
     pub motor: Vec<MotorConfig>,
@@ -33,7 +33,7 @@ pub struct HardwareConfig {
 }
 
 /// Fan hardware configuration
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FanHardwareConfig {
     pub index: u8,
     pub name: String,
@@ -41,13 +41,13 @@ pub struct FanHardwareConfig {
     pub description: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TemperatureHardwareConfig {
     pub hotbed: TempSensorHardwareConfig,
     pub hotend: TempSensorHardwareConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TempSensorHardwareConfig {
     pub sensor_type: String,
     pub adc_pin: String,
@@ -61,13 +61,13 @@ pub struct TempSensorHardwareConfig {
     pub pid_interval_ms: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HeaterHardwareConfig {
     pub hotbed: HeaterHardwarePin,
     pub hotend: HeaterHardwarePin,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HeaterHardwarePin {
     pub pin: String,
     pub active_high: bool,
@@ -76,7 +76,7 @@ pub struct HeaterHardwarePin {
     pub safety: HeaterSafetyHardwareConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HeaterSafetyHardwareConfig {
     pub max_temp_deviation: i16,
     pub min_temp_deviation: i16,
@@ -84,13 +84,13 @@ pub struct HeaterSafetyHardwareConfig {
     pub sensor_fault_threshold: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GpioConfig {
     pub output: Vec<OutputGpioConfig>,
     pub input: Vec<InputGpioConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct OutputGpioConfig {
     pub name: String,
     pub pin: String,
@@ -108,7 +108,7 @@ pub struct OutputGpioConfig {
     pub max_value: f32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InputGpioConfig {
     pub name: String,
     pub pin: String,
@@ -125,7 +125,7 @@ pub struct InputGpioConfig {
     pub calibration: Option<InputGpioCalibration>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InputGpioEvent {
     #[serde(default)]
     pub event_type: String,
@@ -133,7 +133,7 @@ pub struct InputGpioEvent {
     pub action: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InputGpioReport {
     #[serde(default)]
     pub mode: String,
@@ -142,7 +142,7 @@ pub struct InputGpioReport {
     pub threshold: Option<f32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InputGpioCalibration {
     #[serde(default)]
     pub offset: f32,
@@ -158,7 +158,7 @@ fn default_true() -> bool { true }
 fn default_max_value() -> f32 { 1.0 }
 fn default_scale() -> f32 { 1.0 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct CommunicationConfig {
     pub serial: Option<SerialConfig>,
     /// 状态上报间隔（毫秒），可选
@@ -166,7 +166,7 @@ pub struct CommunicationConfig {
     pub status_report_interval_ms: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SerialConfig {
     pub port: String,
     pub baud_rate: u32,
@@ -177,7 +177,7 @@ pub struct SerialConfig {
     pub flow_control: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MotorConfig {
     pub axis: String,
     pub step_pin: String,
@@ -194,7 +194,7 @@ pub struct MotorConfig {
     pub extruder: Option<ExtruderConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DriverConfig {
     pub uart_pin: String,
     pub microsteps: u16,
@@ -203,7 +203,7 @@ pub struct DriverConfig {
     pub stealthchop_threshold: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ExtruderConfig {
     pub nozzle_diameter_mm: f32,
     pub filament_diameter_mm: f32,
@@ -212,7 +212,7 @@ pub struct ExtruderConfig {
 
 // ── motion.json structures ───────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MotionFileConfig {
     #[serde(default)]
     pub kinematics: KinematicsSection,
@@ -230,7 +230,7 @@ pub struct MotionFileConfig {
     pub velocity_profile: VelocityProfileFile,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct KinematicsSection {
     #[serde(default)]
     pub max_velocity: f32,
@@ -242,7 +242,7 @@ pub struct KinematicsSection {
     pub jerk: f32,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct JunctionSection {
     #[serde(default)]
     pub square_corner_velocity: f32,
@@ -250,7 +250,7 @@ pub struct JunctionSection {
     pub junction_deviation: f32,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct SegmentSection {
     #[serde(default)]
     pub segment_time_ms: u16,
@@ -262,7 +262,7 @@ pub struct SegmentSection {
     pub microstep_accumulation_enabled: bool,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct HomingDirection {
     #[serde(default)]
     pub x: i8,
@@ -272,7 +272,7 @@ pub struct HomingDirection {
     pub z: i8,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct HomingSection {
     #[serde(default)]
     pub speed: f32,
@@ -284,7 +284,7 @@ pub struct HomingSection {
     pub direction: HomingDirection,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct ArcSection {
     #[serde(default)]
     pub sag_tolerance: f32,
@@ -294,7 +294,7 @@ pub struct ArcSection {
     pub min_segments: u32,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct ExtruderMotionSection {
     #[serde(default)]
     pub pressure_advance: f32,
@@ -302,7 +302,7 @@ pub struct ExtruderMotionSection {
     pub pressure_advance_max_accel: f32,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct VelocityProfileFile {
     #[serde(default)]
     #[allow(dead_code)]
@@ -310,7 +310,7 @@ pub struct VelocityProfileFile {
     pub six_point: Option<SixPointFile>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SixPointFile {
     pub start_accel_mm_s2: f32,
     pub max_accel_mm_s2: f32,
@@ -324,7 +324,7 @@ pub struct SixPointFile {
 
 // ── printer.json structures ───────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PrinterFileConfig {
     #[allow(dead_code)]
     pub version: String,
@@ -338,7 +338,7 @@ pub struct PrinterFileConfig {
     pub gcode_settings: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PrinterParamsSection {
     pub max_velocity: f32,
     pub max_acceleration: f32,
@@ -373,6 +373,8 @@ pub fn load_configs(config_dir: &str) -> Result<LoadedConfigs, String> {
 }
 
 /// All loaded configuration data.
+#[derive(Clone)]
+#[allow(dead_code)]
 pub struct LoadedConfigs {
     pub hardware: HardwareConfig,
     pub motion: MotionFileConfig,

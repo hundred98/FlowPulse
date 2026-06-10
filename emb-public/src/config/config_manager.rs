@@ -373,6 +373,90 @@ impl ConfigManager {
         self.save_printer_config(&config)
     }
 
+    /// Update PID parameters for a heater in hardware.json.
+    ///
+    /// This method updates the PID parameters (Kp, Ki, Kd) for the specified heater
+    /// in the hardware.json configuration file.
+    ///
+    /// # Arguments
+    /// * `heater` - Heater name ("hotend" or "bed")
+    /// * `kp` - Proportional gain
+    /// * `ki` - Integral gain
+    /// * `kd` - Derivative gain
+    ///
+    /// # Returns
+    /// * `Ok(())` if update was successful
+    /// * `Err(String)` if any error occurred
+    pub fn update_temperature_pid(
+        &self,
+        heater: &str,
+        kp: f32,
+        ki: f32,
+        kd: f32,
+    ) -> Result<(), String> {
+        log::info!("🔧 Updating PID parameters for {}: Kp={:.3}, Ki={:.3}, Kd={:.3}", heater, kp, ki, kd);
+
+        // Get config directory and loaded configs
+        let (config_dir, mut loaded_configs) = {
+            let inner = self.inner.read().map_err(|e| format!("Lock error: {}", e))?;
+            let configs = inner.loaded_configs.clone()
+                .ok_or_else(|| "Configuration not loaded. Call load() first.".to_string())?;
+            (inner.config_dir.clone(), configs)
+        };
+
+        if config_dir.is_empty() {
+            return Err("Configuration not loaded. Call load() first.".to_string());
+        }
+
+        // Update PID in loaded_configs.hardware.temperature
+        let temperature = loaded_configs.hardware.temperature.as_mut()
+            .ok_or_else(|| "Temperature config not found in hardware.json".to_string())?;
+        
+        match heater {
+            "hotend" => {
+                temperature.hotend.kp = kp;
+                temperature.hotend.ki = ki;
+                temperature.hotend.kd = kd;
+            }
+            "bed" => {
+                temperature.hotbed.kp = kp;
+                temperature.hotbed.ki = ki;
+                temperature.hotbed.kd = kd;
+            }
+            _ => {
+                return Err(format!("Unknown heater: {}", heater));
+            }
+        }
+
+        // Build hardware.json path
+        let hardware_json_path = std::path::Path::new(&config_dir).join("hardware.json");
+
+        // Serialize hardware config to JSON
+        let json_content = serde_json::to_string_pretty(&loaded_configs.hardware)
+            .map_err(|e| format!("Failed to serialize hardware config: {}", e))?;
+
+        // Write to file
+        std::fs::write(&hardware_json_path, json_content)
+            .map_err(|e| format!("Failed to write hardware config file: {}", e))?;
+
+        // Rebuild printer config from updated loaded configs
+        let printer_config = build_printer_config(&loaded_configs);
+
+        // Update cached config and get callbacks
+        let callbacks = {
+            let mut inner = self.inner.write().map_err(|e| format!("Lock error: {}", e))?;
+            inner.printer_config = Some(printer_config.clone());
+            inner.loaded_configs = Some(loaded_configs);
+            inner.callbacks.clone()
+        };
+
+        // Notify all registered callbacks
+        Self::notify_callbacks(&callbacks, &printer_config);
+
+        log::info!("✅ PID parameters updated in: {}", hardware_json_path.display());
+        Ok(())
+    }
+
     /// Notify all registered callbacks with the new configuration.
     fn notify_callbacks(callbacks: &[Arc<ConfigChangeCallback>], config: &PrinterJsonConfig) {
         if callbacks.is_empty() {

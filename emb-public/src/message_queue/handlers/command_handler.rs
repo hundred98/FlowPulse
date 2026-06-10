@@ -180,6 +180,78 @@ impl CommandHandler {
         log::info!("Home command: axes = {:?}", axes);
         Ok(())
     }
+    
+    /// Handle PID tune start command
+    async fn handle_pid_tune_start(&self, message: &mut Message) -> EmbResult<()> {
+        // Extract heater from payload
+        let heater = message.payload.get("heater")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| EmbError::MessageQueue("Missing heater in PID tune command".to_string()))?;
+        
+        // Extract target temperature (optional, defaults based on heater)
+        let target_temp = message.payload.get("target_temp")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or_else(|| match heater {
+                "hotend" => 200.0,
+                "bed" => 60.0,
+                _ => 200.0,
+            });
+        
+        // Extract cycles (optional, default 6)
+        let cycles = message.payload.get("cycles")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u8)
+            .unwrap_or(6);
+        
+        // Start PID tuning
+        self.temperature_manager.start_pid_tune(heater, target_temp, cycles).await?;
+        
+        log::info!("PID tuning started: heater={}, target={}°C", heater, target_temp);
+        Ok(())
+    }
+    
+    /// Handle PID tune cancel command
+    async fn handle_pid_tune_cancel(&self, _message: &mut Message) -> EmbResult<()> {
+        self.temperature_manager.cancel_pid_tune().await?;
+        log::info!("PID tuning cancelled");
+        Ok(())
+    }
+    
+    /// Handle PID tune progress query
+    async fn handle_pid_tune_progress(&self, message: &mut Message) -> EmbResult<()> {
+        if let Some(progress) = self.temperature_manager.get_tune_progress().await {
+            message.payload = serde_json::to_value(progress)
+                .map_err(|e| EmbError::MessageQueue(format!("Failed to serialize progress: {}", e)))?;
+        } else {
+            message.payload = serde_json::json!({
+                "tuning": false
+            });
+        }
+        Ok(())
+    }
+    
+    /// Handle PID tune result query
+    async fn handle_pid_tune_result(&self, message: &mut Message) -> EmbResult<()> {
+        if let Some(result) = self.temperature_manager.get_tune_result().await {
+            message.payload = serde_json::to_value(result)
+                .map_err(|e| EmbError::MessageQueue(format!("Failed to serialize result: {}", e)))?;
+        } else {
+            message.payload = serde_json::json!({
+                "available": false
+            });
+        }
+        Ok(())
+    }
+    
+    /// Handle PID tune apply command
+    async fn handle_pid_tune_apply(&self, _message: &mut Message) -> EmbResult<()> {
+        // Apply the last tune result
+        self.temperature_manager.apply_tune_result().await?;
+        
+        log::info!("PID parameters applied");
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -193,6 +265,11 @@ impl MessageHandler for CommandHandler {
             MessageType::TemperatureSet => self.handle_temperature_set(message).await,
             MessageType::MoveCommand => self.handle_move_command(message).await,
             MessageType::HomeCommand => self.handle_home_command(message).await,
+            MessageType::PidTuneStart => self.handle_pid_tune_start(message).await,
+            MessageType::PidTuneCancel => self.handle_pid_tune_cancel(message).await,
+            MessageType::PidTuneProgress => self.handle_pid_tune_progress(message).await,
+            MessageType::PidTuneResult => self.handle_pid_tune_result(message).await,
+            MessageType::PidTuneApply => self.handle_pid_tune_apply(message).await,
             _ => Err(EmbError::MessageQueue(format!("Unsupported message type: {:?}", message.message_type))),
         }
     }

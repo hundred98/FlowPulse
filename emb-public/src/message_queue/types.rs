@@ -63,6 +63,13 @@ pub enum MessageType {
     TemperatureGet,
     TemperatureUpdate,
     
+    // PID auto-tune messages
+    PidTuneStart,
+    PidTuneCancel,
+    PidTuneProgress,
+    PidTuneResult,
+    PidTuneApply,
+    
     // G-code messages
     GcodeLine,
     GcodeResponse,

@@ -1,13 +1,15 @@
 //! Temperature manager
 //!
 //! This module provides the main temperature management functionality,
-//! including temperature state management, safety checks, and preset management.
+//! including temperature state management, safety checks, preset management,
+//! and PID auto-tuning.
 
 use super::preset::PresetManager;
 use super::safety::TemperatureSafetyChecker;
 use super::types::{
     HeaterState, SafetyAction, SafetyCheckResult, TemperatureManagerConfig, TemperaturePreset,
 };
+use super::pid_tune::{PidTuneProtocol, PidTuneResult, TuneProgress, PidTuneSubType};
 use crate::common::{
     EmbError, EmbResult, EventPublisher, PrinterEvent, EventKind, EventSeverity,
     TempStatus,
@@ -36,8 +38,30 @@ pub struct TemperatureManager {
     /// Preset manager
     preset_manager: PresetManager,
 
+    /// PID tune state
+    tune_state: Arc<RwLock<TuneState>>,
+
     /// Configuration
     config: TemperatureManagerConfig,
+}
+
+/// PID tune state (for tracking ongoing tune process)
+#[derive(Debug, Clone, Default)]
+struct TuneState {
+    /// Whether tuning is in progress
+    in_progress: bool,
+    
+    /// Heater being tuned
+    heater: Option<String>,
+    
+    /// Heater ID
+    heater_id: Option<u8>,
+    
+    /// Current progress
+    progress: Option<TuneProgress>,
+    
+    /// Tuning result
+    result: Option<PidTuneResult>,
 }
 
 impl TemperatureManager {
@@ -55,6 +79,7 @@ impl TemperatureManager {
             event_publisher,
             safety_checker: TemperatureSafetyChecker::new(safety_config),
             preset_manager: PresetManager::new(),
+            tune_state: Arc::new(RwLock::new(TuneState::default())),
             config,
         }
     }
@@ -552,6 +577,278 @@ impl TemperatureManager {
     /// Export presets to configuration format
     pub async fn export_presets(&self) -> Vec<TemperaturePreset> {
         self.preset_manager.export_to_config().await
+    }
+
+    // ==================== PID Auto-Tune Methods ====================
+
+    /// Start PID auto-tuning for a heater
+    ///
+    /// This sends a START command to the lower machine, which will perform
+    /// the actual tuning process.
+    ///
+    /// # Arguments
+    /// * `heater` - Heater name ("hotend" or "bed")
+    /// * `target_temp` - Target temperature in °C
+    /// * `cycles` - Number of tuning cycles (recommended: 6-8)
+    pub async fn start_pid_tune(
+        &self,
+        heater: &str,
+        target_temp: f32,
+        cycles: u8,
+    ) -> EmbResult<()> {
+        // Check if already tuning
+        {
+            let state = self.tune_state.read().await;
+            if state.in_progress {
+                return Err(EmbError::InvalidParam("PID tuning already in progress".to_string()));
+            }
+        }
+        
+        // Get heater ID
+        let heater_id = match heater {
+            "bed" => 0,
+            "hotend" => 1,
+            _ => return Err(EmbError::InvalidParam(format!("Unknown heater: {}", heater))),
+        };
+        
+        // Build START frame payload
+        let payload = PidTuneProtocol::build_start_payload(heater_id, target_temp, cycles);
+        
+        // Send to lower machine
+        // Note: The frame will be wrapped by the client with SOF/LEN/TYPE/CRC8/EOF
+        self.client.send_temperature_tune_frame(&payload).await
+            .map_err(|e| EmbError::Communication(e))?;
+        
+        // Update state
+        {
+            let mut state = self.tune_state.write().await;
+            state.in_progress = true;
+            state.heater = Some(heater.to_string());
+            state.heater_id = Some(heater_id);
+            state.progress = None;
+            state.result = None;
+        }
+        
+        // Publish event
+        let _ = self.event_publisher.publish(
+            PrinterEvent::new(
+                EventKind::Info,
+                "pid_tune".to_string(),
+                format!("Started PID tuning for {} at {}°C, {} cycles", heater, target_temp, cycles),
+            ).with_severity(EventSeverity::Info),
+        );
+        
+        log::info!("Started PID tuning: heater={}, target={}°C, cycles={}", heater, target_temp, cycles);
+        Ok(())
+    }
+
+    /// Get current PID tuning progress
+    pub async fn get_tune_progress(&self) -> Option<TuneProgress> {
+        let state = self.tune_state.read().await;
+        state.progress.clone()
+    }
+
+    /// Check if PID tuning is in progress
+    pub async fn is_tuning(&self) -> bool {
+        let state = self.tune_state.read().await;
+        state.in_progress
+    }
+
+    /// Cancel ongoing PID tuning
+    pub async fn cancel_pid_tune(&self) -> EmbResult<()> {
+        // Get heater ID
+        let heater_id = {
+            let state = self.tune_state.read().await;
+            if !state.in_progress {
+                return Ok(()); // Not tuning, nothing to cancel
+            }
+            state.heater_id.ok_or_else(|| EmbError::InvalidParam("No heater being tuned".to_string()))?
+        };
+        
+        // Build CANCEL frame payload
+        let payload = PidTuneProtocol::build_cancel_payload(heater_id);
+        
+        // Send to lower machine
+        self.client.send_temperature_tune_frame(&payload).await
+            .map_err(|e| EmbError::Communication(e))?;
+        
+        // Update state
+        {
+            let mut state = self.tune_state.write().await;
+            state.in_progress = false;
+            state.heater = None;
+            state.heater_id = None;
+        }
+        
+        log::info!("Cancelled PID tuning");
+        Ok(())
+    }
+
+    /// Get the last tuning result
+    pub async fn get_tune_result(&self) -> Option<PidTuneResult> {
+        let state = self.tune_state.read().await;
+        state.result.clone()
+    }
+
+    /// Apply PID tuning result to configuration
+    ///
+    /// This will:
+    /// 1. Update the configuration file with new PID parameters
+    /// 2. Send the new parameters to the lower machine
+    pub async fn apply_tune_result(&self) -> EmbResult<()> {
+        // Get result
+        let (heater, heater_id, params) = {
+            let state = self.tune_state.read().await;
+            let result = state.result.as_ref()
+                .ok_or_else(|| EmbError::InvalidParam("No tuning result available".to_string()))?;
+            
+            if !result.success {
+                return Err(EmbError::InvalidParam("Cannot apply failed tuning result".to_string()));
+            }
+            
+            (
+                state.heater.clone().unwrap_or_default(),
+                state.heater_id.unwrap_or(0),
+                result.new_pid,
+            )
+        };
+        
+        // Update configuration file
+        ConfigManager::instance().update_temperature_pid(
+            &heater,
+            params.kp,
+            params.ki,
+            params.kd,
+        ).map_err(|e| EmbError::Config(e))?;
+        
+        // Build APPLY frame payload
+        let payload = PidTuneProtocol::build_apply_payload(heater_id, &params);
+        
+        // Send to lower machine
+        self.client.send_temperature_tune_frame(&payload).await
+            .map_err(|e| EmbError::Communication(e))?;
+        
+        // Clear state
+        {
+            let mut state = self.tune_state.write().await;
+            state.in_progress = false;
+            state.heater = None;
+            state.heater_id = None;
+        }
+        
+        // Publish event
+        let _ = self.event_publisher.publish(
+            PrinterEvent::new(
+                EventKind::Info,
+                "pid_tune".to_string(),
+                format!(
+                    "Applied new PID parameters for {}: Kp={:.3}, Ki={:.3}, Kd={:.3}",
+                    heater, params.kp, params.ki, params.kd
+                ),
+            ).with_severity(EventSeverity::Info),
+        );
+        
+        log::info!(
+            "Applied new PID parameters: heater={}, Kp={:.3}, Ki={:.3}, Kd={:.3}",
+            heater, params.kp, params.ki, params.kd
+        );
+        
+        Ok(())
+    }
+
+    /// Handle PID tune frame from lower machine
+    ///
+    /// This is called when a TEMPERATURE frame with sub_type 0x13-0x15 is received.
+    pub async fn handle_tune_frame(&self, payload: &[u8]) -> EmbResult<()> {
+        if payload.is_empty() {
+            return Err(EmbError::Protocol("Empty tune frame payload".to_string()));
+        }
+        
+        let sub_type = PidTuneSubType::from(payload[0]);
+        
+        match sub_type {
+            PidTuneSubType::Progress => {
+                let progress = PidTuneProtocol::parse_progress(payload)?;
+                
+                // Update state
+                {
+                    let mut state = self.tune_state.write().await;
+                    state.progress = Some(progress.clone());
+                }
+                
+                // Publish progress event
+                let _ = self.event_publisher.publish(
+                    PrinterEvent::new(
+                        EventKind::Info,
+                        "pid_tune".to_string(),
+                        format!(
+                            "PID tune progress: {}% (cycle {}/{})",
+                            progress.percent(),
+                            progress.current_cycle,
+                            progress.total_cycles
+                        ),
+                    ).with_severity(EventSeverity::Info),
+                );
+            }
+            
+            PidTuneSubType::Complete => {
+                let heater_name = {
+                    let state = self.tune_state.read().await;
+                    state.heater.clone().unwrap_or_else(|| "unknown".to_string())
+                };
+                
+                let result = PidTuneProtocol::parse_complete(payload, &heater_name)?;
+                
+                // Update state
+                {
+                    let mut state = self.tune_state.write().await;
+                    state.in_progress = false;
+                    state.result = Some(result.clone());
+                }
+                
+                if result.success {
+                    let _ = self.event_publisher.publish(
+                        PrinterEvent::new(
+                            EventKind::Info,
+                            "pid_tune".to_string(),
+                            format!(
+                                "PID tuning complete for {}: Kp={:.3}, Ki={:.3}, Kd={:.3}",
+                                heater_name, result.new_pid.kp, result.new_pid.ki, result.new_pid.kd
+                            ),
+                        ).with_severity(EventSeverity::Info),
+                    );
+                    
+                    log::info!(
+                        "PID tuning complete: heater={}, Kp={:.3}, Ki={:.3}, Kd={:.3}",
+                        heater_name, result.new_pid.kp, result.new_pid.ki, result.new_pid.kd
+                    );
+                } else {
+                    let _ = self.event_publisher.publish(
+                        PrinterEvent::new(
+                            EventKind::Error,
+                            "pid_tune".to_string(),
+                            format!("PID tuning failed for {}: error code {}", heater_name, result.error_code),
+                        ).with_severity(EventSeverity::Error),
+                    );
+                    
+                    log::error!("PID tuning failed: heater={}, error code {}", heater_name, result.error_code);
+                }
+            }
+            
+            PidTuneSubType::Ack => {
+                let (sub_type, success, error_code) = PidTuneProtocol::parse_ack(payload)?;
+                
+                if !success {
+                    log::warn!("PID tune ACK: sub_type=0x{:02X}, error_code={}", sub_type, error_code);
+                }
+            }
+            
+            _ => {
+                log::warn!("Unexpected PID tune sub_type: 0x{:02X}", payload[0]);
+            }
+        }
+        
+        Ok(())
     }
 }
 
