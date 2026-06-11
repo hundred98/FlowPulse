@@ -36,6 +36,7 @@ pub use printer_config::{
     LimitSwitchAxis, TempSensorParams, HeaterPin, TemperaturePresetConfig,
     TemperatureSafetyConfig, TempHeaterSafetyConfig, SensorFaultConfig,
     DeviationThresholdsConfig, HeaterActionsConfig, TemperatureActionsConfig,
+    PidTuneParams, PidTuneHeaterConfig,
 };
 
 // Re-export protocol types for frame building

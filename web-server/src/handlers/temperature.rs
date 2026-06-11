@@ -72,6 +72,14 @@ pub struct PidTuneStatusResponse {
     pub success: bool,
     pub message: String,
     pub heater: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kp: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ki: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kd: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<u8>,
 }
 
 /// PID tune progress response
@@ -167,6 +175,10 @@ pub async fn pid_tune_start(
                 success: true,
                 message: format!("PID tune started for {} at {}°C", request.heater, request.target_temp),
                 heater: request.heater,
+                kp: None,
+                ki: None,
+                kd: None,
+                error_code: None,
             }))
         }
         Err(e) => {
@@ -191,6 +203,10 @@ pub async fn pid_tune_cancel(
                 success: true,
                 message: format!("PID tune canceled for {}", request.heater),
                 heater: request.heater,
+                kp: None,
+                ki: None,
+                kd: None,
+                error_code: None,
             }))
         }
         Err(e) => {
@@ -210,15 +226,15 @@ pub async fn pid_tune_progress(
     
     // Debug log
     if let Some(ref p) = progress {
-        log::info!("🔄 Progress API: cycle={}, temp={}, power={}", 
-            p.current_cycle, p.current_temp, p.output_power);
+        log::info!("🔄 Progress API: cycle={}, temp={}, power={}, is_tuning={}", 
+            p.current_cycle, p.current_temp, p.output_power, is_tuning);
     }
     
     match progress {
         Some(p) => {
             Ok(Json(PidTuneProgressResponse {
                 success: true,
-                in_progress: true,
+                in_progress: is_tuning,
                 heater_id: p.heater_id,
                 heater: if p.heater_id == 0 { "bed" } else { "hotend" }.to_string(),
                 phase: p.phase as u8,
@@ -226,7 +242,7 @@ pub async fn pid_tune_progress(
                 total_cycles: p.total_cycles,
                 current_temp: p.current_temp,
                 output_power: p.output_power,
-                message: format!("Tuning in progress: cycle {} of {}", p.current_cycle, p.total_cycles),
+                message: format!("Tuning: cycle {} of {}", p.current_cycle, p.total_cycles),
             }))
         }
         None => {
@@ -270,11 +286,57 @@ pub async fn pid_tune_apply(
                 success: true,
                 message: format!("PID parameters applied for {}", request.heater),
                 heater: request.heater,
+                kp: Some(request.kp),
+                ki: Some(request.ki),
+                kd: Some(request.kd),
+                error_code: None,
             }))
         }
         Err(e) => {
             log::error!("Failed to send PID tune APPLY frame: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Get PID tune result
+pub async fn pid_tune_result(
+    State(state): State<Arc<WebServerState>>,
+) -> Result<Json<PidTuneStatusResponse>, StatusCode> {
+    info!("Getting PID tune result");
+    
+    // Get result from temperature manager
+    match state.temperature_manager.get_tune_result().await {
+        Some(result) => {
+            let heater = if result.heater_id == 0 { "bed" } else { "hotend" };
+            info!("PID tune result: heater={}, success={}, Kp={:.3}, Ki={:.3}, Kd={:.3}", 
+                heater, result.success, result.new_pid.kp, result.new_pid.ki, result.new_pid.kd);
+            
+            Ok(Json(PidTuneStatusResponse {
+                success: result.success,
+                message: if result.success {
+                    format!("PID tune complete: Kp={:.3}, Ki={:.3}, Kd={:.3}", 
+                        result.new_pid.kp, result.new_pid.ki, result.new_pid.kd)
+                } else {
+                    format!("PID tune failed: error code {}", result.error_code)
+                },
+                heater: heater.to_string(),
+                kp: Some(result.new_pid.kp),
+                ki: Some(result.new_pid.ki),
+                kd: Some(result.new_pid.kd),
+                error_code: if result.success { None } else { Some(result.error_code) },
+            }))
+        }
+        None => {
+            Ok(Json(PidTuneStatusResponse {
+                success: false,
+                message: "No PID tune result available".to_string(),
+                heater: "".to_string(),
+                kp: None,
+                ki: None,
+                kd: None,
+                error_code: None,
+            }))
         }
     }
 }

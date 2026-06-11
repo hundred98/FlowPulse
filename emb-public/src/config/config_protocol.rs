@@ -1,4 +1,4 @@
-use super::printer_config::{PrinterJsonConfig, MotorParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams, OutputPinParams, InputPinParams};
+use super::printer_config::{PrinterJsonConfig, MotorParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams, OutputPinParams, InputPinParams, PidTuneHeaterConfig};
 use crate::common::pin_parser::parse_pin;
 
 pub const FRAME_SOF: u8 = 0xAA;
@@ -16,6 +16,7 @@ pub const CONFIG_SUBTYPE_SYSTEM: u8 = 0x05;
 pub const CONFIG_SUBTYPE_GPIO: u8 = 0x06;
 pub const CONFIG_SUBTYPE_GPIO_OUTPUT: u8 = 0x07;  // Matches CONFIG_SUB_GPIO_OUTPUT on STM32
 pub const CONFIG_SUBTYPE_GPIO_INPUT: u8 = 0x08;   // Matches CONFIG_SUB_GPIO_INPUT on STM32
+pub const CONFIG_SUBTYPE_PID_TUNE: u8 = 0x09;   // PID整定配置
 pub const CONFIG_SUBTYPE_QUERY: u8 = 0x10;
 
 // GPIO constants
@@ -101,6 +102,12 @@ impl ConfigFrameBuilder {
 
         // System config (status report interval)
         frames.push(Self::build_system_frame(config.communication.status_report_interval_ms));
+
+        // PID tune configuration (热端 + 热床)
+        if let Some(ref pid_tune) = config.pid_tune {
+            frames.push(Self::build_pid_tune_hotend_frame(&pid_tune.hotend));
+            frames.push(Self::build_pid_tune_hotbed_frame(&pid_tune.hotbed));
+        }
 
         frames
     }
@@ -450,6 +457,53 @@ impl ConfigFrameBuilder {
         buf.extend_from_slice(&status_report_interval_ms.to_be_bytes());
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &buf)
+    }
+
+    /// 构建 PID 整定配置帧（热端）
+    /// heater_id: 1 = 热端
+    pub fn build_pid_tune_hotend_frame(config: &PidTuneHeaterConfig) -> Vec<u8> {
+        Self::build_pid_tune_frame_impl(1, config)  // heater_id = 1
+    }
+
+    /// 构建 PID 整定配置帧（热床）
+    /// heater_id: 0 = 热床
+    pub fn build_pid_tune_hotbed_frame(config: &PidTuneHeaterConfig) -> Vec<u8> {
+        Self::build_pid_tune_frame_impl(0, config)  // heater_id = 0
+    }
+
+    /// 内部实现：构建 PID 整定配置帧
+    /// 帧格式:
+    /// [SUB_TYPE:1][HEATER_ID:1][MAX_OVERTEMP:2][TIMEOUT:4]
+    /// [POWER_DIV:4][SWITCH_DELAY:4][INIT_BIAS:4][INIT_D:4] = 24字节payload
+    fn build_pid_tune_frame_impl(heater_id: u8, config: &PidTuneHeaterConfig) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(24);
+        
+        // 子帧类型
+        payload.push(CONFIG_SUBTYPE_PID_TUNE);
+        
+        // 加热器ID
+        payload.push(heater_id);
+        
+        // max_overtemp (f32 -> u16，大端序，放大10倍)
+        let overtemp_raw = (config.max_overtemp * 10.0) as u16;
+        payload.extend_from_slice(&overtemp_raw.to_be_bytes());
+        
+        // timeout_ms (u32, 大端序)
+        payload.extend_from_slice(&config.timeout_ms.to_be_bytes());
+        
+        // power_divisor (u32, 大端序)
+        payload.extend_from_slice(&config.power_divisor.to_be_bytes());
+        
+        // switch_delay_ms (u32, 大端序)
+        payload.extend_from_slice(&config.switch_delay_ms.to_be_bytes());
+        
+        // initial_bias (u32, 大端序)
+        payload.extend_from_slice(&config.initial_bias.to_be_bytes());
+        
+        // initial_d (u32, 大端序)
+        payload.extend_from_slice(&config.initial_d.to_be_bytes());
+
+        Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
     }
 
     fn wrap_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {

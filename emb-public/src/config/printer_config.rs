@@ -30,6 +30,8 @@ pub struct PrinterJsonConfig {
     pub temperature_presets: Vec<TemperaturePresetConfig>,
     #[serde(default)]
     pub temperature_safety: Option<TemperatureSafetyConfig>,
+    #[serde(default)]
+    pub pid_tune: Option<PidTuneParams>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -124,6 +126,7 @@ impl Default for PrinterJsonConfig {
                 },
             ],
             temperature_safety: None,
+            pid_tune: Some(PidTuneParams::default()),
         }
     }
 }
@@ -970,5 +973,96 @@ mod tests {
         assert_eq!(config.printer.max_velocity, 300);
         assert_eq!(config.motor[0].axis, "X");
         assert_eq!(config.motor[0].step_pin, "PE3");
+    }
+}
+
+// ============================================================================
+/// PID 整定加热器配置（热端/热床各自独立）
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PidTuneHeaterConfig {
+    /// 超温停止阈值（°C），超过目标温度此值时停止整定
+    #[serde(default = "default_max_overtemp_hotend")]
+    pub max_overtemp: f32,
+    /// 超时时间（ms），超过此时间未完成则停止
+    #[serde(default = "default_timeout_hotend")]
+    pub timeout_ms: u32,
+    /// 功率缩放因子：加热功率 = (bias+d) / power_divisor
+    #[serde(default = "default_power_divisor_hotend")]
+    pub power_divisor: u32,
+    /// 温度穿越延迟确认（ms），防止噪声抖动导致误切换
+    #[serde(default = "default_switch_delay_hotend")]
+    pub switch_delay_ms: u32,
+    /// 初始功率中心（bias）
+    #[serde(default = "default_initial_bias")]
+    pub initial_bias: u32,
+    /// 初始振荡幅度（d）
+    #[serde(default = "default_initial_d_hotend")]
+    pub initial_d: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PidTuneParams {
+    /// 默认周期数
+    #[serde(default = "default_default_cycles")]
+    pub default_cycles: u8,
+    /// 热端整定参数
+    #[serde(default)]
+    pub hotend: PidTuneHeaterConfig,
+    /// 热床整定参数
+    #[serde(default)]
+    pub hotbed: PidTuneHeaterConfig,
+}
+
+// 默认值函数
+fn default_default_cycles() -> u8 { 6 }
+
+fn default_max_overtemp_hotend() -> f32 { 20.0 }
+fn default_max_overtemp_hotbed() -> f32 { 30.0 }
+fn default_timeout_hotend() -> u32 { 180000 }    // 3分钟
+fn default_timeout_hotbed() -> u32 { 300000 }   // 5分钟
+fn default_power_divisor_hotend() -> u32 { 300 }
+fn default_power_divisor_hotbed() -> u32 { 400 }
+fn default_switch_delay_hotend() -> u32 { 3000 }
+fn default_switch_delay_hotbed() -> u32 { 5000 }
+fn default_initial_bias() -> u32 { 50 }
+fn default_initial_d_hotend() -> u32 { 40 }
+fn default_initial_d_hotbed() -> u32 { 50 }
+
+impl Default for PidTuneHeaterConfig {
+    fn default() -> Self {
+        Self {
+            max_overtemp: default_max_overtemp_hotend(),
+            timeout_ms: default_timeout_hotend(),
+            power_divisor: default_power_divisor_hotend(),
+            switch_delay_ms: default_switch_delay_hotend(),
+            initial_bias: default_initial_bias(),
+            initial_d: default_initial_d_hotend(),
+        }
+    }
+}
+
+impl Default for PidTuneParams {
+    fn default() -> Self {
+        Self {
+            default_cycles: default_default_cycles(),
+            hotend: PidTuneHeaterConfig {
+                max_overtemp: default_max_overtemp_hotend(),
+                timeout_ms: default_timeout_hotend(),
+                power_divisor: default_power_divisor_hotend(),
+                switch_delay_ms: default_switch_delay_hotend(),
+                initial_bias: default_initial_bias(),
+                initial_d: default_initial_d_hotend(),
+            },
+            hotbed: PidTuneHeaterConfig {
+                max_overtemp: default_max_overtemp_hotbed(),
+                timeout_ms: default_timeout_hotbed(),
+                power_divisor: default_power_divisor_hotbed(),
+                switch_delay_ms: default_switch_delay_hotbed(),
+                initial_bias: default_initial_bias(),
+                initial_d: default_initial_d_hotbed(),
+            },
+        }
     }
 }

@@ -214,5 +214,24 @@
       "name": "hotend_fan",
       "description": "Hotend cooling fan"
     }
-  ]
+  ],
+  "pid_tune": {
+    "default_cycles": 6,
+    "hotend": {
+      "max_overtemp": 20,
+      "timeout_ms": 180000,
+      "power_divisor": 800,
+      "switch_delay_ms": 3000,
+      "initial_bias": 50,
+      "initial_d": 40
+    },
+    "hotbed": {
+      "max_overtemp": 30,
+      "timeout_ms": 300000,
+      "power_divisor": 800,
+      "switch_delay_ms": 5000,
+      "initial_bias": 50,
+      "initial_d": 50
+    }
+  }
 }

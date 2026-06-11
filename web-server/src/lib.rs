@@ -91,6 +91,7 @@ impl WebServer {
             .route("/api/v1/temperature/pid-tune/start", post(handlers::temperature::pid_tune_start))
             .route("/api/v1/temperature/pid-tune/cancel", post(handlers::temperature::pid_tune_cancel))
             .route("/api/v1/temperature/pid-tune/progress", get(handlers::temperature::pid_tune_progress))
+            .route("/api/v1/temperature/pid-tune/result", get(handlers::temperature::pid_tune_result))
             .route("/api/v1/temperature/pid-tune/apply", post(handlers::temperature::pid_tune_apply))
             
             // Configuration
