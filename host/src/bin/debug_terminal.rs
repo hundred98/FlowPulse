@@ -90,6 +90,7 @@ fn create_debug_router(state: Arc<DebugState>) -> Router {
         .route("/api/gpio/set", get(gpio_set))
         .route("/api/gpio/query", get(gpio_query))
         .route("/api/gpio/report/stream", get(gpio_report_stream))
+        .route("/api/homing/start", get(homing_start))
         .with_state(state)
 }
 
@@ -181,18 +182,24 @@ async fn serial_connect(
                             } else {
                                 log::info!("Sending {} config frames to device...", config_frames.len());
                                 
-                                for frame_bytes in &config_frames {
+                                for (i, frame_bytes) in config_frames.iter().enumerate() {
                                     match state.core_client.serial_send_raw(frame_bytes).await {
-                                        Ok(()) => log::debug!("Config frame sent: {} bytes", frame_bytes.len()),
-                                        Err(e) => log::warn!("Failed to send config frame: {}", e),
+                                        Ok(()) => {},
+                                        Err(e) => log::warn!("  Frame[{}] failed: {}", i, e),
                                     }
                                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                                 }
                                 
                                 log::info!("All config frames sent");
+
+                                // Send ConfigComplete to release device from config wait loop
+                                match state.core_client.serial_config_complete().await {
+                                    Ok(()) => log::info!("ConfigComplete sent to device"),
+                                    Err(e) => log::warn!("Failed to send ConfigComplete: {}", e),
+                                }
                             }
-                            
-                            // Wait for server's ConfigComplete to be processed
+
+                            // Wait for ConfigComplete to be processed
                             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                             
                             match state.core_client.serial_init_seq().await {
@@ -270,9 +277,85 @@ async fn gpio_report_stream(
     Sse::new(stream)
 }
 
+/// Homing Start: send 0x0A frame with axes_mask
+/// Query params: ?x=true&y=true&z=true  or  ?all=true
+#[derive(Debug, Deserialize)]
+struct HomingStartRequest {
+    #[serde(default)]
+    x: bool,
+    #[serde(default)]
+    y: bool,
+    #[serde(default)]
+    z: bool,
+    /// Shortcut: home all axes
+    #[serde(default)]
+    all: bool,
+}
+
+async fn homing_start(
+    State(state): State<Arc<DebugState>>,
+    axum::extract::Query(req): axum::extract::Query<HomingStartRequest>,
+) -> impl IntoResponse {
+    let axes_mask: u8 = if req.all {
+        0b111
+    } else {
+        (if req.x { 0x01 } else { 0 }) |
+        (if req.y { 0x02 } else { 0 }) |
+        (if req.z { 0x04 } else { 0 })
+    };
+
+    if axes_mask == 0 {
+        return Json(ApiResponse::<String>::error("No axes selected".to_string()));
+    }
+
+    let axes_names = [
+        (if axes_mask & 0x01 != 0 { "X" } else { "" }),
+        (if axes_mask & 0x02 != 0 { "Y" } else { "" }),
+        (if axes_mask & 0x04 != 0 { "Z" } else { "" }),
+    ].concat();
+
+    log::info!("Homing start: axes_mask=0x{:02X} ({})", axes_mask, axes_names);
+
+    match state.core_client.serial_send_frame(0x0A, vec![axes_mask]).await {
+        Ok(_) => {
+            // Poll for response (ACK/NACK) from device
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            for _ in 0..5 {
+                match state.core_client.serial_recv_frame().await {
+                    Ok(Some((ft, pld))) => {
+                        if ft == 0x12 {
+                            // NACK
+                            let err = if pld.len() > 1 { pld[1] } else { 0xFF };
+                            log::error!("Homing NACK (error={}, meaning follows):", err);
+                            let desc = match err {
+                                1 => "BUSY - homing already running",
+                                2 => "INVALID_AXES",
+                                3 => "NOT_CFG - endstops not configured",
+                                4 => "PRE_TIMEOUT",
+                                5 => "TOTAL_TIMEOUT",
+                                6 => "AXIS_DISABLED",
+                                _ => "UNKNOWN",
+                            };
+                            log::error!("  -> {}", desc);
+                        } else if ft == 0x06 {
+                        }
+                    }
+                    Ok(None) => break, // no more frames
+                    Err(e) => log::warn!("Recv error: {}", e),
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Json(ApiResponse::success(format!("Homing started: {}", axes_names)))
+        }
+        Err(e) => Json(ApiResponse::<String>::error(format!("Failed: {}", e))),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
+        "info,emb_public::config::config_protocol=debug,debug_terminal=debug"
+    )).init();
 
     let args: Vec<String> = std::env::args().collect();
     let http_addr = args.get(1).unwrap_or(&"127.0.0.1:8080".to_string()).clone();

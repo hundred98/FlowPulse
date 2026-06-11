@@ -81,11 +81,13 @@
   ],
   "limit_switch": {
     "x": {
-      "pin": "PA15",
+      "pin": "PC4",
       "pull": "up",
       "active_high": false,
       "position_endstop": 0,
       "homing_speed_mm_per_s": 25,
+      "homing_fine_speed_mm_per_s": 1,
+      "homing_retract_mm": 20,
       "homing_dir": 0
     },
     "y": {
@@ -94,6 +96,8 @@
       "active_high": false,
       "position_endstop": 0,
       "homing_speed_mm_per_s": 25,
+      "homing_fine_speed_mm_per_s": 1,
+      "homing_retract_mm": 20,
       "homing_dir": 0
     },
     "z": {
@@ -102,7 +106,12 @@
       "active_high": false,
       "position_endstop": 0,
       "homing_speed_mm_per_s": 25,
+      "homing_fine_speed_mm_per_s": 1,
+      "homing_retract_mm": 5,
       "homing_dir": 0
+    },
+    "homing": {
+      "z_lift_mm": 10
     }
   },
   "temperature": {

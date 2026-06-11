@@ -344,6 +344,23 @@ pub struct LimitSwitchParams {
     pub x: LimitSwitchAxis,
     pub y: LimitSwitchAxis,
     pub z: LimitSwitchAxis,
+    #[serde(default)]
+    pub homing: HomingGlobalParams,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomingGlobalParams {
+    /// Z lift distance in mm before homing X/Y (default: 10.0)
+    #[serde(default = "default_homing_z_lift")]
+    pub z_lift_mm: f32,
+}
+
+fn default_homing_z_lift() -> f32 { 10.0 }
+
+impl Default for HomingGlobalParams {
+    fn default() -> Self {
+        Self { z_lift_mm: 10.0 }
+    }
 }
 
 impl Default for LimitSwitchParams {
@@ -352,6 +369,7 @@ impl Default for LimitSwitchParams {
             x: LimitSwitchAxis::default(),
             y: LimitSwitchAxis::default(),
             z: LimitSwitchAxis::default(),
+            homing: HomingGlobalParams::default(),
         }
     }
 }
@@ -368,11 +386,17 @@ pub struct LimitSwitchAxis {
     pub position_endstop: Option<f32>,
     #[serde(rename = "homing_speed_mm_per_s", default = "default_homing_speed")]
     pub homing_speed_mm_per_s: u16,
+    #[serde(rename = "homing_fine_speed_mm_per_s", default = "default_homing_fine_speed")]
+    pub homing_fine_speed_mm_per_s: u16,
+    #[serde(rename = "homing_retract_mm", default = "default_homing_retract")]
+    pub homing_retract_mm: f32,
     #[serde(rename = "homing_dir", default)]
     pub homing_dir: u8,
 }
 
 fn default_homing_speed() -> u16 { 25 }
+fn default_homing_fine_speed() -> u16 { 1 }
+fn default_homing_retract() -> f32 { 5.0 }
 
 impl Default for LimitSwitchAxis {
     fn default() -> Self {
@@ -382,6 +406,8 @@ impl Default for LimitSwitchAxis {
             active_high: false,
             position_endstop: None,
             homing_speed_mm_per_s: 25,
+            homing_fine_speed_mm_per_s: 1,
+            homing_retract_mm: 5.0,
             homing_dir: 0,
         }
     }

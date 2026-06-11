@@ -109,6 +109,24 @@
                     <button class="btn-secondary" onclick="setGpioByName('hotend_fan', 1)">hotend_fan ON</button>
                     <button class="btn-secondary" onclick="queryGpioByName('filament_sensor')">Query filament_sensor</button>
                 </div>
+
+                <div class="card">
+                    <h2>🎯 Homing Control</h2>
+                    <p style="font-size:12px;color:#888;margin-bottom:10px;">
+                        Send homing command to device.
+                    </p>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                        <button class="btn-primary" onclick="homingStart('x')">Home X</button>
+                        <button class="btn-primary" onclick="homingStart('y')">Home Y</button>
+                        <button class="btn-primary" onclick="homingStart('z')">Home Z</button>
+                        <button class="btn-success" onclick="homingStart('all')">Home All (XYZ)</button>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn-secondary" onclick="homingStart('xy')">Home XY</button>
+                        <button class="btn-secondary" onclick="homingStart('xz')">Home XZ</button>
+                        <button class="btn-secondary" onclick="homingStart('yz')">Home YZ</button>
+                    </div>
+                </div>
             </div>
 
             <div class="col">
@@ -258,6 +276,30 @@
 
         log('Debug terminal initialized', 'info');
         checkStatus();
+
+        // ===== Homing =====
+        function homingStart(axes) {
+            let params;
+            if (axes === 'all') {
+                params = 'all=true';
+            } else {
+                params = axes.split('').map(c => c + '=true').join('&');
+            }
+
+            const names = axes === 'all' ? 'XYZ' : axes.toUpperCase();
+            log(`HOMING_START ${names}`, 'info');
+
+            fetch(`/debug/api/homing/start?${params}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        log(`✓ ${data.data}`, 'success');
+                    } else {
+                        log(`✗ ${data.error}`, 'error');
+                    }
+                })
+                .catch(e => log(`✗ Request failed: ${e.message}`, 'error'));
+        }
     </script>
 </body>
 </html>

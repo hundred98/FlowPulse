@@ -62,7 +62,7 @@ impl ConfigFrameBuilder {
         if !config.limit_switch.x.pin.is_empty()
             || !config.limit_switch.y.pin.is_empty()
             || !config.limit_switch.z.pin.is_empty() {
-            let limit_frame = Self::build_limit_switch_frame(&config.limit_switch);
+            let limit_frame = Self::build_limit_switch_frame(&config.limit_switch, &config.motor);
             frames.push(limit_frame);
         }
 
@@ -160,40 +160,89 @@ impl ConfigFrameBuilder {
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
     }
 
-    fn build_limit_switch_frame(limit: &LimitSwitchParams) -> Vec<u8> {
-        let mut payload = vec![0x03];
+    fn build_limit_switch_frame(limit: &LimitSwitchParams, motors: &[MotorParams]) -> Vec<u8> {
+        let mut payload = vec![0x03];  // CONFIG_SUB_LIMIT
 
+        // Helper: find motor params by axis name
+        let motor = |axis: &str| -> Option<&MotorParams> {
+            motors.iter().find(|m| m.axis.eq_ignore_ascii_case(axis))
+        };
+
+        let xy_spmm = motor("X").map_or(80u32, |m| m.steps_per_mm);
+        let z_spmm = motor("Z").map_or(400u32, |m| m.steps_per_mm);
+
+        // Axis pin configs (8 bytes each, 28 bytes total: X/Y/Z have position_endstop, E = 4)
         payload.extend_from_slice(&Self::limit_axis_to_bytes(&limit.x));
         payload.extend_from_slice(&Self::limit_axis_to_bytes(&limit.y));
         payload.extend_from_slice(&Self::limit_axis_to_bytes(&limit.z));
 
-        // Use homing parameters from each axis
-        payload.push((limit.x.homing_speed_mm_per_s >> 0) as u8);
-        payload.push((limit.x.homing_speed_mm_per_s >> 8) as u8);
+        // E axis (4 bytes, no position_endstop in C struct)
+        payload.extend_from_slice(&[0xFF, 0xFF, 0x00, 0x00]);
+
+        // Homing direction (3 bytes) + reserved padding (1 byte)
         payload.push(limit.x.homing_dir);
         payload.push(limit.y.homing_dir);
         payload.push(limit.z.homing_dir);
+        payload.push(0x00);  // _reserved0 padding
+
+        // X axis homing params (16 bytes): speed/fine/retract/max_travel
+        let x_max_travel = motor("X").map_or(u32::MAX, |m| {
+            let v = (m.position_max - m.position_min).max(1) as f32 * 1.5 * m.steps_per_mm as f32;
+            v as u32
+        });
+        payload.extend_from_slice(&((limit.x.homing_speed_mm_per_s as u32 * xy_spmm).to_be_bytes()));
+        payload.extend_from_slice(&((limit.x.homing_fine_speed_mm_per_s as u32 * xy_spmm).to_be_bytes()));
+        payload.extend_from_slice(&((limit.x.homing_retract_mm * xy_spmm as f32) as u32).to_be_bytes());
+        payload.extend_from_slice(&x_max_travel.to_be_bytes());
+
+        // Y axis homing params (16 bytes)
+        let y_max_travel = motor("Y").map_or(u32::MAX, |m| {
+            let v = (m.position_max - m.position_min).max(1) as f32 * 1.5 * m.steps_per_mm as f32;
+            v as u32
+        });
+        payload.extend_from_slice(&((limit.y.homing_speed_mm_per_s as u32 * xy_spmm).to_be_bytes()));
+        payload.extend_from_slice(&((limit.y.homing_fine_speed_mm_per_s as u32 * xy_spmm).to_be_bytes()));
+        payload.extend_from_slice(&((limit.y.homing_retract_mm * xy_spmm as f32) as u32).to_be_bytes());
+        payload.extend_from_slice(&y_max_travel.to_be_bytes());
+
+        // Z axis homing params (16 bytes)
+        let z_max_travel = motor("Z").map_or(u32::MAX, |m| {
+            let v = (m.position_max - m.position_min).max(1) as f32 * 1.5 * m.steps_per_mm as f32;
+            v as u32
+        });
+        payload.extend_from_slice(&((limit.z.homing_speed_mm_per_s as u32 * z_spmm).to_be_bytes()));
+        payload.extend_from_slice(&((limit.z.homing_fine_speed_mm_per_s as u32 * z_spmm).to_be_bytes()));
+        payload.extend_from_slice(&((limit.z.homing_retract_mm * z_spmm as f32) as u32).to_be_bytes());
+        payload.extend_from_slice(&z_max_travel.to_be_bytes());
+
+        // Global homing params: z_lift (4 bytes)
+        let z_lift_steps = (limit.homing.z_lift_mm * z_spmm as f32) as u32;
+        payload.extend_from_slice(&z_lift_steps.to_be_bytes());
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
     }
 
-    fn limit_axis_to_bytes(axis: &LimitSwitchAxis) -> [u8; 4] {
+    fn limit_axis_to_bytes(axis: &LimitSwitchAxis) -> [u8; 8] {
         let pin = parse_pin(&axis.pin);
         let port = pin.map(|p| p.port).unwrap_or(0xFF);
         let pin_num = pin.map(|p| p.pin).unwrap_or(0xFF);
-        let inverted = pin.map(|p| p.inverted).unwrap_or(false);
         let pull = match axis.pull.as_str() {
             "up" => 0x01,
             "down" => 0x02,
             _ => 0x00,
         };
         let active_high = if axis.active_high { 1 } else { 0 };
+        let pos = axis.position_endstop.unwrap_or(0.0) as i32;
 
         [
-            (port << 1) | (inverted as u8),
+            port,
             pin_num,
-            (pull << 2) | (active_high << 1) | 0,
-            0,
+            pull,
+            active_high,
+            (pos >> 24) as u8,
+            (pos >> 16) as u8,
+            (pos >> 8) as u8,
+            pos as u8,
         ]
     }
 

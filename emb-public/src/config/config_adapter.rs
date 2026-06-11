@@ -25,11 +25,59 @@ use super::config_protocol::ConfigFrameBuilder;
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HardwareConfig {
     pub communication: Option<CommunicationConfig>,
+    pub limit_switch: Option<LimitSwitchHardwareConfig>,
     pub motor: Vec<MotorConfig>,
     pub gpio: Option<GpioConfig>,
     pub temperature: Option<TemperatureHardwareConfig>,
     pub heater: Option<HeaterHardwareConfig>,
     pub fan: Option<Vec<FanHardwareConfig>>,
+}
+
+/// Limit switch & homing hardware configuration (from hardware.json)
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LimitSwitchHardwareConfig {
+    pub x: LimitSwitchAxisHardware,
+    pub y: LimitSwitchAxisHardware,
+    pub z: LimitSwitchAxisHardware,
+    #[serde(default)]
+    pub homing: LimitSwitchHomingHardware,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LimitSwitchAxisHardware {
+    pub pin: String,
+    #[serde(default)]
+    pub pull: String,
+    #[serde(default)]
+    pub active_high: bool,
+    #[serde(rename = "position_endstop", default)]
+    pub position_endstop: Option<f32>,
+    #[serde(rename = "homing_speed_mm_per_s", default = "default_homing_speed")]
+    pub homing_speed_mm_per_s: u16,
+    #[serde(rename = "homing_fine_speed_mm_per_s", default = "default_homing_fine_speed")]
+    pub homing_fine_speed_mm_per_s: u16,
+    #[serde(rename = "homing_retract_mm", default = "default_homing_retract")]
+    pub homing_retract_mm: f32,
+    #[serde(rename = "homing_dir", default)]
+    pub homing_dir: u8,
+}
+
+fn default_homing_speed() -> u16 { 25 }
+fn default_homing_fine_speed() -> u16 { 1 }
+fn default_homing_retract() -> f32 { 5.0 }
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LimitSwitchHomingHardware {
+    #[serde(default = "default_z_lift_mm")]
+    pub z_lift_mm: f32,
+}
+
+fn default_z_lift_mm() -> f32 { 10.0 }
+
+impl Default for LimitSwitchHomingHardware {
+    fn default() -> Self {
+        Self { z_lift_mm: 10.0 }
+    }
 }
 
 /// Fan hardware configuration
@@ -740,7 +788,38 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         temperature,
         heater,
         fan: fans,
+        limit_switch: build_limit_switch_config(&configs),
         ..Default::default()
+    }
+}
+
+/// Build limit switch + homing config from hardware.json
+fn build_limit_switch_config(configs: &LoadedConfigs) -> pc::LimitSwitchParams {
+    let hw = match &configs.hardware.limit_switch {
+        Some(ls) => ls,
+        None => return pc::LimitSwitchParams::default(),
+    };
+
+    let map_axis = |axis: &LimitSwitchAxisHardware| -> pc::LimitSwitchAxis {
+        pc::LimitSwitchAxis {
+            pin: axis.pin.clone(),
+            pull: axis.pull.clone(),
+            active_high: axis.active_high,
+            position_endstop: axis.position_endstop,
+            homing_speed_mm_per_s: axis.homing_speed_mm_per_s,
+            homing_fine_speed_mm_per_s: axis.homing_fine_speed_mm_per_s,
+            homing_retract_mm: axis.homing_retract_mm,
+            homing_dir: axis.homing_dir,
+        }
+    };
+
+    pc::LimitSwitchParams {
+        x: map_axis(&hw.x),
+        y: map_axis(&hw.y),
+        z: map_axis(&hw.z),
+        homing: pc::HomingGlobalParams {
+            z_lift_mm: hw.homing.z_lift_mm,
+        },
     }
 }
 
