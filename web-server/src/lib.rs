@@ -87,6 +87,12 @@ impl WebServer {
             .route("/api/v1/temperature/status", get(handlers::temperature::get_temperature))
             .route("/api/v1/temperature/target", post(handlers::temperature::set_temperature))
             
+            // PID auto-tune
+            .route("/api/v1/temperature/pid-tune/start", post(handlers::temperature::pid_tune_start))
+            .route("/api/v1/temperature/pid-tune/cancel", post(handlers::temperature::pid_tune_cancel))
+            .route("/api/v1/temperature/pid-tune/progress", get(handlers::temperature::pid_tune_progress))
+            .route("/api/v1/temperature/pid-tune/apply", post(handlers::temperature::pid_tune_apply))
+            
             // Configuration
             .route("/api/v1/config", get(handlers::config::get_config))
             

@@ -152,7 +152,7 @@ impl PidTuneProtocol {
     /// Format:
     /// [SUB_TYPE:1][HEATER_ID:1][SUCCESS:1][KP:4][KI:4][KD:4][CYCLES_DONE:1][KU:4][TU:4][DURATION:4][ERROR_CODE:1]
     pub fn parse_complete(payload: &[u8], heater_name: &str) -> Result<PidTuneResult, EmbError> {
-        if payload.len() < 30 {
+        if payload.len() < 29 {
             return Err(EmbError::Protocol("Invalid COMPLETE payload length".to_string()));
         }
         

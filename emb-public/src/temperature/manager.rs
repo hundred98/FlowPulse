@@ -205,15 +205,13 @@ impl TemperatureManager {
     pub async fn subscribe_temperature_updates(&self) -> EmbResult<()> {
         let heaters = self.heaters.clone();
         let event_publisher = self.event_publisher.clone();
+        
+        // Clone for tune frame handling
+        let tune_state = self.tune_state.clone();
 
         // Set status report callback
         self.client.set_status_report_callback(move |frame_type, payload| {
-            // StatusResponse frame format:
-            // [credits:1][pos_x:4][pos_y:4][pos_z:4][pos_e:4]
-            // [temp_bed_cur:2][temp_bed_tgt:2]
-            // [temp_nozzle_cur:2][temp_nozzle_tgt:2]
-            // [status:1]
-
+            // Handle DeviceStatusReport (frame_type = 0x04)
             if frame_type == 0x04 && payload.len() >= 25 {
                 // Parse temperature data (in 0.1°C units)
                 let temp_bed_cur = i16::from_be_bytes([payload[17], payload[18]]) as f32 / 10.0;
@@ -252,9 +250,128 @@ impl TemperatureManager {
                     );
                 });
             }
+            
+            // Handle TEMPERATURE frame (frame_type = 0x02) for PID tuning
+            if frame_type == 0x02 && !payload.is_empty() {
+                let sub_type = payload[0];
+                
+                // Handle PROGRESS frame (sub_type = 0x13)
+                if sub_type == 0x13 && payload.len() >= 8 {
+                    let heater_id = payload[1];
+                    let phase = payload[2];
+                    let current_cycle = payload[3];
+                    let total_cycles = payload[4];
+                    
+                    // Current temp (big-endian u16, value * 10)
+                    let temp_raw = ((payload[5] as u16) << 8) | (payload[6] as u16);
+                    let current_temp = temp_raw as f32 / 10.0;
+                    
+                    // Output power (value * 400)
+                    let output_power = payload[7] as f32 / 400.0;
+                    
+                    // Debug: 输出原始字节
+                    log::info!("📊 PID Raw: bytes={:?}, temp_raw={}, temp={:.1}, power={:.2}", 
+                        &payload[..8], temp_raw, current_temp, output_power);
+                    
+                    let tune_state_clone = tune_state.clone();
+                    let event_clone = event_publisher.clone();
+                    
+                    tokio::spawn(async move {
+                        use super::pid_tune::{TuneProgress, TunePhase};
+                        
+                        let progress = TuneProgress {
+                            heater_id,
+                            phase: TunePhase::from(phase),
+                            current_cycle,
+                            total_cycles,
+                            current_temp,
+                            output_power,
+                        };
+                        
+                        // Update tune state
+                        {
+                            let mut state = tune_state_clone.write().await;
+                            state.progress = Some(progress.clone());
+                        }
+                        
+                        // Publish progress event
+                        let _ = event_clone.publish(
+                            PrinterEvent::new(
+                                EventKind::Info,
+                                "pid_tune".to_string(),
+                                format!("PID tune: cycle {}/{}, temp={}°C", 
+                                    current_cycle, total_cycles, current_temp),
+                            ).with_severity(EventSeverity::Info),
+                        );
+                    });
+                }
+                
+                // Handle COMPLETE frame (sub_type = 0x14)
+                if sub_type == 0x14 && payload.len() >= 29 {
+                    let success = payload.get(2).unwrap_or(&0);
+                    let error_code = payload.get(28).unwrap_or(&0);
+                    let cycles_done = payload.get(15).unwrap_or(&0);
+                    log::info!("🏁 PID Tune COMPLETE: heater={}, success={}, cycles={}, error_code={}, len={}", 
+                        payload.get(1).unwrap_or(&0), 
+                        success, 
+                        cycles_done,
+                        error_code,
+                        payload.len());
+                    
+                    let tune_state_clone = tune_state.clone();
+                    let event_clone = event_publisher.clone();
+                    let payload_vec = payload.to_vec();
+                    
+                    tokio::spawn(async move {
+                        use super::pid_tune::PidTuneProtocol;
+                        
+                        log::info!("🏁 Spawned: parsing COMPLETE...");
+                        
+                        let heater_name = {
+                            let state = tune_state_clone.read().await;
+                            state.heater.clone().unwrap_or_else(|| "unknown".to_string())
+                        };
+                        
+                        match PidTuneProtocol::parse_complete(&payload_vec, &heater_name) {
+                            Ok(result) => {
+                                log::info!("🏁 Parse OK: success={}, in_progress set to false", result.success);
+                                
+                                // Update state
+                                {
+                                    let mut state = tune_state_clone.write().await;
+                                    state.in_progress = false;
+                                    state.result = Some(result.clone());
+                                }
+                                
+                                if result.success {
+                                    let _ = event_clone.publish(
+                                        PrinterEvent::new(
+                                            EventKind::Info,
+                                            "pid_tune".to_string(),
+                                            format!("PID tuning complete: Kp={:.3}, Ki={:.3}, Kd={:.3}",
+                                                result.new_pid.kp, result.new_pid.ki, result.new_pid.kd),
+                                        ).with_severity(EventSeverity::Info),
+                                    );
+                                } else {
+                                    let _ = event_clone.publish(
+                                        PrinterEvent::new(
+                                            EventKind::Error,
+                                            "pid_tune".to_string(),
+                                            format!("PID tuning failed: error code {}", result.error_code),
+                                        ).with_severity(EventSeverity::Error),
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("Failed to parse PID tune complete frame: {}", e);
+                            }
+                        }
+                    });
+                }
+            }
         }).await;
 
-        // Subscribe to status reports
+        // Subscribe to status reports (notify server)
         self.client.subscribe_status(true).await?;
 
         log::info!("Subscribed to temperature updates from device");
@@ -564,6 +681,11 @@ impl TemperatureManager {
         let bed_target = heaters.get("bed").map(|h| h.target_temp).unwrap_or(0.0);
 
         TempStatus::new(hotend_current, hotend_target, bed_current, bed_target)
+    }
+
+    /// Get the underlying CoreSocketClient
+    pub fn client(&self) -> Arc<CoreSocketClient> {
+        self.client.clone()
     }
 
     /// Import presets from a list
