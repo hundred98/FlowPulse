@@ -1,0 +1,109 @@
+{
+  "version": "1.0",
+  "description": "Temperature configuration for 3D printer",
+  
+  "presets": [
+    {
+      "name": "PLA",
+      "hotend_temp": 200.0,
+      "bed_temp": 60.0,
+      "chamber_temp": null,
+      "fan_speed": 255
+    },
+    {
+      "name": "ABS",
+      "hotend_temp": 240.0,
+      "bed_temp": 100.0,
+      "chamber_temp": 50.0,
+      "fan_speed": 0
+    },
+    {
+      "name": "PETG",
+      "hotend_temp": 230.0,
+      "bed_temp": 70.0,
+      "chamber_temp": null,
+      "fan_speed": 128
+    }
+  ],
+  
+  "safety": {
+    "safety_check_interval_ms": 1000,
+    "temp_change_threshold": 1.0,
+    "heaters": {
+      "hotend": {
+        "sensor_fault": {
+          "max_temp": 300.0,
+          "min_temp": -50.0
+        },
+        "deviation_thresholds": {
+          "warning": 10.0,
+          "critical": 15.0,
+          "emergency": 20.0
+        },
+        "heating_delay_secs": 60,
+        "actions": {
+          "low_temp": {
+            "warning": "warn",
+            "critical": "pause_print",
+            "emergency": "emergency_stop"
+          },
+          "high_temp": {
+            "warning": "warn",
+            "critical": "turn_off",
+            "emergency": "emergency_stop"
+          }
+        }
+      },
+      "bed": {
+        "sensor_fault": {
+          "max_temp": 200.0,
+          "min_temp": -50.0
+        },
+        "deviation_thresholds": {
+          "warning": 10.0,
+          "critical": 15.0,
+          "emergency": 20.0
+        },
+        "heating_delay_secs": 120,
+        "actions": {
+          "low_temp": {
+            "warning": "warn",
+            "critical": "warn",
+            "emergency": "turn_off"
+          },
+          "high_temp": {
+            "warning": "warn",
+            "critical": "turn_off",
+            "emergency": "emergency_stop"
+          }
+        }
+      }
+    }
+  },
+  
+  "wait": {
+    "timeout_secs": 300,
+    "tolerance": 2.0,
+    "check_interval_ms": 500
+  },
+  
+  "pid_tune": {
+    "default_cycles": 6,
+    "hotend": {
+      "max_overtemp": 20,
+      "timeout_ms": 180000,
+      "power_divisor": 800,
+      "switch_delay_ms": 3000,
+      "initial_bias": 50,
+      "initial_d": 40
+    },
+    "hotbed": {
+      "max_overtemp": 30,
+      "timeout_ms": 300000,
+      "power_divisor": 800,
+      "switch_delay_ms": 5000,
+      "initial_bias": 50,
+      "initial_d": 50
+    }
+  }
+}

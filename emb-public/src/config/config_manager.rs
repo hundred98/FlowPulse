@@ -351,7 +351,7 @@ impl ConfigManager {
     /// Update temperature presets in the configuration.
     ///
     /// This is a convenience method that updates only the temperature_presets field
-    /// and saves the configuration.
+    /// and saves the configuration to temperature.json.
     ///
     /// # Arguments
     /// * `presets` - New temperature presets to save
@@ -363,14 +363,58 @@ impl ConfigManager {
         &self,
         presets: &[super::printer_config::TemperaturePresetConfig],
     ) -> Result<(), String> {
-        // Get current config
-        let mut config = self.get_config()?;
+        log::info!("💾 Saving temperature presets...");
 
-        // Update presets
-        config.temperature_presets = presets.to_vec();
+        // Get config directory and loaded configs
+        let (config_dir, mut loaded_configs) = {
+            let inner = self.inner.read().map_err(|e| format!("Lock error: {}", e))?;
+            let configs = inner.loaded_configs.clone()
+                .ok_or_else(|| "Configuration not loaded. Call load() first.".to_string())?;
+            (inner.config_dir.clone(), configs)
+        };
 
-        // Save updated config
-        self.save_printer_config(&config)
+        if config_dir.is_empty() {
+            return Err("Configuration not loaded. Call load() first.".to_string());
+        }
+
+        // Update presets in loaded_configs.temperature
+        loaded_configs.temperature.presets = presets.iter().map(|p| {
+            super::config_adapter::TemperaturePresetFile {
+                name: p.name.clone(),
+                hotend_temp: p.hotend_temp,
+                bed_temp: p.bed_temp,
+                chamber_temp: p.chamber_temp,
+                fan_speed: p.fan_speed,
+            }
+        }).collect();
+
+        // Build temperature.json path
+        let temperature_json_path = std::path::Path::new(&config_dir).join("temperature.json");
+
+        // Serialize temperature config to JSON
+        let json_content = serde_json::to_string_pretty(&loaded_configs.temperature)
+            .map_err(|e| format!("Failed to serialize temperature config: {}", e))?;
+
+        // Write to file
+        std::fs::write(&temperature_json_path, json_content)
+            .map_err(|e| format!("Failed to write temperature config file: {}", e))?;
+
+        // Rebuild printer config from updated loaded configs
+        let printer_config = super::config_adapter::build_printer_config(&loaded_configs);
+
+        // Update cached config and get callbacks
+        let callbacks = {
+            let mut inner = self.inner.write().map_err(|e| format!("Lock error: {}", e))?;
+            inner.printer_config = Some(printer_config.clone());
+            inner.loaded_configs = Some(loaded_configs);
+            inner.callbacks.clone()
+        };
+
+        // Notify all registered callbacks
+        Self::notify_callbacks(&callbacks, &printer_config);
+
+        log::info!("✅ Temperature presets saved to: {}", temperature_json_path.display());
+        Ok(())
     }
 
     /// Update PID parameters for a heater in hardware.json.
