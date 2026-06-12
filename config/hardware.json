@@ -223,5 +223,37 @@
       "name": "hotend_fan",
       "description": "Hotend cooling fan"
     }
-  ]
+  ],
+  "bed_mesh": {
+    "probe": {
+      "probe_count_x": 5,
+      "probe_count_y": 5,
+      "probe_samples": 3,
+      "travel_speed": 100.0,
+      "mesh_smooth_x": 0.2,
+      "mesh_smooth_y": 0.2,
+      "mesh_min_x": 0.0,
+      "mesh_max_x": 235.0,
+      "mesh_min_y": 0.0,
+      "mesh_max_y": 235.0
+    },
+    "algorithm": {
+      "algorithm": "bicubic",
+      "bicubic_tension": 0.5,
+      "mesh_pps_x": 1,
+      "mesh_pps_y": 1,
+      "probe_z_adjust": 0.0,
+      "fade_start": 5.0,
+      "fade_end": 10.0
+    },
+    "data": {
+      "points": [
+        0.0, 5, -5, 5, 0.0,
+        5, -5, 3.5, -4.5, 0.05,
+        -5, 5, -5, 5, -0.1,
+        5, -5, 5, -5, 0.05,
+        -5, 5, -5, 5, -5
+      ]
+    }
+  }
 }

@@ -5,6 +5,7 @@
 //! - `printer_config`: Printer configuration structures and JSON parsing
 //! - `config_adapter`: Configuration adapter for merging multiple config files
 //! - `config_protocol`: Configuration frame builder for STM32 communication
+//! - `config_interlock`: Cross-section interlock validation for bed mesh
 //!
 //! # Usage
 //! All configuration access must go through `ConfigManager`:
@@ -25,6 +26,7 @@ pub mod config_manager;
 pub mod printer_config;
 pub mod config_adapter;
 pub mod config_protocol;
+pub mod config_interlock;
 
 // Re-export ConfigManager as the primary interface
 pub use config_manager::ConfigManager;
@@ -43,6 +45,9 @@ pub use printer_config::{
 pub use config_protocol::{
     ConfigFrameBuilder, create_config_frames, validate_config,
 };
+
+// Re-export interlock validation for bed mesh
+pub use config_interlock::validate_bed_mesh_interlock;
 
 // Note: load_config_from_file, load_configs, and configure_device are NOT re-exported.
 // Use ConfigManager::load() and ConfigManager::reload() instead.

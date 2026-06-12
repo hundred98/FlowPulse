@@ -22,13 +22,13 @@ async fn main() -> anyhow::Result<()> {
     log::info!("Config: {}", setup::CONFIG_DIR);
 
     // Step 1: Load configuration files
-    let (printer_config, motion_json) = setup::load_configuration(setup::CONFIG_DIR)?;
+    let (_printer_config, _motion_json) = setup::load_configuration(setup::CONFIG_DIR)?;
 
     // Step 2: Create host and connect to emb-core-server
     let host = setup::create_and_connect_host(setup::SERVER_ADDR).await?;
 
     // Step 3: Initialize device (serial, configs, STM32)
-    setup::initialize_device(&host, &printer_config, &motion_json).await?;
+    setup::initialize_device(&host).await?;
 
     // Step 4: Create application state
     let app_state = AppState::new(host.client());

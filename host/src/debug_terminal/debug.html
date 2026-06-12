@@ -127,6 +127,39 @@
                         <button class="btn-secondary" onclick="homingStart('yz')">Home YZ</button>
                     </div>
                 </div>
+
+                <div class="card">
+                    <h2>⚙️ Configuration Control</h2>
+                    <p style="font-size:12px;color:#888;margin-bottom:10px;">
+                        Reload configuration and send to server/device.
+                    </p>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                        <button class="btn-success" onclick="configReload()">Reload Config</button>
+                        <button class="btn-danger" onclick="meshClear()">Clear Mesh</button>
+                    </div>
+                    <p style="font-size:12px;color:#888;">
+                        <b>Reload Config</b> will send: Motion config, Fan config, Mesh data (if available), Hardware config to device.
+                    </p>
+                </div>
+
+                <div class="card">
+                    <h2>🚀 Motion Control</h2>
+                    <p style="font-size:12px;color:#888;margin-bottom:10px;">
+                        Execute G-code commands (G0/G1).
+                    </p>
+                    <div class="form-group">
+                        <label>G-code Command</label>
+                        <input type="text" id="gcode-input" value="G1 X100 Y100 Z0.2 F1000" placeholder="e.g. G1 X100 Y100 Z0.2">
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                        <button class="btn-primary" onclick="executeGcode()">Execute</button>
+                        <button class="btn-secondary" onclick="setGcodeExample('G1 X100 Y100 Z0.2')">Example 1</button>
+                        <button class="btn-secondary" onclick="setGcodeExample('G1 X50 Y50 Z0.5')">Example 2</button>
+                    </div>
+                    <p style="font-size:12px;color:#888;">
+                        <b>Note:</b> Mesh compensation will be applied automatically if mesh data is loaded.
+                    </p>
+                </div>
             </div>
 
             <div class="col">
@@ -299,6 +332,68 @@
                     }
                 })
                 .catch(e => log(`✗ Request failed: ${e.message}`, 'error'));
+        }
+
+        // ===== Configuration =====
+        function configReload() {
+            log('CONFIG_RELOAD: Reloading configuration...', 'info');
+            
+            fetch('/debug/api/config/reload', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        log(`✓ ${data.data}`, 'success');
+                    } else {
+                        log(`✗ ${data.error}`, 'error');
+                    }
+                })
+                .catch(e => log(`✗ Request failed: ${e.message}`, 'error'));
+        }
+
+        // ===== Mesh =====
+        function meshClear() {
+            log('MESH_CLEAR: Clearing mesh data from server...', 'info');
+            
+            fetch('/debug/api/mesh/clear', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        log(`✓ ${data.data}`, 'success');
+                    } else {
+                        log(`✗ ${data.error}`, 'error');
+                    }
+                })
+                .catch(e => log(`✗ Request failed: ${e.message}`, 'error'));
+        }
+
+        // ===== Motion Control =====
+        function executeGcode() {
+            const gcode = document.getElementById('gcode-input').value.trim();
+            if (!gcode) {
+                log('✗ Empty G-code', 'error');
+                return;
+            }
+            
+            log(`G-CODE: ${gcode}`, 'info');
+            
+            fetch('/debug/api/motion/gcode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ gcode })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        log(`✓ ${data.data}`, 'success');
+                    } else {
+                        log(`✗ ${data.error}`, 'error');
+                    }
+                })
+                .catch(e => log(`✗ Request failed: ${e.message}`, 'error'));
+        }
+
+        function setGcodeExample(example) {
+            document.getElementById('gcode-input').value = example;
         }
     </script>
 </body>

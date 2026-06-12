@@ -120,13 +120,12 @@ impl PrinterHostV2 {
 
     /// Dispatch a linear move (G0/G1) to the server.
     /// Server handles planning → mm→steps → batch → serial send.
-    /// Returns the number of segments dispatched.
     pub async fn dispatch_linear_move(
         &self,
         cmd: &str,
         x: Option<f32>, y: Option<f32>, z: Option<f32>, e: Option<f32>,
         feed_rate: Option<f32>,
-    ) -> Result<usize, String> {
+    ) -> Result<(), String> {
         self.client.motion_dispatch(cmd, x, y, z, e, feed_rate).await
     }
 
@@ -137,7 +136,7 @@ impl PrinterHostV2 {
         x: Option<f32>, y: Option<f32>, z: Option<f32>, e: Option<f32>,
         feed_rate: Option<f32>,
         i: f32, j: f32,
-    ) -> Result<usize, String> {
+    ) -> Result<(), String> {
         self.client.motion_dispatch_arc(cmd, x, y, z, e, feed_rate, Some(emb_api::ArcParamsApi {
             i, j,
             direction: if cmd.to_uppercase().starts_with("G2") { 0 } else { 1 },

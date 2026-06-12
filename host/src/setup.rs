@@ -2,7 +2,7 @@
 //!
 //! This module contains functions for initializing the FlowPulse host application.
 
-use emb_public::{ConfigManager, ConfigFrameBuilder, PrinterJsonConfig};
+use emb_public::{ConfigManager, PrinterJsonConfig, CoreSocketClient};
 use emb_public::state::WebDataProvider;
 use web_server::{WebServer, WebServerConfig};
 use std::sync::Arc;
@@ -45,23 +45,46 @@ pub fn load_configuration(config_dir: &str) -> anyhow::Result<(PrinterJsonConfig
     Ok((printer_config, motion_json))
 }
 
+/// Send all configs to server and device (including Mesh data)
+///
+/// This function uses ConfigManager::reload() to send:
+/// - Motion config to server
+/// - Fan config to server
+/// - Mesh data to server (if available)
+/// - Hardware config to device
+/// - ConfigComplete to device
+///
+/// # Arguments
+/// * `client` - CoreSocketClient instance
+///
+/// # Returns
+/// * `Ok(())` - If all configs sent successfully
+/// * `Err(anyhow::Error)` - If sending fails
+#[allow(dead_code)]
+pub async fn send_configs_to_server_and_device(client: &CoreSocketClient) -> anyhow::Result<()> {
+    log::info!("Sending all configs to server and device...");
+    ConfigManager::instance().reload(client).await
+        .map_err(|e| anyhow::anyhow!("Failed to send configs: {}", e))?;
+    log::info!("✅ All configs sent (including Mesh data if available)");
+    Ok(())
+}
+
 /// Initialize device (serial connection, send configs, initialize STM32)
+///
+/// This function now uses ConfigManager::reload() to send all configs,
+/// including Mesh data for bed compensation.
 ///
 /// # Arguments
 /// * `host` - PrinterHostV2 instance
-/// * `printer_config` - Printer configuration
-/// * `motion_json` - Motion config JSON string
 ///
 /// # Returns
 /// * `Ok(())` - If initialization succeeds
 /// * `Err(anyhow::Error)` - If critical initialization fails
-pub async fn initialize_device(
-    host: &PrinterHostV2,
-    printer_config: &PrinterJsonConfig,
-    motion_json: &str,
-) -> anyhow::Result<()> {
+pub async fn initialize_device(host: &PrinterHostV2) -> anyhow::Result<()> {
     // Step 1: Connect serial port to STM32
     let (serial_port, serial_baud) = {
+        let printer_config = ConfigManager::instance().get_config()
+            .map_err(|e| anyhow::anyhow!("Failed to get config: {}", e))?;
         let serial = &printer_config.communication.serial;
         (serial.port.clone(), serial.baud_rate)
     };
@@ -75,40 +98,20 @@ pub async fn initialize_device(
         }
     }
 
-    // Step 2: Send MotionConfig to server
-    match host.client().config_update_motion(motion_json).await {
-        Ok(()) => log::info!("✅ Motion config sent to server"),
-        Err(e) => log::warn!("⚠️  Send motion config failed (using defaults): {}", e),
+    // Step 2: Send all configs to server and device (using reload)
+    // This will send:
+    // - Motion config to server
+    // - Fan config to server
+    // - Mesh data to server (if available)
+    // - Hardware config to device
+    // - ConfigComplete to device
+    log::info!("Sending all configs to server and device...");
+    match ConfigManager::instance().reload(&host.client()).await {
+        Ok(()) => log::info!("✅ All configs sent (including Mesh data if available)"),
+        Err(e) => log::warn!("⚠️  Send configs failed: {}", e),
     }
 
-    // Step 3: Send FanConfig to server
-    match ConfigManager::instance().get_fan_config() {
-        Ok(fan_config) => {
-            match host.client().config_update_fan(&fan_config).await {
-                Ok(()) => log::info!("✅ Fan config sent to server"),
-                Err(e) => log::warn!("⚠️  Send fan config failed: {}", e),
-            }
-        }
-        Err(e) => log::warn!("⚠️  Get fan config failed: {}", e),
-    }
-
-    // Step 4: Send config frames to STM32 device
-    let config_frames = ConfigFrameBuilder::build_config_frames(printer_config);
-
-    for frame_bytes in config_frames.iter() {
-        host.client().serial_send_raw(frame_bytes).await
-            .map_err(|e| anyhow::anyhow!("Failed to send config frame: {}", e))?;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-
-    // Step 5: Initialize STM32 device
-    match host.client().serial_config_complete().await {
-        Ok(()) => log::info!("✅ ConfigComplete sent"),
-        Err(e) => log::warn!("⚠️  ConfigComplete failed: {}", e),
-    }
-
+    // Step 3: Initialize STM32 device (seq reset)
     match host.client().serial_init_seq().await {
         Ok(()) => log::info!("✅ Device seq initialized"),
         Err(e) => log::warn!("⚠️  Init seq failed: {}", e),

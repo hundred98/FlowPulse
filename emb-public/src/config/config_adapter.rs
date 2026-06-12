@@ -31,6 +31,8 @@ pub struct HardwareConfig {
     pub temperature: Option<TemperatureHardwareConfig>,
     pub heater: Option<HeaterHardwareConfig>,
     pub fan: Option<Vec<FanHardwareConfig>>,
+    #[serde(default)]
+    pub bed_mesh: Option<BedMeshHardwareConfig>,
 }
 
 /// Limit switch & homing hardware configuration (from hardware.json)
@@ -130,6 +132,155 @@ pub struct HeaterSafetyHardwareConfig {
     pub min_temp_deviation: i16,
     pub heating_timeout_ms: u32,
     pub sensor_fault_threshold: u16,
+}
+
+// ── Bed Mesh Hardware Configuration ──────────────────────────
+
+/// Bed mesh configuration (from hardware.json)
+/// Contains probe parameters, interpolation algorithm settings, and mesh data.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct BedMeshHardwareConfig {
+    /// Probe parameters for mesh generation
+    #[serde(default)]
+    pub probe: ProbeHardwareConfig,
+    /// Interpolation algorithm settings
+    #[serde(default)]
+    pub algorithm: BedMeshAlgorithmConfig,
+    /// Mesh data (actual Z offset points)
+    #[serde(default)]
+    pub data: MeshDataConfig,
+}
+
+/// Probe parameters for mesh generation
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ProbeHardwareConfig {
+    /// Number of probe points in X direction (1-8)
+    #[serde(default = "default_probe_count")]
+    pub probe_count_x: u8,
+    /// Number of probe points in Y direction (1-8)
+    #[serde(default = "default_probe_count")]
+    pub probe_count_y: u8,
+    /// Number of samples per probe point
+    #[serde(default = "default_probe_samples")]
+    pub probe_samples: u8,
+    /// Travel speed during probing (mm/s)
+    #[serde(default = "default_travel_speed")]
+    pub travel_speed: f32,
+    /// Mesh smoothing factor for X axis
+    #[serde(default = "default_mesh_smooth")]
+    pub mesh_smooth_x: f32,
+    /// Mesh smoothing factor for Y axis
+    #[serde(default = "default_mesh_smooth")]
+    pub mesh_smooth_y: f32,
+    /// Minimum X coordinate of mesh area (mm)
+    #[serde(default = "default_mesh_min")]
+    pub mesh_min_x: f32,
+    /// Maximum X coordinate of mesh area (mm)
+    #[serde(default = "default_mesh_max")]
+    pub mesh_max_x: f32,
+    /// Minimum Y coordinate of mesh area (mm)
+    #[serde(default = "default_mesh_min")]
+    pub mesh_min_y: f32,
+    /// Maximum Y coordinate of mesh area (mm)
+    #[serde(default = "default_mesh_max")]
+    pub mesh_max_y: f32,
+}
+
+fn default_probe_count() -> u8 { 5 }
+fn default_probe_samples() -> u8 { 3 }
+fn default_travel_speed() -> f32 { 100.0 }
+fn default_mesh_smooth() -> f32 { 0.2 }
+fn default_mesh_min() -> f32 { 0.0 }
+fn default_mesh_max() -> f32 { 235.0 }
+
+impl Default for ProbeHardwareConfig {
+    fn default() -> Self {
+        Self {
+            probe_count_x: default_probe_count(),
+            probe_count_y: default_probe_count(),
+            probe_samples: default_probe_samples(),
+            travel_speed: default_travel_speed(),
+            mesh_smooth_x: default_mesh_smooth(),
+            mesh_smooth_y: default_mesh_smooth(),
+            mesh_min_x: default_mesh_min(),
+            mesh_max_x: default_mesh_max(),
+            mesh_min_y: default_mesh_min(),
+            mesh_max_y: default_mesh_max(),
+        }
+    }
+}
+
+/// Interpolation algorithm settings
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct BedMeshAlgorithmConfig {
+    /// Interpolation algorithm: "lagrange" or "bicubic"
+    #[serde(default = "default_algorithm")]
+    pub algorithm: String,
+    /// Bicubic tension parameter (0.0-1.0)
+    #[serde(default = "default_bicubic_tension")]
+    pub bicubic_tension: f32,
+    /// Mesh interpolation points per segment in X direction
+    #[serde(default = "default_mesh_pps")]
+    pub mesh_pps_x: u8,
+    /// Mesh interpolation points per segment in Y direction
+    #[serde(default = "default_mesh_pps")]
+    pub mesh_pps_y: u8,
+    /// Probe Z offset (persistent, mm)
+    #[serde(default)]
+    pub probe_z_adjust: f32,
+    /// Fade start layer (full compensation above this layer)
+    #[serde(default = "default_fade_start")]
+    pub fade_start: f32,
+    /// Fade end layer (no compensation below this layer)
+    #[serde(default = "default_fade_end")]
+    pub fade_end: f32,
+}
+
+fn default_algorithm() -> String { "bicubic".to_string() }
+fn default_bicubic_tension() -> f32 { 0.5 }
+fn default_mesh_pps() -> u8 { 1 }
+fn default_fade_start() -> f32 { 5.0 }
+fn default_fade_end() -> f32 { 10.0 }
+
+impl Default for BedMeshAlgorithmConfig {
+    fn default() -> Self {
+        Self {
+            algorithm: default_algorithm(),
+            bicubic_tension: default_bicubic_tension(),
+            mesh_pps_x: default_mesh_pps(),
+            mesh_pps_y: default_mesh_pps(),
+            probe_z_adjust: 0.0,
+            fade_start: default_fade_start(),
+            fade_end: default_fade_end(),
+        }
+    }
+}
+
+impl Default for BedMeshHardwareConfig {
+    fn default() -> Self {
+        Self {
+            probe: ProbeHardwareConfig::default(),
+            algorithm: BedMeshAlgorithmConfig::default(),
+            data: MeshDataConfig::default(),
+        }
+    }
+}
+
+/// Mesh data configuration (from hardware.json bed_mesh.data)
+/// Contains actual mesh points.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MeshDataConfig {
+    /// Z offset values (y_count × x_count, row-major order)
+    #[serde(default)]
+    pub points: Vec<f32>,
+}
+
+impl Default for MeshDataConfig {
+    fn default() -> Self {
+        Self {
+            points: vec![0.0; 25], // Default 5×5 grid with all zeros
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

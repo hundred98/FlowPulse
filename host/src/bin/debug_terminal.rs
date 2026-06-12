@@ -20,7 +20,7 @@ use tower_http::cors::{Any, CorsLayer};
 use axum::http::Method;
 use tokio::sync::broadcast;
 
-use emb_public::{CoreSocketClient, ConfigFrameBuilder, ConfigManager};
+use emb_public::{CoreSocketClient, ConfigManager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GpioSetRequest {
@@ -86,11 +86,14 @@ fn create_debug_router(state: Arc<DebugState>) -> Router {
         .route("/", get(debug_page))
         .route("/api/status", get(get_status))
         .route("/api/config/load", post(load_configs))
+        .route("/api/config/reload", post(config_reload))  // 新增：重新加载配置（自动发送Mesh数据）
         .route("/api/serial/connect", post(serial_connect))
         .route("/api/gpio/set", get(gpio_set))
         .route("/api/gpio/query", get(gpio_query))
         .route("/api/gpio/report/stream", get(gpio_report_stream))
         .route("/api/homing/start", get(homing_start))
+        .route("/api/motion/gcode", post(gcode_execute))  // 新增：执行G指令
+        .route("/api/mesh/clear", post(mesh_clear))  // 新增：手动清除Mesh数据
         .with_state(state)
 }
 
@@ -165,52 +168,23 @@ async fn serial_connect(
             log::info!("Waiting for server to send GPIO config...");
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             
+            // Load configs first
             let config_dir = std::env::current_dir()
                 .map(|p| p.join("config"))
                 .unwrap_or_else(|_| std::path::PathBuf::from("config"));
             
             match ConfigManager::instance().load(&config_dir.to_string_lossy()) {
                 Ok(()) => {
-                    log::info!("Configs loaded successfully");
+                    log::info!("✅ Configs loaded from {}", config_dir.display());
                     
-                    match ConfigManager::instance().get_config() {
-                        Ok(printer_config) => {
-                            let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
-                            
-                            if config_frames.is_empty() {
-                                log::info!("No config frames to send (GPIO config sent by server)");
-                            } else {
-                                log::info!("Sending {} config frames to device...", config_frames.len());
-                                
-                                for (i, frame_bytes) in config_frames.iter().enumerate() {
-                                    match state.core_client.serial_send_raw(frame_bytes).await {
-                                        Ok(()) => {},
-                                        Err(e) => log::warn!("  Frame[{}] failed: {}", i, e),
-                                    }
-                                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                }
-                                
-                                log::info!("All config frames sent");
-
-                                // Send ConfigComplete to release device from config wait loop
-                                match state.core_client.serial_config_complete().await {
-                                    Ok(()) => log::info!("ConfigComplete sent to device"),
-                                    Err(e) => log::warn!("Failed to send ConfigComplete: {}", e),
-                                }
-                            }
-
-                            // Wait for ConfigComplete to be processed
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                            
-                            match state.core_client.serial_init_seq().await {
-                                Ok(()) => log::info!("Device seq initialized"),
-                                Err(e) => log::warn!("Init seq failed: {}", e),
-                            }
-                        }
-                        Err(e) => log::warn!("Failed to get config: {}", e),
+                    // Send all configs to server and device (including Mesh data)
+                    log::info!("Sending all configs to server and device...");
+                    match ConfigManager::instance().reload(&state.core_client).await {
+                        Ok(()) => log::info!("✅ All configs sent (including Mesh data)"),
+                        Err(e) => log::warn!("Failed to send configs: {}", e),
                     }
                 }
-                Err(e) => log::warn!("Failed to load configs for serial init: {}", e),
+                Err(e) => log::warn!("Failed to load configs: {}", e),
             }
             
             Json(ApiResponse::success(StatusInfo {
@@ -348,6 +322,110 @@ async fn homing_start(
             Json(ApiResponse::success(format!("Homing started: {}", axes_names)))
         }
         Err(e) => Json(ApiResponse::<String>::error(format!("Failed: {}", e))),
+    }
+}
+
+/// Config Reload: 重新加载配置并发送到服务端
+/// 调用ConfigManager::reload()，自动发送：
+/// - Motion config
+/// - Fan config
+/// - Mesh数据（如果存在）
+/// - Hardware config到下位机
+/// - ConfigComplete到下位机
+async fn config_reload(
+    State(state): State<Arc<DebugState>>,
+) -> impl IntoResponse {
+    log::info!("Config Reload: Reloading configuration and sending to server...");
+    
+    // 调用ConfigManager::reload()（会自动发送Mesh数据）
+    match ConfigManager::instance().reload(&state.core_client).await {
+        Ok(()) => {
+            log::info!("✅ Configuration reloaded successfully (Mesh data sent if available)");
+            Json(ApiResponse::success("Configuration reloaded successfully".to_string()))
+        }
+        Err(e) => {
+            log::error!("❌ Config reload failed: {}", e);
+            Json(ApiResponse::<String>::error(format!("Config reload failed: {}", e)))
+        }
+    }
+}
+
+/// Mesh Clear: 清除服务端的Mesh数据
+async fn mesh_clear(
+    State(state): State<Arc<DebugState>>,
+) -> impl IntoResponse {
+    log::info!("Mesh Clear: Clearing mesh data from server...");
+    
+    use emb_api::{CoreRequest, MotionRequest};
+    
+    let clear_request = CoreRequest::Motion(MotionRequest::ClearMesh);
+    
+    match state.core_client.send_request(&clear_request).await {
+        Ok(response) => {
+            log::info!("✅ Mesh cleared successfully");
+            Json(ApiResponse::success(format!("Mesh cleared: {:?}", response)))
+        }
+        Err(e) => {
+            log::error!("❌ Mesh clear failed: {}", e);
+            Json(ApiResponse::<String>::error(format!("Mesh clear failed: {}", e)))
+        }
+    }
+}
+
+/// G-code Execute: 执行G指令（比如G1 X100 Y100 Z0.2）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GcodeRequest {
+    gcode: String,
+}
+
+async fn gcode_execute(
+    State(state): State<Arc<DebugState>>,
+    Json(req): Json<GcodeRequest>,
+) -> impl IntoResponse {
+    log::info!("G-code Execute: {}", req.gcode);
+    
+    // Parse G-code (simple parser for G0/G1)
+    let parts: Vec<&str> = req.gcode.split_whitespace().collect();
+    if parts.is_empty() {
+        return Json(ApiResponse::<String>::error("Empty G-code".to_string()));
+    }
+    
+    let cmd = parts[0].to_uppercase();
+    if cmd != "G0" && cmd != "G1" {
+        return Json(ApiResponse::<String>::error(format!("Unsupported G-code: {}", cmd)));
+    }
+    
+    // Parse parameters (X, Y, Z, E, F)
+    let mut x: Option<f32> = None;
+    let mut y: Option<f32> = None;
+    let mut z: Option<f32> = None;
+    let mut e: Option<f32> = None;
+    let mut feed_rate: Option<f32> = None;
+    
+    for part in parts.iter().skip(1) {
+        let part = part.to_uppercase();
+        if part.starts_with('X') {
+            x = part[1..].parse().ok();
+        } else if part.starts_with('Y') {
+            y = part[1..].parse().ok();
+        } else if part.starts_with('Z') {
+            z = part[1..].parse().ok();
+        } else if part.starts_with('E') {
+            e = part[1..].parse().ok();
+        } else if part.starts_with('F') {
+            feed_rate = part[1..].parse().ok();
+        }
+    }
+    
+    // Dispatch motion to server
+    match state.core_client.motion_dispatch(&cmd, x, y, z, e, feed_rate).await {
+        Ok(_) => {
+            Json(ApiResponse::success("Motion dispatched".to_string()))
+        }
+        Err(e) => {
+            log::error!("❌ Motion dispatch failed: {}", e);
+            Json(ApiResponse::<String>::error(format!("Motion dispatch failed: {}", e)))
+        }
     }
 }
 

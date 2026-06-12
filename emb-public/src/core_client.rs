@@ -486,7 +486,6 @@ impl CoreSocketClient {
 
     /// Plan a move AND dispatch segments to the serial device.
     /// Server handles planning → mm→steps → batch → serial send.
-    /// Returns the number of segments dispatched.
     pub async fn motion_dispatch(
         &self,
         cmd: &str,
@@ -495,7 +494,7 @@ impl CoreSocketClient {
         z: Option<f32>,
         e: Option<f32>,
         feed_rate: Option<f32>,
-    ) -> Result<usize, String> {
+    ) -> Result<(), String> {
         self.motion_dispatch_arc(cmd, x, y, z, e, feed_rate, None).await
     }
 
@@ -509,17 +508,20 @@ impl CoreSocketClient {
         e: Option<f32>,
         feed_rate: Option<f32>,
         arc: Option<ArcParamsApi>,
-    ) -> Result<usize, String> {
+    ) -> Result<(), String> {
         match self.send_request(&CoreRequest::Motion(MotionRequest::DispatchMotion {
             cmd: cmd.to_string(),
             x, y, z, e, feed_rate,
             arc,
         })).await? {
-            CoreResponse::Motion(MotionResponse::DispatchResult { segments_dispatched, .. }) => {
-                Ok(segments_dispatched)
+            CoreResponse::Motion(MotionResponse::DispatchResult { success: true, .. }) => {
+                Ok(())
+            }
+            CoreResponse::Motion(MotionResponse::DispatchResult { success: false, error, .. }) => {
+                Err(error.unwrap_or_else(|| "Motion dispatch failed".to_string()))
             }
             CoreResponse::Motion(MotionResponse::DrainResult { success: true, .. }) => {
-                Ok(0)
+                Ok(())
             }
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),

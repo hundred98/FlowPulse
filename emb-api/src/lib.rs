@@ -137,6 +137,67 @@ pub enum MotionRequest {
         /// Motor enable mask (bit0=X, bit1=Y, bit2=Z, bit3=E, 1=enable, 0=disable)
         enable_mask: u8,
     },
+    
+    // === Bed Mesh Compensation ===
+    /// Begin a mesh data transfer session.
+    /// Server allocates a buffer and enters Stale state.
+    /// Includes algorithm parameters (mesh_pps, fade, probe_z_adjust) sent from config.
+    SetMeshBegin {
+        /// Number of probe points in X direction
+        x_count: u8,
+        /// Number of probe points in Y direction
+        y_count: u8,
+        /// Minimum X coordinate of mesh area (mm)
+        x_min: f32,
+        /// Maximum X coordinate of mesh area (mm)
+        x_max: f32,
+        /// Minimum Y coordinate of mesh area (mm)
+        y_min: f32,
+        /// Maximum Y coordinate of mesh area (mm)
+        y_max: f32,
+        /// Mesh interpolation points per segment in X direction (from config)
+        mesh_pps_x: u8,
+        /// Mesh interpolation points per segment in Y direction (from config)
+        mesh_pps_y: u8,
+        /// Fade start layer (full compensation above this, from config)
+        fade_start: f32,
+        /// Fade end layer (no compensation below this, from config)
+        fade_end: f32,
+        /// Probe Z offset (persistent, from config)
+        probe_z_adjust: f32,
+    },
+    /// Send a chunk of mesh data.
+    /// Server writes to buffer and returns MeshAck on first chunk.
+    SetMeshChunk {
+        /// Mesh session ID (from client)
+        mesh_id: u16,
+        /// Chunk sequence number (0-based)
+        seq: u16,
+        /// Total number of chunks
+        total: u16,
+        /// Mesh data chunk (binary, ≤128 bytes)
+        data: Vec<u8>,
+    },
+    /// End mesh data transfer and validate.
+    /// Server validates CRC32 and returns MeshComplete or MeshNack.
+    SetMeshEnd {
+        /// Mesh session ID
+        mesh_id: u16,
+        /// CRC32 checksum over all chunk data
+        checksum: u32,
+    },
+    /// Clear mesh data and return to Empty state.
+    ClearMesh,
+    /// Set current layer number (for fade calculation).
+    SetLayer {
+        /// Layer number
+        n: u32,
+    },
+    /// Set babystep Z offset (runtime, not persistent).
+    SetBabystep {
+        /// Z offset (mm)
+        z: f32,
+    },
 }
 
 /// Arc parameters for G2/G3 commands (API-safe subset)
@@ -432,10 +493,9 @@ pub enum SerialResponse {
 /// Motion planning related responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MotionResponse {
-    /// Dispatch result: segments planned, converted, and sent to device
+    /// Dispatch result
     DispatchResult {
         success: bool,
-        segments_dispatched: usize,
         error: Option<String>,
     },
     /// M指令执行结果
@@ -464,6 +524,44 @@ pub enum MotionResponse {
         success: bool,
         error: Option<String>,
     },
+    
+    // === Bed Mesh Compensation Responses ===
+    /// Mesh chunk acknowledged (sent on first chunk received)
+    MeshAck {
+        /// Mesh session ID
+        mesh_id: u16,
+        /// Expected total number of chunks
+        expected_total: u16,
+    },
+    /// Mesh transfer complete (validation successful)
+    MeshComplete {
+        /// Mesh session ID
+        mesh_id: u16,
+    },
+    /// Mesh transfer failed (validation error or timeout)
+    MeshNack {
+        /// Mesh session ID
+        mesh_id: u16,
+        /// Nack reason
+        reason: NackReason,
+        /// Missing sequence numbers (for MissingSeqs reason)
+        missing_seqs: Vec<u16>,
+    },
+}
+
+/// Nack reason for mesh transfer failure
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NackReason {
+    /// Missing sequence numbers (payload contains missing_seqs)
+    MissingSeqs = 0x01,
+    /// CRC32 checksum mismatch
+    ChecksumMismatch = 0x02,
+    /// Invalid mesh size (e.g., 0×0)
+    InvalidSize = 0x03,
+    /// Transfer timeout (no chunk received for 5s)
+    Timeout = 0x04,
+    /// Mesh ID mismatch (chunk ID != begin ID)
+    MeshIdMismatch = 0x05,
 }
 
 /// Motion and serial statistics
