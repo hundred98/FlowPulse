@@ -65,13 +65,10 @@ impl TemperatureSafetyChecker {
         // 3. Check temperature deviation from target
         // Get heater-specific configuration
         let heater_config = self.heater_configs.get(&state.name);
-        let heating_delay_secs = heater_config
-            .map(|c| c.heating_delay_secs as f64)
-            .unwrap_or(60.0);
 
         // During heating, allow more deviation for the initial period
         let heating_duration = state.heating_duration_secs();
-        let is_heating_up = state.is_heating && deviation < 0.0 && heating_duration < heating_delay_secs;
+        let is_heating_up = state.is_heating && deviation < 0.0;
 
         // Get deviation thresholds
         let (warning_threshold, critical_threshold, emergency_threshold) = heater_config
