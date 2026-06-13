@@ -21,6 +21,7 @@ use axum::http::Method;
 use tokio::sync::broadcast;
 
 use emb_public::{CoreSocketClient, ConfigManager};
+use emb_api::ArcParamsApi;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GpioSetRequest {
@@ -387,16 +388,18 @@ async fn gcode_execute(
     }
     
     let cmd = parts[0].to_uppercase();
-    if cmd != "G0" && cmd != "G1" {
+    if cmd != "G0" && cmd != "G1" && cmd != "G2" && cmd != "G3" {
         return Json(ApiResponse::<String>::error(format!("Unsupported G-code: {}", cmd)));
     }
     
-    // Parse parameters (X, Y, Z, E, F)
+    // Parse parameters (X, Y, Z, E, F, I, J)
     let mut x: Option<f32> = None;
     let mut y: Option<f32> = None;
     let mut z: Option<f32> = None;
     let mut e: Option<f32> = None;
     let mut feed_rate: Option<f32> = None;
+    let mut i: Option<f32> = None;
+    let mut j: Option<f32> = None;
     
     for part in parts.iter().skip(1) {
         let part = part.to_uppercase();
@@ -410,11 +413,39 @@ async fn gcode_execute(
             e = part[1..].parse().ok();
         } else if part.starts_with('F') {
             feed_rate = part[1..].parse().ok();
+        } else if part.starts_with('I') {
+            i = part[1..].parse().ok();
+        } else if part.starts_with('J') {
+            j = part[1..].parse().ok();
         }
     }
     
+    // Build arc parameters for G2/G3
+    let arc = if cmd == "G2" || cmd == "G3" {
+        match (i, j) {
+            (Some(i_val), Some(j_val)) => Some(ArcParamsApi {
+                i: i_val,
+                j: j_val,
+                direction: if cmd == "G2" { 0 } else { 1 }, // 0=CW/G2, 1=CCW/G3
+            }),
+            (Some(i_val), None) => Some(ArcParamsApi {
+                i: i_val,
+                j: 0.0,
+                direction: if cmd == "G2" { 0 } else { 1 },
+            }),
+            (None, Some(j_val)) => Some(ArcParamsApi {
+                i: 0.0,
+                j: j_val,
+                direction: if cmd == "G2" { 0 } else { 1 },
+            }),
+            (None, None) => None, // G2/G3 without I/J will fail on server
+        }
+    } else {
+        None
+    };
+    
     // Dispatch motion to server
-    match state.core_client.motion_dispatch(&cmd, x, y, z, e, feed_rate).await {
+    match state.core_client.motion_dispatch_arc(&cmd, x, y, z, e, feed_rate, arc).await {
         Ok(_) => {
             Json(ApiResponse::success("Motion dispatched".to_string()))
         }
