@@ -15,6 +15,8 @@ pub mod state;  // New module (device_state, frontend_provider)
 pub mod safety;  // New module (safety controller)
 pub mod gcode;  // New module (gcode parser, reserved)
 pub mod temperature;  // New module (temperature management)
+pub mod mesh;  // New module (bed mesh management)
+pub mod gpio;  // New module (GPIO management)
 
 // Re-export common types
 pub use common::{
@@ -87,6 +89,12 @@ pub use temperature::{
     HeaterState, TemperaturePreset, TemperatureSafetyChecker, PresetManager,
     SafetyLevel, SafetyAction, SafetyCheckResult,
 };
+
+// Re-export mesh types
+pub use mesh::MeshManager;
+
+// Re-export GPIO types
+pub use gpio::{GpioManager, GpioEvent};
 
 // Re-export message queue handlers
 pub use message_queue::{

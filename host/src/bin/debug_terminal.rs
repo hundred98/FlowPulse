@@ -1,10 +1,13 @@
 //! Debug Terminal Server
 //!
-//! Simple HTTP server for GPIO debugging.
-//! Usage: debug_terminal [server_addr] [core_addr] [serial_port] [baud_rate]
+//! Simple HTTP server for GPIO debugging and interactive testing.
+//! Initializes automatically following the standard setup flow:
+//!   load configs → connect core server → init device (serial + GPIO subscribe + configs + seq)
+//!
+//! Usage: debug_terminal [http_addr] [core_addr]
 //!
 //! Example:
-//!   debug_terminal 127.0.0.1:8080 127.0.0.1:9527 COM7 57600
+//!   debug_terminal 127.0.0.1:8080 127.0.0.1:9527
 //!
 //! Then open http://127.0.0.1:8080/debug in browser.
 
@@ -20,9 +23,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use axum::http::Method;
-use tokio::sync::broadcast;
 
-use emb_public::{CoreSocketClient, TemperatureManager, TemperatureManagerConfig, SyncEventPublisher};
+use emb_public::{CoreSocketClient, TemperatureManager, TemperatureManagerConfig, SyncEventPublisher, MeshManager, GpioManager};
 use emb_api::ArcParamsApi;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,12 +36,6 @@ struct GpioSetRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GpioQueryRequest {
     name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SerialConnectRequest {
-    port: String,
-    baud_rate: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,14 +66,6 @@ impl<T> ApiResponse<T> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GpioReportEvent {
-    name: String,
-    value: f32,
-    /// 事件动作（如 "filament_runout", "power_loss"），无事件时为 None
-    action: Option<String>,
-}
-
 /// Gcode print request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GcodePrintRequest {
@@ -98,10 +86,12 @@ struct GcodePrintProgress {
 
 struct DebugState {
     core_client: Arc<CoreSocketClient>,
-    /// GPIO Report事件广播通道
-    gpio_report_tx: broadcast::Sender<GpioReportEvent>,
+    /// GPIO Manager (handles pin control + event broadcast)
+    gpio_manager: GpioManager,
     /// Temperature manager
     temperature_manager: Arc<TemperatureManager>,
+    /// Mesh manager
+    mesh_manager: MeshManager,
     /// Gcodes directory
     gcodes_dir: String,
     /// Print progress (shared between print task and progress polling)
@@ -114,15 +104,12 @@ fn create_debug_router(state: Arc<DebugState>) -> Router {
     Router::new()
         .route("/", get(debug_page))
         .route("/api/status", get(get_status))
-        .route("/api/config/load", post(load_configs))
-        .route("/api/config/reload", post(config_reload))  // 新增：重新加载配置（自动发送Mesh数据）
-        .route("/api/serial/connect", post(serial_connect))
         .route("/api/gpio/set", get(gpio_set))
         .route("/api/gpio/query", get(gpio_query))
         .route("/api/gpio/report/stream", get(gpio_report_stream))
         .route("/api/homing/start", get(homing_start))
-        .route("/api/motion/gcode", post(gcode_execute))  // 新增：执行G指令
-        .route("/api/mesh/clear", post(mesh_clear))  // 新增：手动清除Mesh数据
+        .route("/api/motion/gcode", post(gcode_execute))
+        .route("/api/mesh/clear", post(mesh_clear))
         .route("/api/gcode/files", get(gcode_file_list))
         .route("/api/gcode/print", post(gcode_file_print))
         .route("/api/gcode/progress", get(gcode_print_progress))
@@ -145,91 +132,13 @@ async fn get_status(
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LoadConfigsRequest {
-    config_dir: Option<String>,
-}
-
-async fn load_configs(
-    State(state): State<Arc<DebugState>>,
-    Json(req): Json<LoadConfigsRequest>,
-) -> impl IntoResponse {
-    let config_dir = req.config_dir.unwrap_or_else(|| {
-        let dir = std::env::current_dir()
-            .map(|p| p.join("config"))
-            .unwrap_or_else(|_| std::path::PathBuf::from("config"));
-        dir.to_string_lossy().to_string()
-    });
-    
-    log::info!("Loading and sending configs from: {}", config_dir);
-    
-    // Use standardized setup functions
-    match setup::load_all_configs(&config_dir) {
-        Ok(config) => {
-            log::info!("✅ Configs loaded ({} motors, model: {})", config.motor.len(), config.printer_model);
-            match setup::send_all_configs(&state.core_client).await {
-                Ok(()) => {
-                    log::info!("✅ Configs sent to server successfully");
-                    Json(ApiResponse::success("Configuration loaded and sent successfully".to_string()))
-                }
-                Err(e) => Json(ApiResponse::<String>::error(format!("Failed to send configs: {}", e))),
-            }
-        }
-        Err(e) => Json(ApiResponse::<String>::error(format!("Failed to load configs: {}", e))),
-    }
-}
-
-async fn serial_connect(
-    State(state): State<Arc<DebugState>>,
-    Json(req): Json<SerialConnectRequest>,
-) -> impl IntoResponse {
-    log::info!("Connecting serial: {} @ {}", req.port, req.baud_rate);
-    
-    match state.core_client.serial_connect(&req.port, req.baud_rate).await {
-        Ok(()) => {
-            log::info!("Serial connected to {}", req.port);
-            
-            // 串口连接成功后订阅GPIO Report
-            let _ = setup::subscribe_gpio_report(&state.core_client).await;
-            
-            // Wait for server to send GPIO config and ConfigComplete first
-            log::info!("Waiting for server to send GPIO config...");
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-            
-            // Use standardized setup: load all configs, send to server/device, init temperature
-            let config_dir = std::env::current_dir()
-                .map(|p| p.join("config"))
-                .unwrap_or_else(|_| std::path::PathBuf::from("config"));
-            
-            match setup::load_all_configs(&config_dir.to_string_lossy()) {
-                Ok(config) => {
-                    log::info!("✅ Configs loaded ({} motors, model: {})", config.motor.len(), config.printer_model);
-                    if let Err(e) = setup::send_all_configs(&state.core_client).await {
-                        log::warn!("Failed to send configs: {}", e);
-                    }
-                    if let Err(e) = setup::initialize_temperature_manager(&state.temperature_manager).await {
-                        log::error!("Failed to initialize temperature manager: {}", e);
-                    }
-                }
-                Err(e) => log::warn!("Failed to load configs: {}", e),
-            }
-            
-            Json(ApiResponse::success(StatusInfo {
-                serial_connected: true,
-                serial_port: Some(req.port),
-            }))
-        }
-        Err(e) => Json(ApiResponse::<StatusInfo>::error(format!("Connect failed: {}", e))),
-    }
-}
-
 async fn gpio_set(
     State(state): State<Arc<DebugState>>,
     axum::extract::Query(req): axum::extract::Query<GpioSetRequest>,
 ) -> impl IntoResponse {
     log::info!("Debug: GPIO set {} = {}", req.name, req.value);
     
-    match state.core_client.gpio_set(&req.name, req.value).await {
+    match state.gpio_manager.set_pin(&req.name, req.value).await {
         Ok(_) => Json(ApiResponse::success(GpioInfo { name: req.name, value: req.value })),
         Err(e) => Json(ApiResponse::<GpioInfo>::error(format!("Error: {}", e))),
     }
@@ -241,7 +150,7 @@ async fn gpio_query(
 ) -> impl IntoResponse {
     log::info!("Debug: GPIO query {}", req.name);
     
-    match state.core_client.gpio_query(&req.name).await {
+    match state.gpio_manager.query_pin(&req.name).await {
         Ok(value) => Json(ApiResponse::success(GpioInfo { name: req.name, value })),
         Err(e) => Json(ApiResponse::<GpioInfo>::error(format!("Error: {}", e))),
     }
@@ -254,7 +163,7 @@ async fn gpio_report_stream(
     use std::convert::Infallible;
     use tokio_stream::StreamExt;
     
-    let rx = state.gpio_report_tx.subscribe();
+    let rx = state.gpio_manager.event_receiver();
     
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
         .filter_map(|result| {
@@ -344,38 +253,16 @@ async fn homing_start(
     }
 }
 
-/// Config Reload: 重新加载并发送所有配置到服务端和下位机
-async fn config_reload(
-    State(state): State<Arc<DebugState>>,
-) -> impl IntoResponse {
-    log::info!("Config Reload: Reloading configuration and sending to server...");
-    
-    match setup::send_all_configs(&state.core_client).await {
-        Ok(()) => {
-            log::info!("✅ Configuration reloaded successfully (Mesh data sent if available)");
-            Json(ApiResponse::success("Configuration reloaded successfully".to_string()))
-        }
-        Err(e) => {
-            log::error!("❌ Config reload failed: {}", e);
-            Json(ApiResponse::<String>::error(format!("Config reload failed: {}", e)))
-        }
-    }
-}
-
 /// Mesh Clear: 清除服务端的Mesh数据
 async fn mesh_clear(
     State(state): State<Arc<DebugState>>,
 ) -> impl IntoResponse {
     log::info!("Mesh Clear: Clearing mesh data from server...");
     
-    use emb_api::{CoreRequest, MotionRequest};
-    
-    let clear_request = CoreRequest::Motion(MotionRequest::ClearMesh);
-    
-    match state.core_client.send_request(&clear_request).await {
-        Ok(response) => {
+    match state.mesh_manager.clear_mesh().await {
+        Ok(()) => {
             log::info!("✅ Mesh cleared successfully");
-            Json(ApiResponse::success(format!("Mesh cleared: {:?}", response)))
+            Json(ApiResponse::success("Mesh cleared successfully".to_string()))
         }
         Err(e) => {
             log::error!("❌ Mesh clear failed: {}", e);
@@ -808,88 +695,39 @@ async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let http_addr = args.get(1).unwrap_or(&"127.0.0.1:8080".to_string()).clone();
     let core_addr = args.get(2).unwrap_or(&"127.0.0.1:9527".to_string()).clone();
-    let serial_port = args.get(3).cloned();
-    let baud_rate: u32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(57600);
 
     log::info!("Debug Terminal starting...");
     log::info!("HTTP server: {}", http_addr);
     log::info!("Core server: {}", core_addr);
 
-    let core_client = Arc::new(CoreSocketClient::default_client(&core_addr));
-    
-    // 创建GPIO Report广播通道
-    let (gpio_report_tx, _) = broadcast::channel(16);
-    
-    match core_client.connect().await {
-        Ok(()) => log::info!("Connected to core server"),
-        Err(e) => {
-            log::error!("Failed to connect to core server: {}", e);
-            log::error!("Make sure emb-core-server is running at {}", core_addr);
-            std::process::exit(1);
-        }
-    }
-    
-    // 设置GPIO Report回调（提前设置，实际订阅在串口连接后）
-    {
-        let tx = gpio_report_tx.clone();
-        core_client.set_gpio_report_callback(move |name, value| {
-            log::info!("GPIO Report: {} = {}", name, value);
+    // Step 1: Load all configuration files at once
+    setup::load_all_configs(setup::CONFIG_DIR)?;
 
-            // 推送到SSE流（不包含事件信息，客户端自行处理）
-            let _ = tx.send(GpioReportEvent { name, value, action: None });
-        }).await;
-    }
-    
-    // 注意：GPIO订阅需要在串口连接之后才能成功
-    // 将在 serial_connect 处理函数中订阅
+    // Step 2: Create host and connect to emb-core-server
+    let host = setup::create_and_connect_host(&core_addr).await?;
 
-    // 提前创建温度管理器（仅构造，暂不初始化——需要等配置加载+串口连接后）
+    // 创建GPIO Manager（内部包含 broadcast channel）
+    let gpio_manager = GpioManager::new(host.client());
+
+    // 设置GPIO Report回调（通过 GpioManager 转发到 broadcast channel）
+    gpio_manager.setup_callback().await;
+
+    // Step 3: Initialize device (serial, GPIO subscribe, configs, STM32 seq)
+    // 注意：setup::initialize_device 内部会调用 gpio_subscribe_report
+    setup::initialize_device(&host).await?;
+
+    // Step 4: Create and initialize temperature manager
     let event_publisher = Arc::new(SyncEventPublisher::new());
     let temperature_manager = Arc::new(TemperatureManager::new(
-        core_client.clone(),
+        host.client(),
         event_publisher.clone(),
         TemperatureManagerConfig::default(),
         None,
     ));
-
-    if let Some(port) = serial_port {
-        log::info!("Auto-connecting serial: {} @ {}", port, baud_rate);
-        match core_client.serial_connect(&port, baud_rate).await {
-            Ok(()) => {
-                log::info!("Serial connected to {}", port);
-                // 串口连接成功后订阅GPIO Report
-                let _ = setup::subscribe_gpio_report(&core_client).await;
-
-                // 等待服务端发送GPIO配置和ConfigComplete
-                log::info!("Waiting for server to send GPIO config...");
-                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-
-                // Use standardized setup: load all configs, send, init temperature
-                let config_dir = std::env::current_dir()
-                    .map(|p| p.join("config"))
-                    .unwrap_or_else(|_| std::path::PathBuf::from("config"));
-
-                match setup::load_all_configs(&config_dir.to_string_lossy()) {
-                    Ok(config) => {
-                        log::info!("✅ Configs loaded ({} motors, model: {})", config.motor.len(), config.printer_model);
-                        if let Err(e) = setup::send_all_configs(&core_client).await {
-                            log::warn!("Failed to send configs: {}", e);
-                        }
-                    }
-                    Err(e) => log::warn!("Failed to load configs: {}", e),
-                }
-
-                // 配置加载+串口连接就绪后，初始化温度管理器
-                if let Err(e) = setup::initialize_temperature_manager(&temperature_manager).await {
-                    log::error!("Failed to initialize temperature manager: {}", e);
-                }
-            }
-            Err(e) => log::error!("Serial connect failed: {}", e),
-        }
-    }
+    setup::initialize_temperature_manager(&temperature_manager).await?;
 
     // 后台 pinger：每2秒 ping 一次，触发 read_response 消费 GPIO Report 推送
-    let ping_client = core_client.clone();
+    let ping_client = host.client();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -913,9 +751,10 @@ async fn main() -> anyhow::Result<()> {
     let print_running = Arc::new(AtomicBool::new(false));
 
     let state = Arc::new(DebugState { 
-        core_client,
-        gpio_report_tx,
+        core_client: host.client(),
+        gpio_manager,
         temperature_manager,
+        mesh_manager: MeshManager::new(host.client()),
         gcodes_dir,
         print_progress,
         print_running,
