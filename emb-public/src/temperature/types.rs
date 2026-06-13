@@ -1,4 +1,4 @@
-//! Temperature types and data structures
+﻿//! Temperature types and data structures
 //!
 //! This module defines all types used by the temperature management system.
 
@@ -200,6 +200,9 @@ pub struct TemperatureWaitConfig {
 
     /// Interval between temperature checks (milliseconds)
     pub check_interval_ms: u64,
+
+    /// Number of consecutive stable checks required to confirm temperature reached
+    pub stable_count: u32,
 }
 
 impl Default for TemperatureWaitConfig {
@@ -208,6 +211,7 @@ impl Default for TemperatureWaitConfig {
             timeout_secs: 300,
             tolerance: 2.0,
             check_interval_ms: 500,
+            stable_count: 3,
         }
     }
 }

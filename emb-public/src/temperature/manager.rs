@@ -515,6 +515,20 @@ impl TemperatureManager {
         self.heaters.read().await.clone()
     }
 
+    /// Update target temperature in cache only (no serial send).
+    /// Used after server‑side M command (M104/M140) has already sent the config frame,
+    /// so the local cache stays in sync without duplicating the serial command.
+    pub async fn update_target_cache(&self, heater: &str, temp: f32) {
+        let mut heaters = self.heaters.write().await;
+        if let Some(state) = heaters.get_mut(heater) {
+            state.set_target(temp);
+            log::info!(
+                "Cache: set {} target to {}°C (no serial send)",
+                heater, temp
+            );
+        }
+    }
+
     /// Update current temperature (called from status report)
     pub async fn update_current(&self, heater: &str, temp: f32) {
         let mut heaters = self.heaters.write().await;

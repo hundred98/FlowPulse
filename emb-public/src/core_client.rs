@@ -240,6 +240,28 @@ impl CoreSocketClient {
         }
     }
 
+    /// Read a response with custom timeout duration.
+    async fn read_response_with_timeout(&self, timeout: Duration) -> Result<CoreResponse, String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        let mut rx_guard = self.message_rx.lock().await;
+        let rx = rx_guard.as_mut().ok_or("Not connected")?;
+
+        loop {
+            if tokio::time::Instant::now() > deadline {
+                return Err("Request timeout".to_string());
+            }
+            match tokio::time::timeout(
+                deadline - tokio::time::Instant::now(),
+                rx.recv(),
+            ).await {
+                Ok(Some(response)) => return Ok(response),
+                Ok(None) => return Err("Server closed connection".to_string()),
+                Err(_) => return Err("Request timeout".to_string()),
+            }
+        }
+    }
+
     // ========================================================================
     // Ping
     // ========================================================================
@@ -454,6 +476,35 @@ impl CoreSocketClient {
     /// The server will wait for previous motion to complete before executing.
     pub async fn motion_execute_m_command(&self, command: MCommand) -> Result<(), String> {
         match self.send_request(&CoreRequest::Motion(MotionRequest::ExecuteMCommand { command })).await? {
+            CoreResponse::Motion(MotionResponse::MCommandResult { success: true, .. }) => Ok(()),
+            CoreResponse::Motion(MotionResponse::MCommandResult { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "M command failed".to_string()))
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    /// Execute an M command with a custom response timeout.
+    /// Used for SyncWait commands (M109/M190) that require longer waiting.
+    pub async fn motion_execute_m_command_with_timeout(
+        &self,
+        command: MCommand,
+        timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        self.ensure_connected().await?;
+        let encoded = encode_request(&CoreRequest::Motion(MotionRequest::ExecuteMCommand { command }))
+            .map_err(|e| format!("Encode error: {}", e))?;
+
+        let mut guard = self.writer.write().await;
+        let writer = guard.as_mut().ok_or("Not connected")?;
+        writer.write_all(&encoded).await
+            .map_err(|e| format!("Write error: {}", e))?;
+        writer.flush().await
+            .map_err(|e| format!("Flush error: {}", e))?;
+        drop(guard);
+
+        match self.read_response_with_timeout(timeout).await? {
             CoreResponse::Motion(MotionResponse::MCommandResult { success: true, .. }) => Ok(()),
             CoreResponse::Motion(MotionResponse::MCommandResult { success: false, error }) => {
                 Err(error.unwrap_or_else(|| "M command failed".to_string()))

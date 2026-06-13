@@ -590,7 +590,14 @@ pub struct TempActionLevels {
 pub struct TemperatureWaitFile {
     pub timeout_secs: u32,
     pub tolerance: f32,
+    #[serde(default = "default_wait_check_interval_ms")]
+    pub check_interval_ms: u64,
+    #[serde(default = "default_wait_stable_count")]
+    pub stable_count: u32,
 }
+
+fn default_wait_check_interval_ms() -> u64 { 500 }
+fn default_wait_stable_count() -> u32 { 3 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AutoFanFile {
@@ -1099,7 +1106,8 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
     let temperature_wait = pc::TemperatureWaitConfig {
         timeout_secs: configs.temperature.wait.timeout_secs as u64,
         tolerance: configs.temperature.wait.tolerance,
-        check_interval_ms: 500,  // fallback default, not from JSON
+        check_interval_ms: configs.temperature.wait.check_interval_ms,
+        stable_count: configs.temperature.wait.stable_count,
     };
 
     // Build auto-fan config from temperature.json

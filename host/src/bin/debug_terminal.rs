@@ -514,8 +514,6 @@ async fn run_gcode_print(
             }
         };
 
-        log::info!("[{}/{}] {:?}", i + 1, total_lines, cmd);
-
         match &cmd.kind {
             CommandKind::Motion(motion_cmd) => {
                 let (cmd_str, x, y, z, e, f, arc) = match motion_cmd {
@@ -572,49 +570,86 @@ async fn run_gcode_print(
 
                 let exec_type = m_cmd.execution_type();
 
-                // For SyncWait (M109/M190): send command, then wait for temperature
+                // For SyncWait (M109/M190): send command, server handles temperature monitoring.
+                // Server uses "fake blocking" — it filters allowed commands and responds
+                // when temperature is reached (or timeout).
                 if exec_type == MExecutionType::SyncWait {
-                    match state.core_client.motion_execute_m_command(m_cmd.clone()).await {
+                    // Determine heater and target temperature
+                    let (heater, target) = match &m_cmd {
+                        emb_api::MCommand::WaitHotendTemp { temp, .. } => ("hotend", *temp),
+                        emb_api::MCommand::WaitBedTemp { temp } => ("bed", *temp),
+                        _ => unreachable!(),
+                    };
+
+                    // Update local cache so safety check knows heating is intentional
+                    state.temperature_manager.update_target_cache(heater, target).await;
+
+                    // Use server's timeout + 3s buffer for client-side timeout
+                    // Server timeout is 300s (from config/temperature.json)
+                    let server_timeout_secs = 300u64;
+                    let timeout = std::time::Duration::from_secs(server_timeout_secs + 3);
+
+                    match state.core_client.motion_execute_m_command_with_timeout(m_cmd.clone(), timeout).await {
                         Ok(()) => {
-                            log::info!("  → M command sent, now waiting for temperature...");
+                            // Server returned success immediately (command sent to device).
+                            // Now wait locally for temperature to reach target.
+                            log::info!("  → Command sent, waiting for {} to reach {:.1}°C...", heater, target);
 
-                            // Determine heater and target temperature
-                            let (heater, target) = match m_cmd {
-                                emb_api::MCommand::WaitHotendTemp { temp, .. } => ("hotend", *temp),
-                                emb_api::MCommand::WaitBedTemp { temp } => ("bed", *temp),
-                                _ => unreachable!(),
-                            };
+                            let wait_start = std::time::Instant::now();
+                            let wait_timeout = std::time::Duration::from_secs(server_timeout_secs);
+                            let wait_tolerance = 2.0;
+                            let wait_check = std::time::Duration::from_millis(500);
+                            let wait_stable_count = 3u32;
+                            let mut current_stable = 0u32;
 
-                            // Wait for temperature
-                            match state.temperature_manager.wait_for_target(heater, target, None).await {
-                                Ok(()) => {
-                                    log::info!("  ✅ Temperature reached: {} = {}°C", heater, target);
+                            loop {
+                                if wait_start.elapsed() > wait_timeout {
+                                    log::warn!("Temperature wait timeout for {} ({}s)", heater, server_timeout_secs);
                                     let progress = GcodePrintProgress {
                                         filename: filename.to_string(),
                                         current_line: i + 1,
                                         total_lines,
                                         percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                                        status: format!("Temp OK: {} = {}°C", heater, target),
-                                        finished: false,
-                                        success: true,
-                                    };
-                                    *state.print_progress.write().await = Some(progress);
-                                }
-                                Err(e) => {
-                                    log::warn!("  ❌ Temperature wait failed: {}", e);
-                                    let progress = GcodePrintProgress {
-                                        filename: filename.to_string(),
-                                        current_line: i + 1,
-                                        total_lines,
-                                        percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                                        status: format!("Temp wait error: {}", e),
+                                        status: format!("Temp timeout: {} = {:.1}°C", heater, target),
                                         finished: false,
                                         success: false,
                                     };
                                     *state.print_progress.write().await = Some(progress);
-                                    return Err(format!("Temperature wait failed at line {}: {}", i + 1, e));
+                                    return Err(format!("Temperature wait timeout for {} after {}s", heater, server_timeout_secs));
                                 }
+
+                                let status = state.temperature_manager.get_temp_status().await;
+                                let current = if heater == "bed" { status.bed_current } else { status.hotend_current };
+
+                                if current >= target - wait_tolerance {
+                                    current_stable += 1;
+                                    let elapsed = wait_start.elapsed().as_secs();
+                                    log::info!("Temperature stable {}/{}: {} = {:.1}°C (target {:.1}°C, elapsed {}s)",
+                                        current_stable, wait_stable_count, heater, current, target, elapsed);
+
+                                    if current_stable >= wait_stable_count {
+                                        log::info!("  ✅ Temperature reached: {} = {:.1}°C (elapsed {}s)", heater, current, elapsed);
+                                        break;
+                                    }
+                                } else {
+                                    if current_stable > 0 {
+                                        current_stable = 0;
+                                    }
+                                }
+
+                                tokio::time::sleep(wait_check).await;
                             }
+
+                            let progress = GcodePrintProgress {
+                                filename: filename.to_string(),
+                                current_line: i + 1,
+                                total_lines,
+                                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                                status: format!("Temp OK: {} = {}°C", heater, target),
+                                finished: false,
+                                success: true,
+                            };
+                            *state.print_progress.write().await = Some(progress);
                         }
                         Err(e) => {
                             log::warn!("M command failed line {}: {} — {}", i + 1, line, e);
@@ -631,10 +666,45 @@ async fn run_gcode_print(
                             return Err(format!("M command failed at line {}: {}", i + 1, e));
                         }
                     }
+                } else if exec_type == MExecutionType::Query {
+                    // M105 / QueryTemperature: read from cache, don't go to server
+                    let heaters = state.temperature_manager.get_all_heaters().await;
+                    log::info!("  → Temperature query (cached):");
+                    for (name, state) in &heaters {
+                        log::info!("      {}: {:.1}°C / {:.1}°C", name, state.current_temp, state.target_temp);
+                    }
+                    let progress = GcodePrintProgress {
+                        filename: filename.to_string(),
+                        current_line: i + 1,
+                        total_lines,
+                        percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                        status: format!("Temp query (cached): {} heaters", heaters.len()),
+                        finished: false,
+                        success: true,
+                    };
+                    *state.print_progress.write().await = Some(progress);
                 } else {
-                    // Other M commands: send and continue
+                    // Other M commands (SyncSet, MotionParam): send to server and continue
+                    // For temperature SyncSet commands (M104, M140), also update local target cache
+                    let is_temp_cmd = matches!(m_cmd,
+                        emb_api::MCommand::SetHotendTemp { .. } |
+                        emb_api::MCommand::SetBedTemp { .. }
+                    );
+
                     match state.core_client.motion_execute_m_command(m_cmd.clone()).await {
                         Ok(()) => {
+                            // After successful server-side execution, update local temperature cache
+                            if is_temp_cmd {
+                                match m_cmd {
+                                    emb_api::MCommand::SetHotendTemp { temp, .. } => {
+                                        state.temperature_manager.update_target_cache("hotend", *temp).await;
+                                    }
+                                    emb_api::MCommand::SetBedTemp { temp } => {
+                                        state.temperature_manager.update_target_cache("bed", *temp).await;
+                                    }
+                                    _ => {}
+                                }
+                            }
                             let progress = GcodePrintProgress {
                                 filename: filename.to_string(),
                                 current_line: i + 1,

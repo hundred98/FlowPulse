@@ -132,63 +132,60 @@ impl TemperatureSafetyChecker {
             }
         }
 
-        // Check for high temperature (always check, regardless of heating state)
-        if deviation > emergency_threshold {
-            // Temperature too high (emergency level)
-            let (level, action) = self.get_high_temp_action(&state.name, heater_config);
-            return SafetyCheckResult::new(
-                state.name.clone(),
-                level,
-                format!(
-                    "Temperature too high: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
-                    state.current_temp, state.target_temp, deviation
-                ),
-                action,
-            )
-            .with_temps(state.current_temp, state.target_temp);
+        // Check for high temperature (only when heater is actively heating)
+        // When heater is off (target <= 0°C), deviation from target is meaningless
+        // and high-temperature checks use absolute max_temp bound instead (step 2 above).
+        if state.is_heating {
+            if deviation > emergency_threshold {
+                // Temperature too high (emergency level)
+                let (level, action) = self.get_high_temp_action(&state.name, heater_config);
+                return SafetyCheckResult::new(
+                    state.name.clone(),
+                    level,
+                    format!(
+                        "Temperature too high: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
+                        state.current_temp, state.target_temp, deviation
+                    ),
+                    action,
+                )
+                .with_temps(state.current_temp, state.target_temp);
+            }
+
+            if deviation > critical_threshold {
+                // Temperature high (critical level)
+                let (level, action) = self.get_high_temp_action(&state.name, heater_config);
+                return SafetyCheckResult::new(
+                    state.name.clone(),
+                    level,
+                    format!(
+                        "Temperature high: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
+                        state.current_temp, state.target_temp, deviation
+                    ),
+                    action,
+                )
+                .with_temps(state.current_temp, state.target_temp);
+            }
+
+            if deviation > warning_threshold {
+                // Temperature slightly high (warning level)
+                let (level, action) = self.get_high_temp_action(&state.name, heater_config);
+                return SafetyCheckResult::new(
+                    state.name.clone(),
+                    level,
+                    format!(
+                        "Temperature slightly high: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
+                        state.current_temp, state.target_temp, deviation
+                    ),
+                    action,
+                )
+                .with_temps(state.current_temp, state.target_temp);
+            }
         }
 
-        if deviation > critical_threshold {
-            // Temperature high (critical level)
-            let (level, action) = self.get_high_temp_action(&state.name, heater_config);
-            return SafetyCheckResult::new(
-                state.name.clone(),
-                level,
-                format!(
-                    "Temperature high: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
-                    state.current_temp, state.target_temp, deviation
-                ),
-                action,
-            )
-            .with_temps(state.current_temp, state.target_temp);
-        }
-
-        if deviation > warning_threshold {
-            // Temperature slightly high (warning level)
-            let (level, action) = self.get_high_temp_action(&state.name, heater_config);
-            return SafetyCheckResult::new(
-                state.name.clone(),
-                level,
-                format!(
-                    "Temperature slightly high: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
-                    state.current_temp, state.target_temp, deviation
-                ),
-                action,
-            )
-            .with_temps(state.current_temp, state.target_temp);
-        }
-
-        // 4. Check if heater is off but temperature is rising
-        if !state.is_heating && deviation > 5.0 {
-            return SafetyCheckResult::dangerous(
-                state.name.clone(),
-                format!(
-                    "Temperature rising while heater off: {:.1}°C",
-                    state.current_temp
-                ),
-            )
-            .with_temps(state.current_temp, state.target_temp);
-        }
+        // 4. (Reserved) Check if heater is off but temperature is rising.
+        // This requires tracking temperature rate-of-change over time,
+        // not deviation from target (which is meaningless when target=0°C).
+        // TODO: Implement rate-based rising temp detection when heater is off.
 
         // 5. Normal operation
         SafetyCheckResult::normal(state.name.clone())
