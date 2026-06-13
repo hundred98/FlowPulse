@@ -141,7 +141,7 @@ pub enum MotionRequest {
     // === Bed Mesh Compensation ===
     /// Begin a mesh data transfer session.
     /// Server allocates a buffer and enters Stale state.
-    /// Includes algorithm parameters (mesh_pps, fade, probe_z_adjust) sent from config.
+    /// Includes algorithm parameters (algorithm type, mesh_pps, fade, probe_z_adjust) sent from config.
     SetMeshBegin {
         /// Number of probe points in X direction
         x_count: u8,
@@ -159,6 +159,8 @@ pub enum MotionRequest {
         mesh_pps_x: u8,
         /// Mesh interpolation points per segment in Y direction (from config)
         mesh_pps_y: u8,
+        /// Interpolation algorithm: "lagrange", "bicubic", or "bilinear" (from config)
+        algorithm: String,
         /// Fade start layer (full compensation above this, from config)
         fade_start: f32,
         /// Fade end layer (no compensation below this, from config)

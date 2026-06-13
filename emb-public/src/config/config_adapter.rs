@@ -213,7 +213,7 @@ impl Default for ProbeHardwareConfig {
 /// Interpolation algorithm settings
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BedMeshAlgorithmConfig {
-    /// Interpolation algorithm: "lagrange" or "bicubic"
+    /// Interpolation algorithm: "lagrange", "bicubic", or "bilinear"
     #[serde(default = "default_algorithm")]
     pub algorithm: String,
     /// Bicubic tension parameter (0.0-1.0)

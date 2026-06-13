@@ -581,6 +581,7 @@ impl ConfigManager {
         let y_max = bed_mesh.probe.mesh_max_y;
         
         // Extract algorithm parameters from bed_mesh config
+        let algorithm = bed_mesh.algorithm.algorithm.clone();
         let mesh_pps_x = bed_mesh.algorithm.mesh_pps_x;
         let mesh_pps_y = bed_mesh.algorithm.mesh_pps_y;
         let fade_start = bed_mesh.algorithm.fade_start;
@@ -599,9 +600,9 @@ impl ConfigManager {
             ));
         }
         
-        log::info!("📊 Mesh grid: {}x{}, range: X({:.1}-{:.1}), Y({:.1}-{:.1}), mesh_pps: {}x{}, fade: {:.1}-{:.1}, probe_z_adjust: {:.3}",
+        log::info!("📊 Mesh grid: {}x{}, range: X({:.1}-{:.1}), Y({:.1}-{:.1}), algorithm: {}, mesh_pps: {}x{}, fade: {:.1}-{:.1}, probe_z_adjust: {:.3}",
             x_count, y_count, x_min, x_max, y_min, y_max,
-            mesh_pps_x, mesh_pps_y, fade_start, fade_end, probe_z_adjust);
+            algorithm, mesh_pps_x, mesh_pps_y, fade_start, fade_end, probe_z_adjust);
         
         // Convert points to binary format (f32 → bytes, big-endian)
         let mut all_data: Vec<u8> = Vec::with_capacity(points.len() * 4);
@@ -635,6 +636,7 @@ impl ConfigManager {
                 y_max,
                 mesh_pps_x,
                 mesh_pps_y,
+                algorithm: algorithm.clone(),
                 fade_start,
                 fade_end,
                 probe_z_adjust,

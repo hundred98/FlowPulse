@@ -123,10 +123,10 @@ pub fn validate_bed_mesh_interlock(bed_mesh: &mut BedMeshHardwareConfig) -> Resu
         // 不阻塞启动，但记录警告
     }
 
-    // Basic validation: algorithm must be "lagrange" or "bicubic"
-    if algorithm.algorithm != "lagrange" && algorithm.algorithm != "bicubic" {
+    // Basic validation: algorithm must be "lagrange", "bicubic", or "bilinear"
+    if algorithm.algorithm != "lagrange" && algorithm.algorithm != "bicubic" && algorithm.algorithm != "bilinear" {
         return Err(format!(
-            "algorithm must be 'lagrange' or 'bicubic', got '{}'",
+            "algorithm must be 'lagrange', 'bicubic', or 'bilinear', got '{}'",
             algorithm.algorithm
         ));
     }

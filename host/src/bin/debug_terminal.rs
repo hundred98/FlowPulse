@@ -118,13 +118,6 @@ struct LoadConfigsRequest {
     config_dir: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LoadConfigsResult {
-    printer_loaded: bool,
-    motion_loaded: bool,
-    hardware_loaded: bool,
-}
-
 async fn load_configs(
     State(state): State<Arc<DebugState>>,
     Json(req): Json<LoadConfigsRequest>,
@@ -136,18 +129,21 @@ async fn load_configs(
         dir.to_string_lossy().to_string()
     });
     
-    log::info!("Loading all configs from: {}", config_dir);
+    log::info!("Loading and sending configs from: {}", config_dir);
     
-    match state.core_client.load_all_configs(&config_dir).await {
-        Ok((printer, motion, hardware)) => {
-            log::info!("Configs loaded: printer={}, motion={}, hardware={}", printer, motion, hardware);
-            Json(ApiResponse::success(LoadConfigsResult {
-                printer_loaded: printer,
-                motion_loaded: motion,
-                hardware_loaded: hardware,
-            }))
+    // Load config files locally and send directly to server (new way)
+    match ConfigManager::instance().load(&config_dir) {
+        Ok(()) => {
+            log::info!("✅ Configs loaded from {}", config_dir);
+            match ConfigManager::instance().reload(&state.core_client).await {
+                Ok(()) => {
+                    log::info!("✅ Configs sent to server successfully");
+                    Json(ApiResponse::success("Configuration loaded and sent successfully".to_string()))
+                }
+                Err(e) => Json(ApiResponse::<String>::error(format!("Failed to send configs: {}", e))),
+            }
         }
-        Err(e) => Json(ApiResponse::<LoadConfigsResult>::error(format!("Load failed: {}", e))),
+        Err(e) => Json(ApiResponse::<String>::error(format!("Failed to load configs: {}", e))),
     }
 }
 
@@ -472,19 +468,6 @@ async fn main() -> anyhow::Result<()> {
     
     // 注意：GPIO订阅需要在串口连接之后才能成功
     // 将在 serial_connect 处理函数中订阅
-
-    // Load all configs
-    let config_dir = std::env::current_dir()
-        .map(|p| p.join("config"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("config"));
-    
-    log::info!("Loading configs from: {}", config_dir.display());
-    match core_client.load_all_configs(&config_dir.to_string_lossy()).await {
-        Ok((printer, motion, hardware)) => {
-            log::info!("Configs loaded: printer={}, motion={}, hardware={}", printer, motion, hardware);
-        }
-        Err(e) => log::warn!("Failed to load configs: {}", e),
-    }
 
     if let Some(port) = serial_port {
         log::info!("Auto-connecting serial: {} @ {}", port, baud_rate);
