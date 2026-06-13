@@ -170,6 +170,25 @@
                 </div>
 
                 <div class="card">
+                    <h2>🖨️ Gcode File Print</h2>
+                    <div class="form-group">
+                        <label>Select Gcode File</label>
+                        <select id="gcode-file-select">
+                            <option value="">-- No files loaded --</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                        <button class="btn-primary" onclick="refreshGcodeFiles()">🔄 Refresh</button>
+                        <button class="btn-success" onclick="startPrint()">▶ Print</button>
+                    </div>
+                    <div id="print-status" style="font-size:12px;color:#888;display:none;">
+                        <span id="print-filename"></span><br>
+                        Progress: <span id="print-progress">0%</span><br>
+                        <span id="print-detail" style="color:#3498db;"></span>
+                    </div>
+                </div>
+
+                <div class="card">
                     <h2>📖 Help</h2>
                     <p style="font-size:12px;color:#888;line-height:1.6;">
                         <b>1. Connect Serial:</b> Click Connect button to establish serial connection.<br>
@@ -395,6 +414,100 @@
         function setGcodeExample(example) {
             document.getElementById('gcode-input').value = example;
         }
+
+        // ===== Gcode File Print =====
+        let printPollTimer = null;
+
+        async function refreshGcodeFiles() {
+            log('Loading gcode file list...', 'info');
+            try {
+                const response = await fetch('/debug/api/gcode/files');
+                const data = await response.json();
+                if (data.success) {
+                    const select = document.getElementById('gcode-file-select');
+                    select.innerHTML = '';
+                    if (data.data.length === 0) {
+                        select.innerHTML = '<option value="">-- No .gcode files found --</option>';
+                        log('No gcode files found', 'info');
+                    } else {
+                        data.data.forEach((file, index) => {
+                            const option = document.createElement('option');
+                            option.value = file;
+                            option.textContent = file;
+                            select.appendChild(option);
+                        });
+                        log(`Found ${data.data.length} gcode file(s)`, 'success');
+                    }
+                } else {
+                    log(`✗ Failed to list files: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                log(`✗ Request failed: ${e.message}`, 'error');
+            }
+        }
+
+        async function startPrint() {
+            const select = document.getElementById('gcode-file-select');
+            const filename = select.value;
+            if (!filename) {
+                log('✗ Please select a gcode file first', 'error');
+                return;
+            }
+
+            log(`▶ Starting print: ${filename}`, 'info');
+
+            const statusDiv = document.getElementById('print-status');
+            statusDiv.style.display = 'block';
+            document.getElementById('print-filename').textContent = `File: ${filename}`;
+            document.getElementById('print-progress').textContent = '0%';
+            document.getElementById('print-detail').textContent = 'Starting...';
+
+            try {
+                const response = await fetch('/debug/api/gcode/print', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    log(`✓ Print started: ${filename}`, 'success');
+                    // Start polling for progress
+                    if (printPollTimer) clearInterval(printPollTimer);
+                    printPollTimer = setInterval(pollPrintProgress, 1000);
+                } else {
+                    log(`✗ Print failed: ${data.error}`, 'error');
+                    document.getElementById('print-detail').textContent = `Error: ${data.error}`;
+                }
+            } catch (e) {
+                log(`✗ Request failed: ${e.message}`, 'error');
+                document.getElementById('print-detail').textContent = `Error: ${e.message}`;
+            }
+        }
+
+        async function pollPrintProgress() {
+            try {
+                const response = await fetch('/debug/api/gcode/progress');
+                const data = await response.json();
+                if (data.success) {
+                    const progress = data.data;
+                    document.getElementById('print-progress').textContent =
+                        `${progress.percent}% (${progress.current_line}/${progress.total_lines})`;
+                    document.getElementById('print-detail').textContent =
+                        `Status: ${progress.status}`;
+
+                    if (progress.finished) {
+                        clearInterval(printPollTimer);
+                        printPollTimer = null;
+                        log(`✓ Print finished: ${progress.status}`, 'success');
+                    }
+                }
+            } catch (e) {
+                log(`✗ Progress poll failed: ${e.message}`, 'error');
+            }
+        }
+
+        // Load file list on startup
+        setTimeout(refreshGcodeFiles, 500);
     </script>
 </body>
 </html>

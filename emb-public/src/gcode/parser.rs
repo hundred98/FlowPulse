@@ -192,6 +192,9 @@ impl GCodeParser {
                 temp: params.get(&'S').copied().unwrap_or(0.0),
             },
 
+            // M105 - 查询温度
+            105 => MCommand::QueryTemperature,
+
             // M106 - 设置风扇速度
             106 => MCommand::SetFanSpeed {
                 index: params.get(&'P').copied().unwrap_or(0.0) as u8,

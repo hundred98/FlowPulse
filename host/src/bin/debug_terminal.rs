@@ -9,6 +9,8 @@
 //! Then open http://127.0.0.1:8080/debug in browser.
 
 use std::sync::Arc;
+use host::setup;
+use std::sync::atomic::{AtomicBool, Ordering};
 use axum::{
     extract::State,
     response::{Html, IntoResponse, Json, sse::{Event, Sse}},
@@ -20,7 +22,7 @@ use tower_http::cors::{Any, CorsLayer};
 use axum::http::Method;
 use tokio::sync::broadcast;
 
-use emb_public::{CoreSocketClient, ConfigManager};
+use emb_public::{CoreSocketClient, TemperatureManager, TemperatureManagerConfig, SyncEventPublisher};
 use emb_api::ArcParamsApi;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,10 +78,36 @@ struct GpioReportEvent {
     action: Option<String>,
 }
 
+/// Gcode print request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GcodePrintRequest {
+    filename: String,
+}
+
+/// Gcode print progress
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GcodePrintProgress {
+    filename: String,
+    current_line: usize,
+    total_lines: usize,
+    percent: f32,
+    status: String,
+    finished: bool,
+    success: bool,
+}
+
 struct DebugState {
     core_client: Arc<CoreSocketClient>,
     /// GPIO Report事件广播通道
     gpio_report_tx: broadcast::Sender<GpioReportEvent>,
+    /// Temperature manager
+    temperature_manager: Arc<TemperatureManager>,
+    /// Gcodes directory
+    gcodes_dir: String,
+    /// Print progress (shared between print task and progress polling)
+    print_progress: Arc<tokio::sync::RwLock<Option<GcodePrintProgress>>>,
+    /// Whether a print is currently running
+    print_running: Arc<AtomicBool>,
 }
 
 fn create_debug_router(state: Arc<DebugState>) -> Router {
@@ -95,6 +123,9 @@ fn create_debug_router(state: Arc<DebugState>) -> Router {
         .route("/api/homing/start", get(homing_start))
         .route("/api/motion/gcode", post(gcode_execute))  // 新增：执行G指令
         .route("/api/mesh/clear", post(mesh_clear))  // 新增：手动清除Mesh数据
+        .route("/api/gcode/files", get(gcode_file_list))
+        .route("/api/gcode/print", post(gcode_file_print))
+        .route("/api/gcode/progress", get(gcode_print_progress))
         .with_state(state)
 }
 
@@ -132,11 +163,11 @@ async fn load_configs(
     
     log::info!("Loading and sending configs from: {}", config_dir);
     
-    // Load config files locally and send directly to server (new way)
-    match ConfigManager::instance().load(&config_dir) {
-        Ok(()) => {
-            log::info!("✅ Configs loaded from {}", config_dir);
-            match ConfigManager::instance().reload(&state.core_client).await {
+    // Use standardized setup functions
+    match setup::load_all_configs(&config_dir) {
+        Ok(config) => {
+            log::info!("✅ Configs loaded ({} motors, model: {})", config.motor.len(), config.printer_model);
+            match setup::send_all_configs(&state.core_client).await {
                 Ok(()) => {
                     log::info!("✅ Configs sent to server successfully");
                     Json(ApiResponse::success("Configuration loaded and sent successfully".to_string()))
@@ -159,26 +190,25 @@ async fn serial_connect(
             log::info!("Serial connected to {}", req.port);
             
             // 串口连接成功后订阅GPIO Report
-            subscribe_gpio_report(&state.core_client).await;
+            let _ = setup::subscribe_gpio_report(&state.core_client).await;
             
             // Wait for server to send GPIO config and ConfigComplete first
             log::info!("Waiting for server to send GPIO config...");
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             
-            // Load configs first
+            // Use standardized setup: load all configs, send to server/device, init temperature
             let config_dir = std::env::current_dir()
                 .map(|p| p.join("config"))
                 .unwrap_or_else(|_| std::path::PathBuf::from("config"));
             
-            match ConfigManager::instance().load(&config_dir.to_string_lossy()) {
-                Ok(()) => {
-                    log::info!("✅ Configs loaded from {}", config_dir.display());
-                    
-                    // Send all configs to server and device (including Mesh data)
-                    log::info!("Sending all configs to server and device...");
-                    match ConfigManager::instance().reload(&state.core_client).await {
-                        Ok(()) => log::info!("✅ All configs sent (including Mesh data)"),
-                        Err(e) => log::warn!("Failed to send configs: {}", e),
+            match setup::load_all_configs(&config_dir.to_string_lossy()) {
+                Ok(config) => {
+                    log::info!("✅ Configs loaded ({} motors, model: {})", config.motor.len(), config.printer_model);
+                    if let Err(e) = setup::send_all_configs(&state.core_client).await {
+                        log::warn!("Failed to send configs: {}", e);
+                    }
+                    if let Err(e) = setup::initialize_temperature_manager(&state.temperature_manager).await {
+                        log::error!("Failed to initialize temperature manager: {}", e);
                     }
                 }
                 Err(e) => log::warn!("Failed to load configs: {}", e),
@@ -214,14 +244,6 @@ async fn gpio_query(
     match state.core_client.gpio_query(&req.name).await {
         Ok(value) => Json(ApiResponse::success(GpioInfo { name: req.name, value })),
         Err(e) => Json(ApiResponse::<GpioInfo>::error(format!("Error: {}", e))),
-    }
-}
-
-/// 订阅GPIO Report（仅在串口连接后调用）
-async fn subscribe_gpio_report(core_client: &CoreSocketClient) {
-    match core_client.gpio_subscribe_report(true).await {
-        Ok(()) => log::info!("Subscribed to GPIO Report"),
-        Err(e) => log::warn!("Failed to subscribe GPIO Report: {}", e),
     }
 }
 
@@ -322,20 +344,13 @@ async fn homing_start(
     }
 }
 
-/// Config Reload: 重新加载配置并发送到服务端
-/// 调用ConfigManager::reload()，自动发送：
-/// - Motion config
-/// - Fan config
-/// - Mesh数据（如果存在）
-/// - Hardware config到下位机
-/// - ConfigComplete到下位机
+/// Config Reload: 重新加载并发送所有配置到服务端和下位机
 async fn config_reload(
     State(state): State<Arc<DebugState>>,
 ) -> impl IntoResponse {
     log::info!("Config Reload: Reloading configuration and sending to server...");
     
-    // 调用ConfigManager::reload()（会自动发送Mesh数据）
-    match ConfigManager::instance().reload(&state.core_client).await {
+    match setup::send_all_configs(&state.core_client).await {
         Ok(()) => {
             log::info!("✅ Configuration reloaded successfully (Mesh data sent if available)");
             Json(ApiResponse::success("Configuration reloaded successfully".to_string()))
@@ -456,6 +471,334 @@ async fn gcode_execute(
     }
 }
 
+/// List .gcode files in the gcodes directory
+async fn gcode_file_list(
+    State(state): State<Arc<DebugState>>,
+) -> impl IntoResponse {
+    let dir = &state.gcodes_dir;
+    let mut files = Vec::new();
+
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.ends_with(".gcode") || name.ends_with(".gc") || name.ends_with(".g") {
+                        files.push(name.to_string());
+                    }
+                }
+            }
+            files.sort();
+            Json(ApiResponse::success(files))
+        }
+        Err(e) => {
+            log::warn!("Failed to read gcodes dir '{}': {}", dir, e);
+            Json(ApiResponse::<Vec<String>>::error(format!("Cannot read directory: {}", e)))
+        }
+    }
+}
+
+/// Start printing a gcode file
+async fn gcode_file_print(
+    State(state): State<Arc<DebugState>>,
+    Json(req): Json<GcodePrintRequest>,
+) -> impl IntoResponse {
+    // Check if already printing
+    if state.print_running.load(Ordering::SeqCst) {
+        return Json(ApiResponse::<String>::error("A print is already running".to_string()));
+    }
+
+    let file_path = format!("{}/{}", state.gcodes_dir, req.filename);
+    log::info!("Starting print from file: {}", file_path);
+
+    // Count total lines first
+    let content = match std::fs::read_to_string(&file_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(ApiResponse::<String>::error(format!("Failed to read file: {}", e)));
+        }
+    };
+    let total_lines = content.lines().count();
+
+    if total_lines == 0 {
+        return Json(ApiResponse::<String>::error("File is empty".to_string()));
+    }
+
+    // Set running flag
+    state.print_running.store(true, Ordering::SeqCst);
+
+    // Clone state for background task
+    let state_clone = state.clone();
+    let filename = req.filename.clone();
+
+    // Spawn background print task
+    tokio::spawn(async move {
+        let result = run_gcode_print(&state_clone, &filename, &content, total_lines).await;
+
+        let (status, success) = match &result {
+            Ok(()) => ("Completed".to_string(), true),
+            Err(e) => (format!("Error: {}", e), false),
+        };
+
+        // Update final progress
+        let progress = GcodePrintProgress {
+            filename: filename.clone(),
+            current_line: total_lines,
+            total_lines,
+            percent: 100.0,
+            status,
+            finished: true,
+            success,
+        };
+        *state_clone.print_progress.write().await = Some(progress);
+        state_clone.print_running.store(false, Ordering::SeqCst);
+
+        log::info!("Print {}: {}", filename, if result.is_ok() { "✅ completed" } else { "❌ failed" });
+    });
+
+    Json(ApiResponse::success(format!("Print started: {} ({} lines)", req.filename, total_lines)))
+}
+
+/// Poll print progress
+async fn gcode_print_progress(
+    State(state): State<Arc<DebugState>>,
+) -> impl IntoResponse {
+    let progress = state.print_progress.read().await;
+    match progress.as_ref() {
+        Some(p) => Json(ApiResponse::success(p.clone())),
+        None => Json(ApiResponse::success(GcodePrintProgress {
+            filename: String::new(),
+            current_line: 0,
+            total_lines: 0,
+            percent: 0.0,
+            status: "No print active".to_string(),
+            finished: true,
+            success: true,
+        })),
+    }
+}
+
+/// Run the actual gcode print: read file and dispatch commands
+async fn run_gcode_print(
+    state: &DebugState,
+    filename: &str,
+    content: &str,
+    total_lines: usize,
+) -> Result<(), String> {
+    use emb_public::gcode::GCodeParser;
+    use emb_public::gcode::CommandKind;
+
+    let lines: Vec<&str> = content.lines().collect();
+
+    for (i, line) in lines.iter().enumerate() {
+        let line = line.trim();
+
+        // Skip empty and comment lines
+        if line.is_empty() || line.starts_with(';') || line.starts_with("//") {
+            // Update progress
+            let progress = GcodePrintProgress {
+                filename: filename.to_string(),
+                current_line: i + 1,
+                total_lines,
+                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                status: format!("Skipping: {}", line),
+                finished: false,
+                success: true,
+            };
+            *state.print_progress.write().await = Some(progress);
+            continue;
+        }
+
+        // Parse the line
+        let cmd = match GCodeParser::parse_line(line, i as u32) {
+            Some(parsed) => parsed,
+            None => {
+                log::warn!("Parse error line {}: {}", i + 1, line);
+                let progress = GcodePrintProgress {
+                    filename: filename.to_string(),
+                    current_line: i + 1,
+                    total_lines,
+                    percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                    status: format!("Parse error: {}", line),
+                    finished: false,
+                    success: false,
+                };
+                *state.print_progress.write().await = Some(progress);
+                continue;
+            }
+        };
+
+        log::info!("[{}/{}] {:?}", i + 1, total_lines, cmd);
+
+        match &cmd.kind {
+            CommandKind::Motion(motion_cmd) => {
+                let (cmd_str, x, y, z, e, f, arc) = match motion_cmd {
+                    emb_public::gcode::MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
+                        let cmd_str = if *is_rapid { "G0" } else { "G1" };
+                        (cmd_str.to_string(), *x, *y, *z, *e, *f, None)
+                    }
+                    emb_public::gcode::MotionCommand::ArcMove { x, y, z, e, f, i, j, is_cw } => {
+                        let cmd_str = if *is_cw { "G2" } else { "G3" };
+                        let arc = Some(emb_api::ArcParamsApi {
+                            i: *i,
+                            j: *j,
+                            direction: if *is_cw { 0 } else { 1 },
+                        });
+                        (cmd_str.to_string(), *x, *y, *z, *e, *f, arc)
+                    }
+                    _ => {
+                        log::info!("  → Skipping non-motion command: {:?}", motion_cmd);
+                        continue;
+                    }
+                };
+
+                match state.core_client.motion_dispatch_arc(&cmd_str, x, y, z, e, f, arc).await {
+                    Ok(()) => {
+                        let progress = GcodePrintProgress {
+                            filename: filename.to_string(),
+                            current_line: i + 1,
+                            total_lines,
+                            percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                            status: format!("Dispatched: {}", line),
+                            finished: false,
+                            success: true,
+                        };
+                        *state.print_progress.write().await = Some(progress);
+                    }
+                    Err(e) => {
+                        log::warn!("Motion dispatch failed line {}: {}", i + 1, e);
+                        let progress = GcodePrintProgress {
+                            filename: filename.to_string(),
+                            current_line: i + 1,
+                            total_lines,
+                            percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                            status: format!("Motion error: {}", e),
+                            finished: false,
+                            success: false,
+                        };
+                        *state.print_progress.write().await = Some(progress);
+                        return Err(format!("Motion dispatch failed at line {}: {}", i + 1, e));
+                    }
+                }
+            }
+            CommandKind::Machine(m_cmd) => {
+                use emb_api::MExecutionType;
+
+                let exec_type = m_cmd.execution_type();
+
+                // For SyncWait (M109/M190): send command, then wait for temperature
+                if exec_type == MExecutionType::SyncWait {
+                    match state.core_client.motion_execute_m_command(m_cmd.clone()).await {
+                        Ok(()) => {
+                            log::info!("  → M command sent, now waiting for temperature...");
+
+                            // Determine heater and target temperature
+                            let (heater, target) = match m_cmd {
+                                emb_api::MCommand::WaitHotendTemp { temp, .. } => ("hotend", *temp),
+                                emb_api::MCommand::WaitBedTemp { temp } => ("bed", *temp),
+                                _ => unreachable!(),
+                            };
+
+                            // Wait for temperature
+                            match state.temperature_manager.wait_for_target(heater, target, None).await {
+                                Ok(()) => {
+                                    log::info!("  ✅ Temperature reached: {} = {}°C", heater, target);
+                                    let progress = GcodePrintProgress {
+                                        filename: filename.to_string(),
+                                        current_line: i + 1,
+                                        total_lines,
+                                        percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                                        status: format!("Temp OK: {} = {}°C", heater, target),
+                                        finished: false,
+                                        success: true,
+                                    };
+                                    *state.print_progress.write().await = Some(progress);
+                                }
+                                Err(e) => {
+                                    log::warn!("  ❌ Temperature wait failed: {}", e);
+                                    let progress = GcodePrintProgress {
+                                        filename: filename.to_string(),
+                                        current_line: i + 1,
+                                        total_lines,
+                                        percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                                        status: format!("Temp wait error: {}", e),
+                                        finished: false,
+                                        success: false,
+                                    };
+                                    *state.print_progress.write().await = Some(progress);
+                                    return Err(format!("Temperature wait failed at line {}: {}", i + 1, e));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("M command failed line {}: {} — {}", i + 1, line, e);
+                            let progress = GcodePrintProgress {
+                                filename: filename.to_string(),
+                                current_line: i + 1,
+                                total_lines,
+                                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                                status: format!("M cmd error: {}", e),
+                                finished: false,
+                                success: false,
+                            };
+                            *state.print_progress.write().await = Some(progress);
+                            return Err(format!("M command failed at line {}: {}", i + 1, e));
+                        }
+                    }
+                } else {
+                    // Other M commands: send and continue
+                    match state.core_client.motion_execute_m_command(m_cmd.clone()).await {
+                        Ok(()) => {
+                            let progress = GcodePrintProgress {
+                                filename: filename.to_string(),
+                                current_line: i + 1,
+                                total_lines,
+                                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                                status: format!("Executed: {}", line),
+                                finished: false,
+                                success: true,
+                            };
+                            *state.print_progress.write().await = Some(progress);
+                        }
+                        Err(e) => {
+                            log::warn!("M command failed line {}: {} — {}", i + 1, line, e);
+                            let progress = GcodePrintProgress {
+                                filename: filename.to_string(),
+                                current_line: i + 1,
+                                total_lines,
+                                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                                status: format!("M cmd error: {}", e),
+                                finished: false,
+                                success: false,
+                            };
+                            *state.print_progress.write().await = Some(progress);
+                            return Err(format!("M command failed at line {}: {}", i + 1, e));
+                        }
+                    }
+                }
+            }
+            _ => {
+                // Other command types (G28, G29, etc.) - skip for now
+                log::info!("  → Skipping (unsupported): {:?}", cmd);
+                let progress = GcodePrintProgress {
+                    filename: filename.to_string(),
+                    current_line: i + 1,
+                    total_lines,
+                    percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
+                    status: format!("Skipped: {:?}", cmd),
+                    finished: false,
+                    success: true,
+                };
+                *state.print_progress.write().await = Some(progress);
+            }
+        }
+
+        // Small delay between commands
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
@@ -500,13 +843,46 @@ async fn main() -> anyhow::Result<()> {
     // 注意：GPIO订阅需要在串口连接之后才能成功
     // 将在 serial_connect 处理函数中订阅
 
+    // 提前创建温度管理器（仅构造，暂不初始化——需要等配置加载+串口连接后）
+    let event_publisher = Arc::new(SyncEventPublisher::new());
+    let temperature_manager = Arc::new(TemperatureManager::new(
+        core_client.clone(),
+        event_publisher.clone(),
+        TemperatureManagerConfig::default(),
+        None,
+    ));
+
     if let Some(port) = serial_port {
         log::info!("Auto-connecting serial: {} @ {}", port, baud_rate);
         match core_client.serial_connect(&port, baud_rate).await {
             Ok(()) => {
                 log::info!("Serial connected to {}", port);
                 // 串口连接成功后订阅GPIO Report
-                subscribe_gpio_report(&core_client).await;
+                let _ = setup::subscribe_gpio_report(&core_client).await;
+
+                // 等待服务端发送GPIO配置和ConfigComplete
+                log::info!("Waiting for server to send GPIO config...");
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+                // Use standardized setup: load all configs, send, init temperature
+                let config_dir = std::env::current_dir()
+                    .map(|p| p.join("config"))
+                    .unwrap_or_else(|_| std::path::PathBuf::from("config"));
+
+                match setup::load_all_configs(&config_dir.to_string_lossy()) {
+                    Ok(config) => {
+                        log::info!("✅ Configs loaded ({} motors, model: {})", config.motor.len(), config.printer_model);
+                        if let Err(e) = setup::send_all_configs(&core_client).await {
+                            log::warn!("Failed to send configs: {}", e);
+                        }
+                    }
+                    Err(e) => log::warn!("Failed to load configs: {}", e),
+                }
+
+                // 配置加载+串口连接就绪后，初始化温度管理器
+                if let Err(e) = setup::initialize_temperature_manager(&temperature_manager).await {
+                    log::error!("Failed to initialize temperature manager: {}", e);
+                }
             }
             Err(e) => log::error!("Serial connect failed: {}", e),
         }
@@ -521,9 +897,28 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // 后台安全检查
+    let tm_safety = temperature_manager.clone();
+    tokio::spawn(async move {
+        tm_safety.start_safety_check_loop().await;
+    });
+
+    // Gcodes directory (default: ./gcodes relative to current working dir)
+    let gcodes_dir = std::env::current_dir()
+        .map(|p| p.join("gcodes").to_string_lossy().to_string())
+        .unwrap_or_else(|_| "gcodes".to_string());
+
+    // 打印状态
+    let print_progress: Arc<tokio::sync::RwLock<Option<GcodePrintProgress>>> = Arc::new(tokio::sync::RwLock::new(None));
+    let print_running = Arc::new(AtomicBool::new(false));
+
     let state = Arc::new(DebugState { 
         core_client,
         gpio_report_tx,
+        temperature_manager,
+        gcodes_dir,
+        print_progress,
+        print_running,
     });
 
     let cors = CorsLayer::new()

@@ -218,6 +218,8 @@ pub enum MExecutionType {
     SyncSet,
     /// 运动参数型 - 更新运动参数后继续
     MotionParam,
+    /// 查询型 - 只读查询，无需停止运动
+    Query,
 }
 
 /// M指令定义
@@ -298,6 +300,10 @@ pub enum MCommand {
         z: Option<f32>,
         e: Option<f32>,
     },
+
+    // === 查询型 ===
+    /// M105 - 查询温度
+    QueryTemperature,
 }
 
 impl MCommand {
@@ -311,6 +317,7 @@ impl MCommand {
             | MCommand::SetMaxVelocity { .. }
             | MCommand::SetAccelParams { .. }
             | MCommand::SetStepsPerMm { .. } => MExecutionType::MotionParam,
+            MCommand::QueryTemperature => MExecutionType::Query,
             _ => MExecutionType::SyncSet,
         }
     }

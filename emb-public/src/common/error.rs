@@ -63,6 +63,9 @@ pub enum EmbError {
 
     #[error("Invalid parameter: {0}")]
     InvalidParam(String),
+
+    #[error("Operation cancelled")]
+    Cancelled,
 }
 
 impl From<String> for EmbError {

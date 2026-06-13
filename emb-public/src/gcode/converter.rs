@@ -96,6 +96,12 @@ impl MCommandConverter {
                 Ok(vec![DeviceCommand::MotionParamUpdate])
             }
 
+            // === 查询型 ===
+            MCommand::QueryTemperature => {
+                // M105 由 TemperatureManager 直接返回缓存温度
+                Ok(vec![])
+            }
+
             // === 其他指令（暂不转换）===
             MCommand::ExtruderAbsoluteMode |
             MCommand::ExtruderRelativeMode => {

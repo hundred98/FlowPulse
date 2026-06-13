@@ -41,8 +41,11 @@ pub struct TemperatureManager {
     /// PID tune state
     tune_state: Arc<RwLock<TuneState>>,
 
-    /// Configuration
-    config: TemperatureManagerConfig,
+    /// Configuration (wrapped for runtime reload)
+    config: RwLock<TemperatureManagerConfig>,
+
+    /// Cancellation sender for temperature wait (M109/M190)
+    cancel_sender: Arc<RwLock<Option<tokio::sync::watch::Sender<bool>>>>,
 }
 
 /// PID tune state (for tracking ongoing tune process)
@@ -80,7 +83,8 @@ impl TemperatureManager {
             safety_checker: TemperatureSafetyChecker::new(safety_config),
             preset_manager: PresetManager::new(),
             tune_state: Arc::new(RwLock::new(TuneState::default())),
-            config,
+            config: RwLock::new(config),
+            cancel_sender: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -173,6 +177,25 @@ impl TemperatureManager {
         // Load temperature presets
         self.load_presets_from_config(&config).await?;
 
+        // Load wait and auto-fan config
+        {
+            let mut cfg = self.config.write().await;
+            cfg.wait = config.temperature_wait.clone();
+            cfg.auto_fan = config.auto_fan.clone();
+        }
+        log::info!(
+            "Loaded temperature wait config: timeout={}s, tolerance={:.1}°C",
+            config.temperature_wait.timeout_secs,
+            config.temperature_wait.tolerance,
+        );
+        log::info!(
+            "Loaded auto-fan config: enable={}, gpio={}, on={:.1}°C, off={:.1}°C",
+            config.auto_fan.enable,
+            config.auto_fan.gpio_name,
+            config.auto_fan.on_threshold,
+            config.auto_fan.off_threshold,
+        );
+
         Ok(())
     }
 
@@ -202,12 +225,24 @@ impl TemperatureManager {
     ///
     /// This method sets up a callback to receive status reports from the device
     /// and automatically update the current temperature values.
+    ///
+    /// Also enables auto-fan control: when hotend temperature exceeds
+    /// a threshold, the hotend fan is automatically turned on.
     pub async fn subscribe_temperature_updates(&self) -> EmbResult<()> {
         let heaters = self.heaters.clone();
         let event_publisher = self.event_publisher.clone();
+        let client = self.client.clone();
         
         // Clone for tune frame handling
         let tune_state = self.tune_state.clone();
+
+        // Read auto-fan config
+        let cfg = self.config.read().await;
+        let auto_fan_cfg = cfg.auto_fan.clone();
+        drop(cfg);
+
+        // Track fan on/off state to avoid redundant GPIO commands
+        let fan_state = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         // Set status report callback
         self.client.set_status_report_callback(move |frame_type, payload| {
@@ -222,6 +257,9 @@ impl TemperatureManager {
                 // Update temperature in async context
                 let heaters_clone = heaters.clone();
                 let event_publisher_clone = event_publisher.clone();
+                let client_clone = client.clone();
+                let fan_state_clone = fan_state.clone();
+                let af_cfg = auto_fan_cfg.clone();
 
                 tokio::spawn(async move {
                     // Update bed temperature
@@ -237,6 +275,30 @@ impl TemperatureManager {
                         hotend_state.set_target(temp_nozzle_tgt);
                     }
                     drop(heaters);
+
+                    // Auto-fan control
+                    if af_cfg.enable {
+                        let currently_on = fan_state_clone.load(std::sync::atomic::Ordering::SeqCst);
+                        if temp_nozzle_cur >= af_cfg.on_threshold && !currently_on {
+                            // Turn fan ON
+                            log::info!(
+                                "🌬️  Auto-fan ON: hotend={:.1}°C >= {:.1}°C, setting {}={:.1}",
+                                temp_nozzle_cur, af_cfg.on_threshold,
+                                af_cfg.gpio_name, af_cfg.on_value,
+                            );
+                            let _ = client_clone.gpio_set(&af_cfg.gpio_name, af_cfg.on_value).await;
+                            fan_state_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                        } else if temp_nozzle_cur <= af_cfg.off_threshold && currently_on {
+                            // Turn fan OFF
+                            log::info!(
+                                "🌬️  Auto-fan OFF: hotend={:.1}°C <= {:.1}°C, setting {}=0",
+                                temp_nozzle_cur, af_cfg.off_threshold,
+                                af_cfg.gpio_name,
+                            );
+                            let _ = client_clone.gpio_set(&af_cfg.gpio_name, 0.0).await;
+                            fan_state_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
 
                     // Publish temperature update event
                     let _ = event_publisher_clone.publish(
@@ -461,7 +523,7 @@ impl TemperatureManager {
             state.update_current(temp);
 
             // Check if temperature changed significantly
-            if (temp - old_temp).abs() > self.config.temp_change_threshold {
+            if (temp - old_temp).abs() > self.config.read().await.temp_change_threshold {
                 // Publish temperature update event
                 let _ = self.event_publisher.publish(
                     PrinterEvent::new(
@@ -481,9 +543,111 @@ impl TemperatureManager {
         self.update_current("hotend", hotend_current).await;
 
         // Perform safety check on update
-        if self.config.enable_auto_safety_check {
+        if self.config.read().await.enable_auto_safety_check {
             let results = self.check_safety().await;
             self.handle_safety_results(results).await;
+        }
+    }
+
+    /// Wait for a heater to reach its target temperature.
+    ///
+    /// Polls the current temperature until it is within tolerance of the target,
+    /// or until the timeout expires.
+    ///
+    /// # Arguments
+    /// * `heater` - Heater name ("bed" or "hotend")
+    /// * `target_temp` - Target temperature in °C
+    /// * `cancel` - Optional cancellation token to abort waiting
+    ///
+    /// # Returns
+    /// * `Ok(())` if target temperature was reached
+    /// * `Err(Cancelled)` if cancelled via token
+    /// * `Err(Timeout)` if timed out
+    /// * `Err(InvalidParam)` if heater not found
+    pub async fn wait_for_target(
+        &self,
+        heater: &str,
+        target_temp: f32,
+        cancel: Option<tokio::sync::watch::Receiver<bool>>,
+    ) -> EmbResult<()> {
+        let cfg = self.config.read().await;
+        let wait_cfg = cfg.wait.clone();
+        drop(cfg);
+
+        // Quick check: if target is 0 or below, no waiting needed
+        if target_temp <= 0.0 {
+            return Ok(());
+        }
+
+        // Create or use provided cancellation token
+        let cancel_rx = match cancel {
+            Some(rx) => rx,
+            None => {
+                let (tx, rx) = tokio::sync::watch::channel(false);
+                *self.cancel_sender.write().await = Some(tx);
+                rx
+            }
+        };
+
+        let check_interval = Duration::from_millis(wait_cfg.check_interval_ms);
+        let timeout = Duration::from_secs(wait_cfg.timeout_secs);
+        let tolerance = wait_cfg.tolerance;
+        let start = std::time::Instant::now();
+
+        log::info!(
+            "⏳ Waiting for {} to reach {:.1}°C (tolerance: ±{:.1}°C, timeout: {}s)",
+            heater, target_temp, tolerance, wait_cfg.timeout_secs
+        );
+
+        loop {
+            // Check cancellation
+            if *cancel_rx.borrow() {
+                log::info!("⏹️  Wait for {} cancelled", heater);
+                return Err(EmbError::Cancelled);
+            }
+
+            // Check timeout
+            if start.elapsed() >= timeout {
+                let current = self.get_heater(heater).await
+                    .map(|h| h.current_temp)
+                    .unwrap_or(0.0);
+                log::warn!(
+                    "⏰ Timeout waiting for {} to reach {:.1}°C (current: {:.1}°C, elapsed: {}s)",
+                    heater, target_temp, current, start.elapsed().as_secs()
+                );
+                return Err(EmbError::Timeout(wait_cfg.timeout_secs * 1000));
+            }
+
+            // Read current temperature
+            let current = match self.get_heater(heater).await {
+                Some(state) => state.current_temp,
+                None => {
+                    return Err(EmbError::InvalidParam(format!("Unknown heater: {}", heater)));
+                }
+            };
+
+            // Check if reached
+            if (current - target_temp).abs() <= tolerance {
+                log::info!(
+                    "✅ {} reached target temperature: {:.1}°C (elapsed: {}s)",
+                    heater, current, start.elapsed().as_secs()
+                );
+                return Ok(());
+            }
+
+            // Wait before next check
+            tokio::time::sleep(check_interval).await;
+        }
+    }
+
+    /// Cancel any ongoing temperature wait (M109/M190).
+    ///
+    /// This is called when the print is paused or stopped, so that
+    /// a blocking `wait_for_target` returns immediately with `Cancelled`.
+    pub async fn cancel_wait(&self) {
+        if let Some(sender) = self.cancel_sender.write().await.take() {
+            let _ = sender.send(true);
+            log::info!("Temperature wait cancelled via cancel_wait()");
         }
     }
 
@@ -637,7 +801,7 @@ impl TemperatureManager {
 
     /// Start periodic safety check loop
     pub async fn start_safety_check_loop(&self) {
-        let interval = Duration::from_millis(self.config.safety_check_interval_ms);
+        let interval = Duration::from_millis(self.config.read().await.safety_check_interval_ms);
 
         loop {
             // Perform safety check

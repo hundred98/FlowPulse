@@ -12,6 +12,7 @@ pub mod pid_tune;
 
 pub use types::{
     HeaterState, TemperaturePreset, TemperatureManagerConfig,
+    TemperatureWaitConfig, AutoFanConfig,
     SafetyLevel, SafetyAction, SafetyCheckResult,
 };
 pub use safety::TemperatureSafetyChecker;

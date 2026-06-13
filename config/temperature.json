@@ -83,10 +83,17 @@
   
   "wait": {
     "timeout_secs": 300,
-    "tolerance": 2.0,
-    "check_interval_ms": 500
+    "tolerance": 2.0
   },
-  
+
+  "auto_fan": {
+    "enable": true,
+    "gpio_name": "hotend_fan",
+    "on_threshold": 60.0,
+    "off_threshold": 50.0,
+    "on_value": 1.0
+  },
+
   "pid_tune": {
     "default_cycles": 6,
     "hotend": {

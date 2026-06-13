@@ -189,8 +189,67 @@ impl Default for TemperaturePreset {
     }
 }
 
+/// Temperature wait configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemperatureWaitConfig {
+    /// Maximum time to wait for temperature to reach target (seconds)
+    pub timeout_secs: u64,
+
+    /// Temperature tolerance (°C) — considered "reached" when |current - target| <= tolerance
+    pub tolerance: f32,
+
+    /// Interval between temperature checks (milliseconds)
+    pub check_interval_ms: u64,
+}
+
+impl Default for TemperatureWaitConfig {
+    fn default() -> Self {
+        Self {
+            timeout_secs: 300,
+            tolerance: 2.0,
+            check_interval_ms: 500,
+        }
+    }
+}
+
+/// Auto-fan configuration
+///
+/// Automatically turns on/off a GPIO fan based on temperature thresholds.
+/// This protects the hotend from heat creep (fan off at low temp) and
+/// ensures cooling when hot (fan on above threshold).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoFanConfig {
+    /// Enable auto-fan
+    pub enable: bool,
+
+    /// GPIO pin name for the hotend fan (e.g. "hotend_fan")
+    pub gpio_name: String,
+
+    /// Temperature (°C) above which the fan turns on
+    pub on_threshold: f32,
+
+    /// Temperature (°C) below which the fan turns off
+    /// Use hysteresis (on > off) to prevent rapid toggling
+    pub off_threshold: f32,
+
+    /// Fan value when on (0.0–1.0, default 1.0 = 100%)
+    pub on_value: f32,
+}
+
+impl Default for AutoFanConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            gpio_name: "hotend_fan".to_string(),
+            on_threshold: 60.0,
+            off_threshold: 50.0,
+            on_value: 1.0,
+        }
+    }
+}
+
 /// Temperature manager configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemperatureManagerConfig {
     /// Safety check interval (milliseconds)
     pub safety_check_interval_ms: u64,
@@ -200,6 +259,12 @@ pub struct TemperatureManagerConfig {
 
     /// Enable automatic safety checks
     pub enable_auto_safety_check: bool,
+
+    /// Temperature wait configuration (M109/M190)
+    pub wait: TemperatureWaitConfig,
+
+    /// Auto-fan configuration
+    pub auto_fan: AutoFanConfig,
 }
 
 impl Default for TemperatureManagerConfig {
@@ -208,6 +273,8 @@ impl Default for TemperatureManagerConfig {
             safety_check_interval_ms: 1000,
             temp_change_threshold: 1.0,
             enable_auto_safety_check: true,
+            wait: TemperatureWaitConfig::default(),
+            auto_fan: AutoFanConfig::default(),
         }
     }
 }

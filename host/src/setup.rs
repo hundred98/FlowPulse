@@ -4,6 +4,7 @@
 
 use emb_public::{ConfigManager, PrinterJsonConfig, CoreSocketClient};
 use emb_public::state::WebDataProvider;
+use emb_public::temperature::TemperatureManager;
 use web_server::{WebServer, WebServerConfig};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -16,16 +17,20 @@ pub const SERVER_ADDR: &str = "127.0.0.1:9527";
 /// Default configuration directory
 pub const CONFIG_DIR: &str = "config";
 
-/// Load configuration files and build motion config JSON
+/// Load all configuration files at once
+///
+/// Calls `ConfigManager::load()` to read all config files
+/// (hardware.json, motion.json, printer.json, temperature.json, etc.)
+/// and returns the complete `PrinterJsonConfig`.
 ///
 /// # Arguments
 /// * `config_dir` - Path to the configuration directory
 ///
 /// # Returns
-/// * `Ok((PrinterJsonConfig, String))` - Printer config and motion config JSON
+/// * `Ok(PrinterJsonConfig)` - Complete printer configuration
 /// * `Err(anyhow::Error)` - If loading or parsing fails
-pub fn load_configuration(config_dir: &str) -> anyhow::Result<(PrinterJsonConfig, String)> {
-    // Load config files (hardware.json + motion.json + printer.json)
+pub fn load_all_configs(config_dir: &str) -> anyhow::Result<PrinterJsonConfig> {
+    // Load all config files (hardware.json + motion.json + printer.json + temperature.json + ...)
     ConfigManager::instance().load(config_dir)
         .map_err(|e| anyhow::anyhow!("Failed to load configs: {}", e))?;
 
@@ -38,14 +43,10 @@ pub fn load_configuration(config_dir: &str) -> anyhow::Result<(PrinterJsonConfig
         printer_config.printer_model,
     );
 
-    // Build MotionConfig JSON
-    let motion_json = ConfigManager::instance().get_motion_config_json()
-        .map_err(|e| anyhow::anyhow!("Failed to build motion config: {}", e))?;
-
-    Ok((printer_config, motion_json))
+    Ok(printer_config)
 }
 
-/// Send all configs to server and device (including Mesh data)
+/// Send all configs to server and device at once
 ///
 /// This function uses ConfigManager::reload() to send:
 /// - Motion config to server
@@ -54,18 +55,58 @@ pub fn load_configuration(config_dir: &str) -> anyhow::Result<(PrinterJsonConfig
 /// - Hardware config to device
 /// - ConfigComplete to device
 ///
+/// Must be called after `load_all_configs()` and serial connection.
+///
 /// # Arguments
 /// * `client` - CoreSocketClient instance
 ///
 /// # Returns
 /// * `Ok(())` - If all configs sent successfully
 /// * `Err(anyhow::Error)` - If sending fails
-#[allow(dead_code)]
-pub async fn send_configs_to_server_and_device(client: &CoreSocketClient) -> anyhow::Result<()> {
+pub async fn send_all_configs(client: &CoreSocketClient) -> anyhow::Result<()> {
     log::info!("Sending all configs to server and device...");
     ConfigManager::instance().reload(client).await
         .map_err(|e| anyhow::anyhow!("Failed to send configs: {}", e))?;
-    log::info!("✅ All configs sent (including Mesh data if available)");
+    log::info!("All configs sent (including Mesh data if available)");
+    Ok(())
+}
+
+/// Initialize temperature manager after configuration is loaded and serial is connected
+///
+/// This function:
+/// 1. Loads heater parameters (bed, hotend) from ConfigManager
+/// 2. Subscribes to temperature updates from the device
+///
+/// # Arguments
+/// * `temperature_manager` - TemperatureManager instance (typically from AppState)
+///
+/// # Returns
+/// * `Ok(())` - If initialization succeeds
+/// * `Err(anyhow::Error)` - If initialization fails
+pub async fn initialize_temperature_manager(temperature_manager: &TemperatureManager) -> anyhow::Result<()> {
+    log::info!("Initializing temperature manager...");
+    temperature_manager.initialize().await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize temperature manager: {}", e))?;
+    temperature_manager.subscribe_temperature_updates().await
+        .map_err(|e| anyhow::anyhow!("Failed to subscribe temperature updates: {}", e))?;
+    log::info!("Temperature manager initialized");
+    Ok(())
+}
+
+/// Subscribe to GPIO report events after serial connection
+///
+/// Enables the core server to forward GPIO status reports from the device.
+///
+/// # Arguments
+/// * `client` - CoreSocketClient instance
+///
+/// # Returns
+/// * `Ok(())` - If subscription succeeds
+/// * `Err(anyhow::Error)` - If subscription fails
+pub async fn subscribe_gpio_report(client: &CoreSocketClient) -> anyhow::Result<()> {
+    client.gpio_subscribe_report(true).await
+        .map_err(|e| anyhow::anyhow!("Failed to subscribe GPIO report: {}", e))?;
+    log::info!("Subscribed to GPIO report");
     Ok(())
 }
 
@@ -98,20 +139,19 @@ pub async fn initialize_device(host: &PrinterHostV2) -> anyhow::Result<()> {
         }
     }
 
-    // Step 2: Send all configs to server and device (using reload)
-    // This will send:
-    // - Motion config to server
-    // - Fan config to server
-    // - Mesh data to server (if available)
-    // - Hardware config to device
-    // - ConfigComplete to device
-    log::info!("Sending all configs to server and device...");
-    match ConfigManager::instance().reload(&host.client()).await {
+    // Step 2: Subscribe to GPIO report events
+    match subscribe_gpio_report(&host.client()).await {
+        Ok(()) => log::info!("✅ GPIO report subscribed"),
+        Err(e) => log::warn!("⚠️  GPIO report subscribe failed: {}", e),
+    }
+
+    // Step 3: Send all configs to server and device
+    match send_all_configs(&host.client()).await {
         Ok(()) => log::info!("✅ All configs sent (including Mesh data if available)"),
         Err(e) => log::warn!("⚠️  Send configs failed: {}", e),
     }
 
-    // Step 3: Initialize STM32 device (seq reset)
+    // Step 4: Initialize STM32 device (seq reset)
     match host.client().serial_init_seq().await {
         Ok(()) => log::info!("✅ Device seq initialized"),
         Err(e) => log::warn!("⚠️  Init seq failed: {}", e),

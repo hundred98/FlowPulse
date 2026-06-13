@@ -3,11 +3,7 @@
 //! Main service application for 3D printer control.
 //! Connects to emb-core-server, manages device state, and provides multi-channel access.
 
-mod printer_host_v2;
-mod app;
-mod setup;
-
-use app::AppState;
+use host::{app::AppState, setup};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,8 +17,8 @@ async fn main() -> anyhow::Result<()> {
     log::info!("Server: {}", setup::SERVER_ADDR);
     log::info!("Config: {}", setup::CONFIG_DIR);
 
-    // Step 1: Load configuration files
-    let (_printer_config, _motion_json) = setup::load_configuration(setup::CONFIG_DIR)?;
+    // Step 1: Load all configuration files at once
+    let _printer_config = setup::load_all_configs(setup::CONFIG_DIR)?;
 
     // Step 2: Create host and connect to emb-core-server
     let host = setup::create_and_connect_host(setup::SERVER_ADDR).await?;

@@ -532,6 +532,7 @@ pub struct TemperatureFileConfig {
     pub presets: Vec<TemperaturePresetFile>,
     pub safety: TemperatureSafetyFile,
     pub wait: TemperatureWaitFile,
+    pub auto_fan: AutoFanFile,
     pub pid_tune: PidTuneFile,
 }
 
@@ -589,7 +590,15 @@ pub struct TempActionLevels {
 pub struct TemperatureWaitFile {
     pub timeout_secs: u32,
     pub tolerance: f32,
-    pub check_interval_ms: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AutoFanFile {
+    pub enable: bool,
+    pub gpio_name: String,
+    pub on_threshold: f32,
+    pub off_threshold: f32,
+    pub on_value: f32,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -1086,6 +1095,22 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         },
     });
 
+    // Build temperature wait config from temperature.json
+    let temperature_wait = pc::TemperatureWaitConfig {
+        timeout_secs: configs.temperature.wait.timeout_secs as u64,
+        tolerance: configs.temperature.wait.tolerance,
+        check_interval_ms: 500,  // fallback default, not from JSON
+    };
+
+    // Build auto-fan config from temperature.json
+    let auto_fan = pc::AutoFanConfig {
+        enable: configs.temperature.auto_fan.enable,
+        gpio_name: configs.temperature.auto_fan.gpio_name.clone(),
+        on_threshold: configs.temperature.auto_fan.on_threshold,
+        off_threshold: configs.temperature.auto_fan.off_threshold,
+        on_value: configs.temperature.auto_fan.on_value,
+    };
+
     pc::PrinterJsonConfig {
         version: configs.printer.version.clone(),
         printer_model: configs.printer.printer_model.clone(),
@@ -1101,6 +1126,8 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         temperature_presets,
         temperature_safety,
         pid_tune,
+        temperature_wait,
+        auto_fan,
         ..Default::default()
     }
 }

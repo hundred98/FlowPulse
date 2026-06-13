@@ -83,6 +83,7 @@ pub use safety::{
 // Re-export temperature types
 pub use temperature::{
     TemperatureManager, TemperatureManagerConfig,
+    TemperatureWaitConfig, AutoFanConfig,
     HeaterState, TemperaturePreset, TemperatureSafetyChecker, PresetManager,
     SafetyLevel, SafetyAction, SafetyCheckResult,
 };

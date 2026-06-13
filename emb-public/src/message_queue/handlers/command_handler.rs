@@ -71,6 +71,9 @@ impl CommandHandler {
     
     /// Handle print pause command
     async fn handle_print_pause(&self, _message: &mut Message) -> EmbResult<()> {
+        // Cancel any ongoing temperature wait (M109/M190)
+        self.temperature_manager.cancel_wait().await;
+
         // Request state transition to Paused
         self.state_machine.transition_to(
             PrinterState::Paused,
@@ -101,6 +104,9 @@ impl CommandHandler {
     
     /// Handle print stop command
     async fn handle_print_stop(&self, _message: &mut Message) -> EmbResult<()> {
+        // Cancel any ongoing temperature wait (M109/M190)
+        self.temperature_manager.cancel_wait().await;
+
         // Request state transition to Idle
         self.state_machine.transition_to(
             PrinterState::Idle,

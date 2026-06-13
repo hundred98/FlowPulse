@@ -1,3 +1,5 @@
+pub(crate) use crate::temperature::{AutoFanConfig, TemperatureWaitConfig};
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -32,6 +34,10 @@ pub struct PrinterJsonConfig {
     pub temperature_safety: Option<TemperatureSafetyConfig>,
     #[serde(default)]
     pub pid_tune: Option<PidTuneParams>,
+    #[serde(default)]
+    pub temperature_wait: TemperatureWaitConfig,
+    #[serde(default)]
+    pub auto_fan: AutoFanConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -127,6 +133,8 @@ impl Default for PrinterJsonConfig {
             ],
             temperature_safety: None,
             pid_tune: Some(PidTuneParams::default()),
+            temperature_wait: TemperatureWaitConfig::default(),
+            auto_fan: AutoFanConfig::default(),
         }
     }
 }
