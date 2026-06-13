@@ -169,8 +169,6 @@ pub enum MotionRequest {
     /// Send a chunk of mesh data.
     /// Server writes to buffer and returns MeshAck on first chunk.
     SetMeshChunk {
-        /// Mesh session ID (from client)
-        mesh_id: u16,
         /// Chunk sequence number (0-based)
         seq: u16,
         /// Total number of chunks
@@ -181,8 +179,6 @@ pub enum MotionRequest {
     /// End mesh data transfer and validate.
     /// Server validates CRC32 and returns MeshComplete or MeshNack.
     SetMeshEnd {
-        /// Mesh session ID
-        mesh_id: u16,
         /// CRC32 checksum over all chunk data
         checksum: u32,
     },
@@ -528,20 +524,13 @@ pub enum MotionResponse {
     // === Bed Mesh Compensation Responses ===
     /// Mesh chunk acknowledged (sent on first chunk received)
     MeshAck {
-        /// Mesh session ID
-        mesh_id: u16,
         /// Expected total number of chunks
         expected_total: u16,
     },
     /// Mesh transfer complete (validation successful)
-    MeshComplete {
-        /// Mesh session ID
-        mesh_id: u16,
-    },
+    MeshComplete,
     /// Mesh transfer failed (validation error or timeout)
     MeshNack {
-        /// Mesh session ID
-        mesh_id: u16,
         /// Nack reason
         reason: NackReason,
         /// Missing sequence numbers (for MissingSeqs reason)
@@ -560,8 +549,6 @@ pub enum NackReason {
     InvalidSize = 0x03,
     /// Transfer timeout (no chunk received for 5s)
     Timeout = 0x04,
-    /// Mesh ID mismatch (chunk ID != begin ID)
-    MeshIdMismatch = 0x05,
 }
 
 /// Motion and serial statistics

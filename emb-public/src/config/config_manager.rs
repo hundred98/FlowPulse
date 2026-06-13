@@ -613,10 +613,6 @@ impl ConfigManager {
         // Pre-calculate CRC32 checksum (reused across retries)
         let checksum = Self::calculate_crc32(&all_data);
         
-        // Generate mesh_id (simple incrementing counter)
-        // In real usage, this should be managed by a global counter
-        let mesh_id = 1u16;
-        
         // Chunk parameters
         const CHUNK_SIZE: usize = 128;
         let total_chunks = (all_data.len() + CHUNK_SIZE - 1) / CHUNK_SIZE;
@@ -666,7 +662,6 @@ impl ConfigManager {
                 let chunk_data = all_data[start..end].to_vec();
                 
                 let chunk_request = CoreRequest::Motion(MotionRequest::SetMeshChunk {
-                    mesh_id,
                     seq: seq as u16,
                     total: total_chunks as u16,
                     data: chunk_data,
@@ -698,13 +693,12 @@ impl ConfigManager {
             // === Step 3: SetMeshEnd with CRC32 ===
             
             let end_request = CoreRequest::Motion(MotionRequest::SetMeshEnd {
-                mesh_id,
                 checksum,
             });
             
             match client.send_request(&end_request).await? {
-                CoreResponse::Motion(MotionResponse::MeshComplete { .. }) => {
-                    log::info!("✅ Mesh data transfer complete (mesh_id={})", mesh_id);
+                CoreResponse::Motion(MotionResponse::MeshComplete) => {
+                    log::info!("✅ Mesh data transfer complete");
                     return Ok(());
                 }
                 CoreResponse::Motion(MotionResponse::MeshNack { reason: NackReason::MissingSeqs, missing_seqs, .. }) => {
@@ -723,7 +717,6 @@ impl ConfigManager {
                         let chunk_data = all_data[start..end].to_vec();
                         
                         let chunk_request = CoreRequest::Motion(MotionRequest::SetMeshChunk {
-                            mesh_id,
                             seq: seq as u16,
                             total: total_chunks as u16,
                             data: chunk_data,
@@ -743,8 +736,8 @@ impl ConfigManager {
                     if recovery_ok {
                         // Retry SetMeshEnd after resending missing chunks
                         match client.send_request(&end_request).await? {
-                            CoreResponse::Motion(MotionResponse::MeshComplete { .. }) => {
-                                log::info!("✅ Mesh transfer complete after MissingSeqs recovery (mesh_id={})", mesh_id);
+                            CoreResponse::Motion(MotionResponse::MeshComplete) => {
+                                log::info!("✅ Mesh transfer complete after MissingSeqs recovery");
                                 return Ok(());
                             }
                             other => {
@@ -771,8 +764,8 @@ impl ConfigManager {
         }
         
         Err(format!(
-            "Mesh transfer failed after {} retries (mesh_id={})",
-            MAX_RETRIES, mesh_id
+            "Mesh transfer failed after {} retries",
+            MAX_RETRIES
         ))
     }
     
