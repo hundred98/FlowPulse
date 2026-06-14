@@ -16,7 +16,7 @@ use host::setup;
 use std::sync::atomic::{AtomicBool, Ordering};
 use axum::{
     extract::State,
-    response::{Html, IntoResponse, Json, sse::{Event, Sse}},
+    response::{Html, IntoResponse, Json},
     routing::{get, post},
     Router,
 };
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use axum::http::Method;
 
-use emb_public::{CoreSocketClient, TemperatureManager, TemperatureManagerConfig, SyncEventPublisher, MeshManager, GpioManager};
+use emb_public::{CoreSocketClient, TemperatureManager, TemperatureManagerConfig, SyncEventPublisher, GpioManager};
 use emb_api::ArcParamsApi;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,12 +42,6 @@ struct GpioQueryRequest {
 struct GpioInfo {
     name: String,
     value: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StatusInfo {
-    serial_connected: bool,
-    serial_port: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,14 +78,28 @@ struct GcodePrintProgress {
     success: bool,
 }
 
+/// Temperature status response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TemperatureStatus {
+    hotend_current: f32,
+    hotend_target: f32,
+    bed_current: f32,
+    bed_target: f32,
+}
+
+/// Temperature set request
+#[derive(Debug, Deserialize)]
+struct TemperatureSetRequest {
+    heater: String,
+    temp: f32,
+}
+
 struct DebugState {
     core_client: Arc<CoreSocketClient>,
     /// GPIO Manager (handles pin control + event broadcast)
     gpio_manager: GpioManager,
     /// Temperature manager
     temperature_manager: Arc<TemperatureManager>,
-    /// Mesh manager
-    mesh_manager: MeshManager,
     /// Gcodes directory
     gcodes_dir: String,
     /// Print progress (shared between print task and progress polling)
@@ -103,33 +111,20 @@ struct DebugState {
 fn create_debug_router(state: Arc<DebugState>) -> Router {
     Router::new()
         .route("/", get(debug_page))
-        .route("/api/status", get(get_status))
         .route("/api/gpio/set", get(gpio_set))
         .route("/api/gpio/query", get(gpio_query))
-        .route("/api/gpio/report/stream", get(gpio_report_stream))
         .route("/api/homing/start", get(homing_start))
         .route("/api/motion/gcode", post(gcode_execute))
-        .route("/api/mesh/clear", post(mesh_clear))
         .route("/api/gcode/files", get(gcode_file_list))
         .route("/api/gcode/print", post(gcode_file_print))
         .route("/api/gcode/progress", get(gcode_print_progress))
+        .route("/api/temperature/status", get(temperature_status))
+        .route("/api/temperature/set", get(temperature_set))
         .with_state(state)
 }
 
 async fn debug_page() -> impl IntoResponse {
     Html(include_str!("../debug_terminal/debug.html"))
-}
-
-async fn get_status(
-    State(state): State<Arc<DebugState>>,
-) -> impl IntoResponse {
-    match state.core_client.serial_query_status().await {
-        Ok((connected, port)) => Json(ApiResponse::success(StatusInfo {
-            serial_connected: connected,
-            serial_port: port,
-        })),
-        Err(e) => Json(ApiResponse::<StatusInfo>::error(format!("Error: {}", e))),
-    }
 }
 
 async fn gpio_set(
@@ -156,27 +151,30 @@ async fn gpio_query(
     }
 }
 
-/// GPIO Report SSE流
-async fn gpio_report_stream(
+/// Temperature status: return current and target temps for all heaters
+async fn temperature_status(
     State(state): State<Arc<DebugState>>,
 ) -> impl IntoResponse {
-    use std::convert::Infallible;
-    use tokio_stream::StreamExt;
-    
-    let rx = state.gpio_manager.event_receiver();
-    
-    let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
-        .filter_map(|result| {
-            match result {
-                Ok(event) => {
-                    let json = serde_json::to_string(&event).ok()?;
-                    Some(Ok::<Event, Infallible>(Event::default().data(json)))
-                }
-                Err(_) => None,
-            }
-        });
-    
-    Sse::new(stream)
+    let status = state.temperature_manager.get_temp_status().await;
+    Json(ApiResponse::success(TemperatureStatus {
+        hotend_current: status.hotend_current,
+        hotend_target: status.hotend_target,
+        bed_current: status.bed_current,
+        bed_target: status.bed_target,
+    }))
+}
+
+/// Temperature set: set target temperature for a heater
+/// Query params: ?heater=hotend&temp=200
+async fn temperature_set(
+    State(state): State<Arc<DebugState>>,
+    axum::extract::Query(req): axum::extract::Query<TemperatureSetRequest>,
+) -> impl IntoResponse {
+    log::info!("Temperature set: {} = {}°C", req.heater, req.temp);
+    match state.temperature_manager.set_target(&req.heater, req.temp).await {
+        Ok(_) => Json(ApiResponse::success(format!("{} target set to {}°C", req.heater, req.temp))),
+        Err(e) => Json(ApiResponse::<String>::error(format!("Error: {}", e))),
+    }
 }
 
 /// Homing Start: send 0x0A frame with axes_mask
@@ -250,24 +248,6 @@ async fn homing_start(
             Json(ApiResponse::success(format!("Homing started: {}", axes_names)))
         }
         Err(e) => Json(ApiResponse::<String>::error(format!("Failed: {}", e))),
-    }
-}
-
-/// Mesh Clear: 清除服务端的Mesh数据
-async fn mesh_clear(
-    State(state): State<Arc<DebugState>>,
-) -> impl IntoResponse {
-    log::info!("Mesh Clear: Clearing mesh data from server...");
-    
-    match state.mesh_manager.clear_mesh().await {
-        Ok(()) => {
-            log::info!("✅ Mesh cleared successfully");
-            Json(ApiResponse::success("Mesh cleared successfully".to_string()))
-        }
-        Err(e) => {
-            log::error!("❌ Mesh clear failed: {}", e);
-            Json(ApiResponse::<String>::error(format!("Mesh clear failed: {}", e)))
-        }
     }
 }
 
@@ -824,7 +804,6 @@ async fn main() -> anyhow::Result<()> {
         core_client: host.client(),
         gpio_manager,
         temperature_manager,
-        mesh_manager: MeshManager::new(host.client()),
         gcodes_dir,
         print_progress,
         print_running,

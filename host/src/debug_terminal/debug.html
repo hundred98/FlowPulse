@@ -42,6 +42,13 @@
         .status-disconnected { background: #e74c3c; color: #fff; }
         .inline-form { display: flex; gap: 10px; align-items: flex-end; }
         .inline-form .form-group { flex: 1; margin-bottom: 0; }
+        .temp-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: #0f0f23; border-radius: 4px; margin-bottom: 6px; }
+        .temp-label { font-weight: bold; color: #00d4ff; min-width: 60px; }
+        .temp-current { color: #2ecc71; font-family: monospace; font-size: 18px; }
+        .temp-target { color: #f39c12; font-family: monospace; font-size: 14px; }
+        .temp-input { width: 80px; padding: 4px 6px; border: 1px solid #333; border-radius: 4px; background: #0f0f23; color: #eee; font-size: 13px; text-align: center; }
+        .temp-input:focus { outline: none; border-color: #f39c12; }
+        .temp-unit { color: #666; font-size: 12px; margin-left: 2px; }
     </style>
 </head>
 <body>
@@ -51,22 +58,85 @@
         <div class="row">
             <div class="col">
                 <div class="card">
-                    <h2>🔌 Serial Connection</h2>
-                    <div id="connection-status" style="margin-bottom: 10px;">
-                        <span class="status status-disconnected" id="status-badge">Disconnected</span>
-                        <span id="status-port" style="margin-left: 10px; color: #888;"></span>
+                    <h2>�️ Temperature Control</h2>
+                    <div id="temp-hotend" class="temp-row">
+                        <span class="temp-label">Hotend</span>
+                        <span><span class="temp-current" id="hotend-current">0.0</span><span class="temp-unit">°C</span></span>
+                        <span>→</span>
+                        <span><span class="temp-target" id="hotend-target">0.0</span><span class="temp-unit">°C</span></span>
+                        <input type="text" id="hotend-set-input" class="temp-input" placeholder="0" value="200">
+                        <button class="btn-primary" onclick="setTemperature('hotend')" style="padding:4px 10px;font-size:12px;margin:0;">Set</button>
                     </div>
-                    <div class="inline-form">
-                        <div class="form-group">
-                            <label>Port</label>
-                            <input type="text" id="serial-port" value="COM7" placeholder="COM7">
-                        </div>
-                        <div class="form-group" style="width: 120px;">
-                            <label>Baud Rate</label>
-                            <input type="number" id="serial-baud" value="57600">
-                        </div>
-                        <button class="btn-success" onclick="connectSerial()">Connect</button>
+                    <div id="temp-bed" class="temp-row">
+                        <span class="temp-label">Bed</span>
+                        <span><span class="temp-current" id="bed-current">0.0</span><span class="temp-unit">°C</span></span>
+                        <span>→</span>
+                        <span><span class="temp-target" id="bed-target">0.0</span><span class="temp-unit">°C</span></span>
+                        <input type="text" id="bed-set-input" class="temp-input" placeholder="0" value="60">
+                        <button class="btn-primary" onclick="setTemperature('bed')" style="padding:4px 10px;font-size:12px;margin:0;">Set</button>
                     </div>
+                </div>
+
+                <div class="card">
+                    <h2>� Homing Control</h2>
+                    <p style="font-size:12px;color:#888;margin-bottom:10px;">
+                        Send homing command to device.
+                    </p>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                        <button class="btn-primary" onclick="homingStart('x')">Home X</button>
+                        <button class="btn-primary" onclick="homingStart('y')">Home Y</button>
+                        <button class="btn-primary" onclick="homingStart('z')">Home Z</button>
+                        <button class="btn-success" onclick="homingStart('all')">Home All (XYZ)</button>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn-secondary" onclick="homingStart('xy')">Home XY</button>
+                        <button class="btn-secondary" onclick="homingStart('xz')">Home XZ</button>
+                        <button class="btn-secondary" onclick="homingStart('yz')">Home YZ</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>🚀 Motion Control</h2>
+                    <p style="font-size:12px;color:#888;margin-bottom:10px;">
+                        Execute G-code commands (G0/G1).
+                    </p>
+                    <div class="form-group">
+                        <label>G-code Command</label>
+                        <input type="text" id="gcode-input" value="G1 X100 Y100 Z0.2 F1000" placeholder="e.g. G1 X100 Y100 Z0.2">
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                        <button class="btn-primary" onclick="executeGcode()">Execute</button>
+                    </div>
+                    <p style="font-size:12px;color:#888;">
+                        <b>Note:</b> Mesh compensation will be applied automatically if mesh data is loaded.
+                    </p>
+                </div>
+
+                <div class="card">
+                    <h2>🖨️ Gcode File Print</h2>
+                    <div class="form-group">
+                        <label>Select Gcode File</label>
+                        <select id="gcode-file-select">
+                            <option value="">-- No files loaded --</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                        <button class="btn-primary" onclick="refreshGcodeFiles()">🔄 Refresh</button>
+                        <button class="btn-success" onclick="startPrint()">▶ Print</button>
+                    </div>
+                    <div id="print-status" style="font-size:12px;color:#888;display:none;">
+                        <span id="print-filename"></span><br>
+                        Progress: <span id="print-progress">0%</span><br>
+                        <span id="print-detail" style="color:#3498db;"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col">
+                <div class="card">
+                    <h2>📜 Communication Log</h2>
+                    <button class="btn-danger" onclick="clearLog()" style="float:right;">Clear</button>
+                    <div id="log" class="log"></div>
                 </div>
 
                 <div class="card">
@@ -102,102 +172,6 @@
                         <span class="gpio-value" id="input-pin-value"></span>
                     </div>
                 </div>
-
-                <div class="card">
-                    <h2>📋 Quick Commands</h2>
-                    <button class="btn-secondary" onclick="setGpioByName('hotend_fan', 0)">hotend_fan OFF</button>
-                    <button class="btn-secondary" onclick="setGpioByName('hotend_fan', 1)">hotend_fan ON</button>
-                    <button class="btn-secondary" onclick="queryGpioByName('filament_sensor')">Query filament_sensor</button>
-                </div>
-
-                <div class="card">
-                    <h2>🎯 Homing Control</h2>
-                    <p style="font-size:12px;color:#888;margin-bottom:10px;">
-                        Send homing command to device.
-                    </p>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-                        <button class="btn-primary" onclick="homingStart('x')">Home X</button>
-                        <button class="btn-primary" onclick="homingStart('y')">Home Y</button>
-                        <button class="btn-primary" onclick="homingStart('z')">Home Z</button>
-                        <button class="btn-success" onclick="homingStart('all')">Home All (XYZ)</button>
-                    </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button class="btn-secondary" onclick="homingStart('xy')">Home XY</button>
-                        <button class="btn-secondary" onclick="homingStart('xz')">Home XZ</button>
-                        <button class="btn-secondary" onclick="homingStart('yz')">Home YZ</button>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h2>⚙️ Configuration Control</h2>
-                    <p style="font-size:12px;color:#888;margin-bottom:10px;">
-                        Reload configuration and send to server/device.
-                    </p>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-                        <button class="btn-success" onclick="configReload()">Reload Config</button>
-                        <button class="btn-danger" onclick="meshClear()">Clear Mesh</button>
-                    </div>
-                    <p style="font-size:12px;color:#888;">
-                        <b>Reload Config</b> will send: Motion config, Fan config, Mesh data (if available), Hardware config to device.
-                    </p>
-                </div>
-
-                <div class="card">
-                    <h2>🚀 Motion Control</h2>
-                    <p style="font-size:12px;color:#888;margin-bottom:10px;">
-                        Execute G-code commands (G0/G1).
-                    </p>
-                    <div class="form-group">
-                        <label>G-code Command</label>
-                        <input type="text" id="gcode-input" value="G1 X100 Y100 Z0.2 F1000" placeholder="e.g. G1 X100 Y100 Z0.2">
-                    </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-                        <button class="btn-primary" onclick="executeGcode()">Execute</button>
-                        <button class="btn-secondary" onclick="setGcodeExample('G1 X100 Y100 Z0.2')">Example 1</button>
-                        <button class="btn-secondary" onclick="setGcodeExample('G1 X50 Y50 Z0.5')">Example 2</button>
-                    </div>
-                    <p style="font-size:12px;color:#888;">
-                        <b>Note:</b> Mesh compensation will be applied automatically if mesh data is loaded.
-                    </p>
-                </div>
-            </div>
-
-            <div class="col">
-                <div class="card">
-                    <h2>📜 Communication Log</h2>
-                    <button class="btn-danger" onclick="clearLog()" style="float:right;">Clear</button>
-                    <div id="log" class="log"></div>
-                </div>
-
-                <div class="card">
-                    <h2>🖨️ Gcode File Print</h2>
-                    <div class="form-group">
-                        <label>Select Gcode File</label>
-                        <select id="gcode-file-select">
-                            <option value="">-- No files loaded --</option>
-                        </select>
-                    </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-                        <button class="btn-primary" onclick="refreshGcodeFiles()">🔄 Refresh</button>
-                        <button class="btn-success" onclick="startPrint()">▶ Print</button>
-                    </div>
-                    <div id="print-status" style="font-size:12px;color:#888;display:none;">
-                        <span id="print-filename"></span><br>
-                        Progress: <span id="print-progress">0%</span><br>
-                        <span id="print-detail" style="color:#3498db;"></span>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h2>📖 Help</h2>
-                    <p style="font-size:12px;color:#888;line-height:1.6;">
-                        <b>1. Connect Serial:</b> Click Connect button to establish serial connection.<br>
-                        <b>2. GPIO Output:</b> Use SET_PIN command to control output pins.<br>
-                        <b>3. GPIO Input:</b> Use QUERY_PIN to read input pin values.<br>
-                        <b>4. Value Range:</b> 0.0 (OFF) to 1.0 (ON).<br>
-                        <b>5. PWM:</b> Values between 0-1 control PWM duty cycle.
-                    </p>
-                </div>
             </div>
         </div>
     </div>
@@ -216,58 +190,6 @@
         function clearLog() {
             document.getElementById('log').innerHTML = '';
             log('Log cleared', 'info');
-        }
-
-        function updateStatus(connected, port) {
-            const badge = document.getElementById('status-badge');
-            const portSpan = document.getElementById('status-port');
-            
-            if (connected) {
-                badge.className = 'status status-connected';
-                badge.textContent = 'Connected';
-                portSpan.textContent = port || '';
-            } else {
-                badge.className = 'status status-disconnected';
-                badge.textContent = 'Disconnected';
-                portSpan.textContent = '';
-            }
-        }
-
-        async function checkStatus() {
-            try {
-                const response = await fetch('/debug/api/status');
-                const data = await response.json();
-                if (data.success) {
-                    updateStatus(data.data.serial_connected, data.data.serial_port);
-                }
-            } catch (e) {
-                log('Failed to check status: ' + e.message, 'error');
-            }
-        }
-
-        async function connectSerial() {
-            const port = document.getElementById('serial-port').value;
-            const baud = parseInt(document.getElementById('serial-baud').value);
-            
-            log(`Connecting to ${port} @ ${baud}...`, 'info');
-            
-            try {
-                const response = await fetch('/debug/api/serial/connect', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ port, baud_rate: baud })
-                });
-                const data = await response.json();
-                
-                if (data.success) {
-                    log(`✓ Connected to ${port}`, 'success');
-                    updateStatus(true, port);
-                } else {
-                    log(`✗ Connect failed: ${data.error}`, 'error');
-                }
-            } catch (e) {
-                log(`✗ Request failed: ${e.message}`, 'error');
-            }
         }
 
         function updateValueDisplay(value) {
@@ -327,7 +249,6 @@
         }
 
         log('Debug terminal initialized', 'info');
-        checkStatus();
 
         // ===== Homing =====
         function homingStart(axes) {
@@ -353,37 +274,46 @@
                 .catch(e => log(`✗ Request failed: ${e.message}`, 'error'));
         }
 
-        // ===== Configuration =====
-        function configReload() {
-            log('CONFIG_RELOAD: Reloading configuration...', 'info');
-            
-            fetch('/debug/api/config/reload', { method: 'POST' })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        log(`✓ ${data.data}`, 'success');
-                    } else {
-                        log(`✗ ${data.error}`, 'error');
-                    }
-                })
-                .catch(e => log(`✗ Request failed: ${e.message}`, 'error'));
+        // ===== Temperature =====
+        async function pollTemperature() {
+            try {
+                const response = await fetch('/debug/api/temperature/status');
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('hotend-current').textContent = data.data.hotend_current.toFixed(1);
+                    document.getElementById('hotend-target').textContent = data.data.hotend_target.toFixed(1);
+                    document.getElementById('bed-current').textContent = data.data.bed_current.toFixed(1);
+                    document.getElementById('bed-target').textContent = data.data.bed_target.toFixed(1);
+                }
+            } catch (e) {
+                // Silently ignore poll errors
+            }
         }
 
-        // ===== Mesh =====
-        function meshClear() {
-            log('MESH_CLEAR: Clearing mesh data from server...', 'info');
-            
-            fetch('/debug/api/mesh/clear', { method: 'POST' })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        log(`✓ ${data.data}`, 'success');
-                    } else {
-                        log(`✗ ${data.error}`, 'error');
-                    }
-                })
-                .catch(e => log(`✗ Request failed: ${e.message}`, 'error'));
+        async function setTemperature(heater) {
+            const inputId = heater === 'hotend' ? 'hotend-set-input' : 'bed-set-input';
+            const temp = parseFloat(document.getElementById(inputId).value);
+            if (isNaN(temp) || temp < 0) {
+                log(`✗ Invalid temperature: ${document.getElementById(inputId).value}`, 'error');
+                return;
+            }
+            log(`SET_TEMP ${heater} = ${temp}°C`, 'info');
+            try {
+                const response = await fetch(`/debug/api/temperature/set?heater=${heater}&temp=${temp}`);
+                const data = await response.json();
+                if (data.success) {
+                    log(`✓ ${heater} target set to ${temp}°C`, 'success');
+                } else {
+                    log(`✗ ${data.error}`, 'error');
+                }
+            } catch (e) {
+                log(`✗ Request failed: ${e.message}`, 'error');
+            }
         }
+
+        // Temperature polling every 1 second
+        setInterval(pollTemperature, 1000);
+        setTimeout(pollTemperature, 200);
 
         // ===== Motion Control =====
         function executeGcode() {
