@@ -52,5 +52,18 @@
       "break_speed_mm_s": 100,
       "min_distance_mm": 0.1
     }
+  },
+
+  "resonance_compensation": {
+    "enabled": true,
+    "shaper_type": "ZV",
+    "x": {
+      "frequency": 45.0,
+      "damping": 0.08
+    },
+    "y": {
+      "frequency": 35.0,
+      "damping": 0.10
+    }
   }
 }

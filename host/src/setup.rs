@@ -3,6 +3,7 @@
 //! This module contains functions for initializing the FlowPulse host application.
 
 use emb_public::{ConfigManager, PrinterJsonConfig, CoreSocketClient};
+use emb_public::config::ConfigFrameBuilder;
 use emb_public::state::WebDataProvider;
 use emb_public::temperature::TemperatureManager;
 use web_server::{WebServer, WebServerConfig};
@@ -155,6 +156,13 @@ pub async fn initialize_device(host: &PrinterHostV2) -> anyhow::Result<()> {
     match host.client().serial_init_seq().await {
         Ok(()) => log::info!("✅ Device seq initialized"),
         Err(e) => log::warn!("⚠️  Init seq failed: {}", e),
+    }
+
+    // Step 5: 发送 StatusQuery 帧 (0x03)，触发下位机立即上报状态并激活定时上报
+    let query_frame = ConfigFrameBuilder::build_status_query_frame();
+    match host.client().serial_send_raw(&query_frame).await {
+        Ok(()) => log::info!("✅ StatusQuery sent (trigger device to start periodic reporting)"),
+        Err(e) => log::warn!("⚠️  StatusQuery send failed: {}", e),
     }
 
     Ok(())

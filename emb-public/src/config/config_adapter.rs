@@ -427,6 +427,8 @@ pub struct MotionFileConfig {
     pub extruder: ExtruderMotionSection,
     #[serde(default)]
     pub velocity_profile: VelocityProfileFile,
+    #[serde(default)]
+    pub resonance_compensation: ResonanceCompensationSection,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -501,13 +503,59 @@ pub struct ExtruderMotionSection {
     pub pressure_advance_max_accel: f32,
 }
 
-#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct VelocityProfileFile {
     #[serde(default)]
     #[allow(dead_code)]
     pub r#type: String,
     pub six_point: Option<SixPointFile>,
 }
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ResonanceCompensationSection {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_shaper_type")]
+    pub shaper_type: String,
+    #[serde(default)]
+    pub x: AxisResonanceFile,
+    #[serde(default)]
+    pub y: AxisResonanceFile,
+}
+
+impl Default for ResonanceCompensationSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            shaper_type: default_shaper_type(),
+            x: AxisResonanceFile::default(),
+            y: AxisResonanceFile::default(),
+        }
+    }
+}
+
+fn default_shaper_type() -> String { "ZV".to_string() }
+fn default_resonance_frequency() -> f32 { 45.0 }
+fn default_resonance_damping() -> f32 { 0.1 }
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AxisResonanceFile {
+    #[serde(default = "default_resonance_frequency")]
+    pub frequency: f32,
+    #[serde(default = "default_resonance_damping")]
+    pub damping: f32,
+}
+
+impl Default for AxisResonanceFile {
+    fn default() -> Self {
+        Self {
+            frequency: default_resonance_frequency(),
+            damping: default_resonance_damping(),
+        }
+    }
+}
+
+// ── motion.json structures (continued) ───────────────────────
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SixPointFile {
@@ -771,6 +819,20 @@ pub fn build_motion_config_json(configs: &LoadedConfigs) -> Result<String, Strin
         json["six_point_break_speed"] = serde_json::json!(sp.break_speed_mm_s);
         json["six_point_min_distance"] = serde_json::json!(sp.min_distance_mm);
     }
+
+    // Resonance compensation
+    json["resonance_compensation"] = serde_json::json!({
+        "enabled": configs.motion.resonance_compensation.enabled,
+        "shaper_type": configs.motion.resonance_compensation.shaper_type,
+        "x": {
+            "frequency": configs.motion.resonance_compensation.x.frequency,
+            "damping": configs.motion.resonance_compensation.x.damping,
+        },
+        "y": {
+            "frequency": configs.motion.resonance_compensation.y.frequency,
+            "damping": configs.motion.resonance_compensation.y.damping,
+        },
+    });
 
     serde_json::to_string_pretty(&json)
         .map_err(|e| format!("Serialize MotionConfig JSON failed: {}", e))
