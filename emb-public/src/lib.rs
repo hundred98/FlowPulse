@@ -17,6 +17,7 @@ pub mod gcode;  // New module (gcode parser, reserved)
 pub mod temperature;  // New module (temperature management)
 pub mod mesh;  // New module (bed mesh management)
 pub mod gpio;  // New module (GPIO management)
+pub mod motion;  // New module (homing, motion management)
 
 // Re-export common types
 pub use common::{
@@ -95,6 +96,9 @@ pub use mesh::MeshManager;
 
 // Re-export GPIO types
 pub use gpio::{GpioManager, GpioEvent};
+
+// Re-export motion types
+pub use motion::HomingManager;
 
 // Re-export message queue handlers
 pub use message_queue::{

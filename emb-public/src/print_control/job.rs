@@ -8,6 +8,10 @@ use crate::common::EmbResult;
 use crate::state::DeviceStateManager;
 use crate::safety::SafetyController;
 use crate::temperature::TemperaturePreset;
+use crate::core_client::CoreSocketClient;
+use crate::temperature::TemperatureManager;
+use crate::gcode::{GCodeParser, CommandKind, MotionCommand};
+use emb_api::{MExecutionType, MCommand, ArcParamsApi};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrintState {
@@ -145,6 +149,13 @@ pub struct PrintProgress {
     
     /// Estimated remaining time in seconds
     pub remaining_seconds: u64,
+
+    /// Current G-code line index (for print execution loop)
+    pub current_line: u32,
+    /// Total number of G-code lines (for print execution loop)
+    pub total_lines: u32,
+    /// Status message for current execution step
+    pub status: String,
 }
 
 impl Default for PrintProgress {
@@ -155,6 +166,9 @@ impl Default for PrintProgress {
             total_layers: 0,
             elapsed_seconds: 0,
             remaining_seconds: 0,
+            current_line: 0,
+            total_lines: 0,
+            status: String::new(),
         }
     }
 }
@@ -178,6 +192,11 @@ pub struct PrintController {
     
     // New: Print progress
     progress: Arc<RwLock<PrintProgress>>,
+
+    // New: Core socket client for motion/temperature commands
+    client: Option<Arc<CoreSocketClient>>,
+    // New: Temperature manager for temperature control during print
+    temperature_manager: Option<Arc<TemperatureManager>>,
 }
 
 impl PrintController {
@@ -202,6 +221,8 @@ impl PrintController {
             device_state: None,
             safety_controller: None,
             progress: Arc::new(RwLock::new(PrintProgress::default())),
+            client: None,
+            temperature_manager: None,
         }
     }
     
@@ -224,6 +245,282 @@ impl PrintController {
     /// Set safety controller
     pub fn set_safety_controller(&mut self, safety_controller: Arc<SafetyController>) {
         self.safety_controller = Some(safety_controller);
+    }
+
+    /// Set core socket client (required for print execution)
+    pub fn set_client(&mut self, client: Arc<CoreSocketClient>) {
+        self.client = Some(client);
+    }
+
+    /// Set temperature manager (required for print execution)
+    pub fn set_temperature_manager(&mut self, temperature_manager: Arc<TemperatureManager>) {
+        self.temperature_manager = Some(temperature_manager);
+    }
+
+    /// Execute G-code file print loop.
+    ///
+    /// Processes each line of the G-code file, dispatching motion commands,
+    /// temperature commands (M104/M140/M109/M190), and handling queries (M105).
+    /// Updates progress after each command.
+    ///
+    /// # Arguments
+    /// * `filename` - Display name for logging
+    /// * `content` - Full G-code file content
+    /// * `total_lines` - Total number of lines
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the print completed successfully
+    /// * `Err(String)` - If any command failed
+    pub async fn execute_print_loop(&self, filename: &str, content: &str, total_lines: usize) -> Result<(), String> {
+        let client = self.client.as_ref().ok_or("PrintController: CoreSocketClient not set")?;
+        let temperature_manager = self.temperature_manager.as_ref().ok_or("PrintController: TemperatureManager not set")?;
+
+        let lines: Vec<&str> = content.lines().collect();
+        let total_lines = total_lines.max(lines.len());
+
+        log::info!("Starting print execution: {} ({} lines)", filename, total_lines);
+
+        for (i, line) in lines.iter().enumerate() {
+            // Check for stop request
+            if self.stop_requested.load(Ordering::SeqCst) {
+                log::info!("Print stopped by user request at line {}", i + 1);
+                return Err("Print stopped by user".to_string());
+            }
+
+            let line = line.trim();
+
+            // Skip empty and comment lines
+            if line.is_empty() || line.starts_with(';') || line.starts_with("//") {
+                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                let mut progress = self.progress.write().await;
+                progress.percent = percent;
+                progress.current_line = (i + 1) as u32;
+                progress.total_lines = total_lines as u32;
+                progress.status = format!("Skipping: {}", line);
+                continue;
+            }
+
+            // Parse the line
+            let cmd = match GCodeParser::parse_line(line, i as u32) {
+                Some(parsed) => parsed,
+                None => {
+                    log::warn!("Parse error line {}: {}", i + 1, line);
+                    let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                    let mut progress = self.progress.write().await;
+                    progress.percent = percent;
+                    progress.current_line = (i + 1) as u32;
+                    progress.total_lines = total_lines as u32;
+                    progress.status = format!("Parse error: {}", line);
+                    continue;
+                }
+            };
+
+            match &cmd.kind {
+                CommandKind::Motion(motion_cmd) => {
+                    let (cmd_str, x, y, z, e, f, arc) = match motion_cmd {
+                        MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
+                            let cmd_str = if *is_rapid { "G0" } else { "G1" };
+                            (cmd_str.to_string(), *x, *y, *z, *e, *f, None)
+                        }
+                        MotionCommand::ArcMove { x, y, z, e, f, i, j, is_cw } => {
+                            let cmd_str = if *is_cw { "G2" } else { "G3" };
+                            let arc = Some(ArcParamsApi {
+                                i: *i,
+                                j: *j,
+                                direction: if *is_cw { 0 } else { 1 },
+                            });
+                            (cmd_str.to_string(), *x, *y, *z, *e, *f, arc)
+                        }
+                        _ => {
+                            log::info!("  → Skipping non-motion command: {:?}", motion_cmd);
+                            let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                            let mut progress = self.progress.write().await;
+                            progress.percent = percent;
+                            progress.current_line = (i + 1) as u32;
+                            progress.total_lines = total_lines as u32;
+                            progress.status = format!("Skipping non-motion");
+                            continue;
+                        }
+                    };
+
+                    match client.motion_dispatch_arc(&cmd_str, x, y, z, e, f, arc).await {
+                        Ok(()) => {
+                            let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                            let mut progress = self.progress.write().await;
+                            progress.percent = percent;
+                            progress.current_line = (i + 1) as u32;
+                            progress.total_lines = total_lines as u32;
+                            progress.status = format!("Dispatched: {}", line);
+                        }
+                        Err(e) => {
+                            log::warn!("Motion dispatch failed line {}: {}", i + 1, e);
+                            let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                            let mut progress = self.progress.write().await;
+                            progress.percent = percent;
+                            progress.current_line = (i + 1) as u32;
+                            progress.total_lines = total_lines as u32;
+                            progress.status = format!("Motion error: {}", e);
+                            return Err(format!("Motion dispatch failed at line {}: {}", i + 1, e));
+                        }
+                    }
+                }
+                CommandKind::Machine(m_cmd) => {
+                    let exec_type = m_cmd.execution_type();
+
+                    // SyncWait (M109/M190): send command, server handles temperature monitoring
+                    if exec_type == MExecutionType::SyncWait {
+                        let (heater, target) = match &m_cmd {
+                            MCommand::WaitHotendTemp { temp, .. } => ("hotend", *temp),
+                            MCommand::WaitBedTemp { temp } => ("bed", *temp),
+                            _ => unreachable!(),
+                        };
+
+                        // Update local cache so safety check knows heating is intentional
+                        temperature_manager.update_target_cache(heater, target).await;
+
+                        let server_timeout_secs = 300u64;
+                        let timeout = std::time::Duration::from_secs(server_timeout_secs + 3);
+
+                        match client.motion_execute_m_command_with_timeout(m_cmd.clone(), timeout).await {
+                            Ok(()) => {
+                                log::info!("  → Command sent, waiting for {} to reach {:.1}°C...", heater, target);
+
+                                let wait_start = std::time::Instant::now();
+                                let wait_timeout = std::time::Duration::from_secs(server_timeout_secs);
+                                let wait_tolerance = 2.0;
+                                let wait_check = std::time::Duration::from_millis(500);
+                                let wait_stable_count = 3u32;
+                                let mut current_stable = 0u32;
+
+                                loop {
+                                    if self.stop_requested.load(Ordering::SeqCst) {
+                                        return Err("Print stopped during temperature wait".to_string());
+                                    }
+
+                                    if wait_start.elapsed() > wait_timeout {
+                                        log::warn!("Temperature wait timeout for {} ({}s)", heater, server_timeout_secs);
+                                        let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                        let mut progress = self.progress.write().await;
+                                        progress.percent = percent;
+                                        progress.current_line = (i + 1) as u32;
+                                        progress.total_lines = total_lines as u32;
+                                        progress.status = format!("Temp timeout: {} = {:.1}°C", heater, target);
+                                        return Err(format!("Temperature wait timeout for {} after {}s", heater, server_timeout_secs));
+                                    }
+
+                                    let status = temperature_manager.get_temp_status().await;
+                                    let current = if heater == "bed" { status.bed_current } else { status.hotend_current };
+
+                                    if current >= target - wait_tolerance {
+                                        current_stable += 1;
+                                        let elapsed = wait_start.elapsed().as_secs();
+                                        log::info!("Temperature stable {}/{}: {} = {:.1}°C (target {:.1}°C, elapsed {}s)",
+                                            current_stable, wait_stable_count, heater, current, target, elapsed);
+
+                                        if current_stable >= wait_stable_count {
+                                            log::info!("  ✅ Temperature reached: {} = {:.1}°C (elapsed {}s)", heater, current, elapsed);
+                                            break;
+                                        }
+                                    } else if current_stable > 0 {
+                                        current_stable = 0;
+                                    }
+
+                                    tokio::time::sleep(wait_check).await;
+                                }
+
+                                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                let mut progress = self.progress.write().await;
+                                progress.percent = percent;
+                                progress.current_line = (i + 1) as u32;
+                                progress.total_lines = total_lines as u32;
+                                progress.status = format!("Temp OK: {} = {}°C", heater, target);
+                            }
+                            Err(e) => {
+                                log::warn!("M command failed line {}: {} — {}", i + 1, line, e);
+                                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                let mut progress = self.progress.write().await;
+                                progress.percent = percent;
+                                progress.current_line = (i + 1) as u32;
+                                progress.total_lines = total_lines as u32;
+                                progress.status = format!("M cmd error: {}", e);
+                                return Err(format!("M command failed at line {}: {}", i + 1, e));
+                            }
+                        }
+                    } else if exec_type == MExecutionType::Query {
+                        // M105: read from cache only
+                        let heaters = temperature_manager.get_all_heaters().await;
+                        log::info!("  → Temperature query (cached):");
+                        for (name, s) in &heaters {
+                            log::info!("      {}: {:.1}°C / {:.1}°C", name, s.current_temp, s.target_temp);
+                        }
+                        let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                        let mut progress = self.progress.write().await;
+                        progress.percent = percent;
+                        progress.current_line = (i + 1) as u32;
+                        progress.total_lines = total_lines as u32;
+                        progress.status = format!("Temp query (cached): {} heaters", heaters.len());
+                    } else {
+                        // Other M commands (SyncSet, MotionParam): send to server
+                        let is_temp_cmd = matches!(m_cmd,
+                            MCommand::SetHotendTemp { .. } |
+                            MCommand::SetBedTemp { .. }
+                        );
+
+                        match client.motion_execute_m_command(m_cmd.clone()).await {
+                            Ok(()) => {
+                                // Update local temperature cache after successful execution
+                                if is_temp_cmd {
+                                    match m_cmd {
+                                        MCommand::SetHotendTemp { temp, .. } => {
+                                            temperature_manager.update_target_cache("hotend", *temp).await;
+                                        }
+                                        MCommand::SetBedTemp { temp } => {
+                                            temperature_manager.update_target_cache("bed", *temp).await;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                let mut progress = self.progress.write().await;
+                                progress.percent = percent;
+                                progress.current_line = (i + 1) as u32;
+                                progress.total_lines = total_lines as u32;
+                                progress.status = format!("Executed: {}", line);
+                            }
+                            Err(e) => {
+                                log::warn!("M command failed line {}: {} — {}", i + 1, line, e);
+                                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                let mut progress = self.progress.write().await;
+                                progress.percent = percent;
+                                progress.current_line = (i + 1) as u32;
+                                progress.total_lines = total_lines as u32;
+                                progress.status = format!("M cmd error: {}", e);
+                                return Err(format!("M command failed at line {}: {}", i + 1, e));
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Empty or Unsupported - just update progress
+                    let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                    let mut progress = self.progress.write().await;
+                    progress.percent = percent;
+                    progress.current_line = (i + 1) as u32;
+                    progress.total_lines = total_lines as u32;
+                    progress.status = "Skipped".to_string();
+                }
+            }
+        }
+
+        // Mark progress as complete
+        let mut progress = self.progress.write().await;
+        progress.percent = 100.0;
+        progress.current_line = total_lines as u32;
+        progress.total_lines = total_lines as u32;
+        progress.status = "Completed".to_string();
+
+        log::info!("✅ Print completed: {}", filename);
+        Ok(())
     }
     
     pub async fn load_file(&self, file_path: &str) -> EmbResult<PrintJob> {

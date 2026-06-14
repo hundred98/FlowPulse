@@ -24,8 +24,7 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use axum::http::Method;
 
-use emb_public::{CoreSocketClient, TemperatureManager, TemperatureManagerConfig, SyncEventPublisher, GpioManager};
-use emb_api::ArcParamsApi;
+use emb_public::{CoreSocketClient, TemperatureManager, TemperatureManagerConfig, SyncEventPublisher, GpioManager, HomingManager, PrintController};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GpioSetRequest {
@@ -66,18 +65,6 @@ struct GcodePrintRequest {
     filename: String,
 }
 
-/// Gcode print progress
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GcodePrintProgress {
-    filename: String,
-    current_line: usize,
-    total_lines: usize,
-    percent: f32,
-    status: String,
-    finished: bool,
-    success: bool,
-}
-
 /// Temperature status response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TemperatureStatus {
@@ -100,10 +87,12 @@ struct DebugState {
     gpio_manager: GpioManager,
     /// Temperature manager
     temperature_manager: Arc<TemperatureManager>,
+    /// Homing Manager (encapsulates homing protocol)
+    homing_manager: HomingManager,
+    /// Print Controller (manages print state + job execution)
+    print_controller: Arc<tokio::sync::RwLock<PrintController>>,
     /// Gcodes directory
     gcodes_dir: String,
-    /// Print progress (shared between print task and progress polling)
-    print_progress: Arc<tokio::sync::RwLock<Option<GcodePrintProgress>>>,
     /// Whether a print is currently running
     print_running: Arc<AtomicBool>,
 }
@@ -177,7 +166,7 @@ async fn temperature_set(
     }
 }
 
-/// Homing Start: send 0x0A frame with axes_mask
+/// Homing Start: use HomingManager
 /// Query params: ?x=true&y=true&z=true  or  ?all=true
 #[derive(Debug, Deserialize)]
 struct HomingStartRequest {
@@ -196,58 +185,9 @@ async fn homing_start(
     State(state): State<Arc<DebugState>>,
     axum::extract::Query(req): axum::extract::Query<HomingStartRequest>,
 ) -> impl IntoResponse {
-    let axes_mask: u8 = if req.all {
-        0b111
-    } else {
-        (if req.x { 0x01 } else { 0 }) |
-        (if req.y { 0x02 } else { 0 }) |
-        (if req.z { 0x04 } else { 0 })
-    };
-
-    if axes_mask == 0 {
-        return Json(ApiResponse::<String>::error("No axes selected".to_string()));
-    }
-
-    let axes_names = [
-        (if axes_mask & 0x01 != 0 { "X" } else { "" }),
-        (if axes_mask & 0x02 != 0 { "Y" } else { "" }),
-        (if axes_mask & 0x04 != 0 { "Z" } else { "" }),
-    ].concat();
-
-    log::info!("Homing start: axes_mask=0x{:02X} ({})", axes_mask, axes_names);
-
-    match state.core_client.serial_send_frame(0x0A, vec![axes_mask]).await {
-        Ok(_) => {
-            // Poll for response (ACK/NACK) from device
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            for _ in 0..5 {
-                match state.core_client.serial_recv_frame().await {
-                    Ok(Some((ft, pld))) => {
-                        if ft == 0x12 {
-                            // NACK
-                            let err = if pld.len() > 1 { pld[1] } else { 0xFF };
-                            log::error!("Homing NACK (error={}, meaning follows):", err);
-                            let desc = match err {
-                                1 => "BUSY - homing already running",
-                                2 => "INVALID_AXES",
-                                3 => "NOT_CFG - endstops not configured",
-                                4 => "PRE_TIMEOUT",
-                                5 => "TOTAL_TIMEOUT",
-                                6 => "AXIS_DISABLED",
-                                _ => "UNKNOWN",
-                            };
-                            log::error!("  -> {}", desc);
-                        } else if ft == 0x06 {
-                        }
-                    }
-                    Ok(None) => break, // no more frames
-                    Err(e) => log::warn!("Recv error: {}", e),
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-            Json(ApiResponse::success(format!("Homing started: {}", axes_names)))
-        }
-        Err(e) => Json(ApiResponse::<String>::error(format!("Failed: {}", e))),
+    match state.homing_manager.home_by_names(req.x, req.y, req.z, req.all).await {
+        Ok(msg) => Json(ApiResponse::success(msg)),
+        Err(e) => Json(ApiResponse::<String>::error(e)),
     }
 }
 
@@ -305,22 +245,22 @@ async fn gcode_execute(
     // Build arc parameters for G2/G3
     let arc = if cmd == "G2" || cmd == "G3" {
         match (i, j) {
-            (Some(i_val), Some(j_val)) => Some(ArcParamsApi {
+            (Some(i_val), Some(j_val)) => Some(emb_api::ArcParamsApi {
                 i: i_val,
                 j: j_val,
-                direction: if cmd == "G2" { 0 } else { 1 }, // 0=CW/G2, 1=CCW/G3
+                direction: if cmd == "G2" { 0 } else { 1 },
             }),
-            (Some(i_val), None) => Some(ArcParamsApi {
+            (Some(i_val), None) => Some(emb_api::ArcParamsApi {
                 i: i_val,
                 j: 0.0,
                 direction: if cmd == "G2" { 0 } else { 1 },
             }),
-            (None, Some(j_val)) => Some(ArcParamsApi {
+            (None, Some(j_val)) => Some(emb_api::ArcParamsApi {
                 i: 0.0,
                 j: j_val,
                 direction: if cmd == "G2" { 0 } else { 1 },
             }),
-            (None, None) => None, // G2/G3 without I/J will fail on server
+            (None, None) => None,
         }
     } else {
         None
@@ -364,7 +304,7 @@ async fn gcode_file_list(
     }
 }
 
-/// Start printing a gcode file
+/// Start printing a gcode file using PrintController.execute_print_loop()
 async fn gcode_file_print(
     State(state): State<Arc<DebugState>>,
     Json(req): Json<GcodePrintRequest>,
@@ -377,7 +317,7 @@ async fn gcode_file_print(
     let file_path = format!("{}/{}", state.gcodes_dir, req.filename);
     log::info!("Starting print from file: {}", file_path);
 
-    // Count total lines first
+    // Read file content
     let content = match std::fs::read_to_string(&file_path) {
         Ok(c) => c,
         Err(e) => {
@@ -397,343 +337,63 @@ async fn gcode_file_print(
     let state_clone = state.clone();
     let filename = req.filename.clone();
 
-    // Spawn background print task
+    // Spawn background print task using PrintController
     tokio::spawn(async move {
-        let result = run_gcode_print(&state_clone, &filename, &content, total_lines).await;
-
-        let (status, success) = match &result {
-            Ok(()) => ("Completed".to_string(), true),
-            Err(e) => (format!("Error: {}", e), false),
-        };
-
-        // Update final progress
-        let progress = GcodePrintProgress {
-            filename: filename.clone(),
-            current_line: total_lines,
+        let print_controller = state_clone.print_controller.read().await;
+        let result = print_controller.execute_print_loop(
+            &filename,
+            &content,
             total_lines,
-            percent: 100.0,
-            status,
-            finished: true,
-            success,
-        };
-        *state_clone.print_progress.write().await = Some(progress);
-        state_clone.print_running.store(false, Ordering::SeqCst);
+        ).await;
 
-        log::info!("Print {}: {}", filename, if result.is_ok() { "✅ completed" } else { "❌ failed" });
+        let success = result.is_ok();
+        if !success {
+            log::error!("Print {} failed: {:?}", filename, result.err());
+        }
+
+        state_clone.print_running.store(false, Ordering::SeqCst);
+        log::info!("Print {}: {}", filename, if success { "✅ completed" } else { "❌ failed" });
     });
 
     Json(ApiResponse::success(format!("Print started: {} ({} lines)", req.filename, total_lines)))
 }
 
-/// Poll print progress
+/// Poll print progress from PrintController
 async fn gcode_print_progress(
     State(state): State<Arc<DebugState>>,
 ) -> impl IntoResponse {
-    let progress = state.print_progress.read().await;
-    match progress.as_ref() {
-        Some(p) => Json(ApiResponse::success(p.clone())),
-        None => Json(ApiResponse::success(GcodePrintProgress {
-            filename: String::new(),
-            current_line: 0,
-            total_lines: 0,
-            percent: 0.0,
-            status: "No print active".to_string(),
-            finished: true,
-            success: true,
-        })),
-    }
-}
+    let print_controller = state.print_controller.read().await;
+    let progress = print_controller.get_progress().await;
 
-/// Run the actual gcode print: read file and dispatch commands
-async fn run_gcode_print(
-    state: &DebugState,
-    filename: &str,
-    content: &str,
-    total_lines: usize,
-) -> Result<(), String> {
-    use emb_public::gcode::GCodeParser;
-    use emb_public::gcode::CommandKind;
-
-    let lines: Vec<&str> = content.lines().collect();
-
-    for (i, line) in lines.iter().enumerate() {
-        let line = line.trim();
-
-        // Skip empty and comment lines
-        if line.is_empty() || line.starts_with(';') || line.starts_with("//") {
-            // Update progress
-            let progress = GcodePrintProgress {
-                filename: filename.to_string(),
-                current_line: i + 1,
-                total_lines,
-                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                status: format!("Skipping: {}", line),
-                finished: false,
-                success: true,
-            };
-            *state.print_progress.write().await = Some(progress);
-            continue;
-        }
-
-        // Parse the line
-        let cmd = match GCodeParser::parse_line(line, i as u32) {
-            Some(parsed) => parsed,
-            None => {
-                log::warn!("Parse error line {}: {}", i + 1, line);
-                let progress = GcodePrintProgress {
-                    filename: filename.to_string(),
-                    current_line: i + 1,
-                    total_lines,
-                    percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                    status: format!("Parse error: {}", line),
-                    finished: false,
-                    success: false,
-                };
-                *state.print_progress.write().await = Some(progress);
-                continue;
-            }
-        };
-
-        match &cmd.kind {
-            CommandKind::Motion(motion_cmd) => {
-                let (cmd_str, x, y, z, e, f, arc) = match motion_cmd {
-                    emb_public::gcode::MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
-                        let cmd_str = if *is_rapid { "G0" } else { "G1" };
-                        (cmd_str.to_string(), *x, *y, *z, *e, *f, None)
-                    }
-                    emb_public::gcode::MotionCommand::ArcMove { x, y, z, e, f, i, j, is_cw } => {
-                        let cmd_str = if *is_cw { "G2" } else { "G3" };
-                        let arc = Some(emb_api::ArcParamsApi {
-                            i: *i,
-                            j: *j,
-                            direction: if *is_cw { 0 } else { 1 },
-                        });
-                        (cmd_str.to_string(), *x, *y, *z, *e, *f, arc)
-                    }
-                    _ => {
-                        log::info!("  → Skipping non-motion command: {:?}", motion_cmd);
-                        continue;
-                    }
-                };
-
-                match state.core_client.motion_dispatch_arc(&cmd_str, x, y, z, e, f, arc).await {
-                    Ok(()) => {
-                        let progress = GcodePrintProgress {
-                            filename: filename.to_string(),
-                            current_line: i + 1,
-                            total_lines,
-                            percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                            status: format!("Dispatched: {}", line),
-                            finished: false,
-                            success: true,
-                        };
-                        *state.print_progress.write().await = Some(progress);
-                    }
-                    Err(e) => {
-                        log::warn!("Motion dispatch failed line {}: {}", i + 1, e);
-                        let progress = GcodePrintProgress {
-                            filename: filename.to_string(),
-                            current_line: i + 1,
-                            total_lines,
-                            percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                            status: format!("Motion error: {}", e),
-                            finished: false,
-                            success: false,
-                        };
-                        *state.print_progress.write().await = Some(progress);
-                        return Err(format!("Motion dispatch failed at line {}: {}", i + 1, e));
-                    }
-                }
-            }
-            CommandKind::Machine(m_cmd) => {
-                use emb_api::MExecutionType;
-
-                let exec_type = m_cmd.execution_type();
-
-                // For SyncWait (M109/M190): send command, server handles temperature monitoring.
-                // Server uses "fake blocking" — it filters allowed commands and responds
-                // when temperature is reached (or timeout).
-                if exec_type == MExecutionType::SyncWait {
-                    // Determine heater and target temperature
-                    let (heater, target) = match &m_cmd {
-                        emb_api::MCommand::WaitHotendTemp { temp, .. } => ("hotend", *temp),
-                        emb_api::MCommand::WaitBedTemp { temp } => ("bed", *temp),
-                        _ => unreachable!(),
-                    };
-
-                    // Update local cache so safety check knows heating is intentional
-                    state.temperature_manager.update_target_cache(heater, target).await;
-
-                    // Use server's timeout + 3s buffer for client-side timeout
-                    // Server timeout is 300s (from config/temperature.json)
-                    let server_timeout_secs = 300u64;
-                    let timeout = std::time::Duration::from_secs(server_timeout_secs + 3);
-
-                    match state.core_client.motion_execute_m_command_with_timeout(m_cmd.clone(), timeout).await {
-                        Ok(()) => {
-                            // Server returned success immediately (command sent to device).
-                            // Now wait locally for temperature to reach target.
-                            log::info!("  → Command sent, waiting for {} to reach {:.1}°C...", heater, target);
-
-                            let wait_start = std::time::Instant::now();
-                            let wait_timeout = std::time::Duration::from_secs(server_timeout_secs);
-                            let wait_tolerance = 2.0;
-                            let wait_check = std::time::Duration::from_millis(500);
-                            let wait_stable_count = 3u32;
-                            let mut current_stable = 0u32;
-
-                            loop {
-                                if wait_start.elapsed() > wait_timeout {
-                                    log::warn!("Temperature wait timeout for {} ({}s)", heater, server_timeout_secs);
-                                    let progress = GcodePrintProgress {
-                                        filename: filename.to_string(),
-                                        current_line: i + 1,
-                                        total_lines,
-                                        percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                                        status: format!("Temp timeout: {} = {:.1}°C", heater, target),
-                                        finished: false,
-                                        success: false,
-                                    };
-                                    *state.print_progress.write().await = Some(progress);
-                                    return Err(format!("Temperature wait timeout for {} after {}s", heater, server_timeout_secs));
-                                }
-
-                                let status = state.temperature_manager.get_temp_status().await;
-                                let current = if heater == "bed" { status.bed_current } else { status.hotend_current };
-
-                                if current >= target - wait_tolerance {
-                                    current_stable += 1;
-                                    let elapsed = wait_start.elapsed().as_secs();
-                                    log::info!("Temperature stable {}/{}: {} = {:.1}°C (target {:.1}°C, elapsed {}s)",
-                                        current_stable, wait_stable_count, heater, current, target, elapsed);
-
-                                    if current_stable >= wait_stable_count {
-                                        log::info!("  ✅ Temperature reached: {} = {:.1}°C (elapsed {}s)", heater, current, elapsed);
-                                        break;
-                                    }
-                                } else {
-                                    if current_stable > 0 {
-                                        current_stable = 0;
-                                    }
-                                }
-
-                                tokio::time::sleep(wait_check).await;
-                            }
-
-                            let progress = GcodePrintProgress {
-                                filename: filename.to_string(),
-                                current_line: i + 1,
-                                total_lines,
-                                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                                status: format!("Temp OK: {} = {}°C", heater, target),
-                                finished: false,
-                                success: true,
-                            };
-                            *state.print_progress.write().await = Some(progress);
-                        }
-                        Err(e) => {
-                            log::warn!("M command failed line {}: {} — {}", i + 1, line, e);
-                            let progress = GcodePrintProgress {
-                                filename: filename.to_string(),
-                                current_line: i + 1,
-                                total_lines,
-                                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                                status: format!("M cmd error: {}", e),
-                                finished: false,
-                                success: false,
-                            };
-                            *state.print_progress.write().await = Some(progress);
-                            return Err(format!("M command failed at line {}: {}", i + 1, e));
-                        }
-                    }
-                } else if exec_type == MExecutionType::Query {
-                    // M105 / QueryTemperature: read from cache, don't go to server
-                    let heaters = state.temperature_manager.get_all_heaters().await;
-                    log::info!("  → Temperature query (cached):");
-                    for (name, state) in &heaters {
-                        log::info!("      {}: {:.1}°C / {:.1}°C", name, state.current_temp, state.target_temp);
-                    }
-                    let progress = GcodePrintProgress {
-                        filename: filename.to_string(),
-                        current_line: i + 1,
-                        total_lines,
-                        percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                        status: format!("Temp query (cached): {} heaters", heaters.len()),
-                        finished: false,
-                        success: true,
-                    };
-                    *state.print_progress.write().await = Some(progress);
-                } else {
-                    // Other M commands (SyncSet, MotionParam): send to server and continue
-                    // For temperature SyncSet commands (M104, M140), also update local target cache
-                    let is_temp_cmd = matches!(m_cmd,
-                        emb_api::MCommand::SetHotendTemp { .. } |
-                        emb_api::MCommand::SetBedTemp { .. }
-                    );
-
-                    match state.core_client.motion_execute_m_command(m_cmd.clone()).await {
-                        Ok(()) => {
-                            // After successful server-side execution, update local temperature cache
-                            if is_temp_cmd {
-                                match m_cmd {
-                                    emb_api::MCommand::SetHotendTemp { temp, .. } => {
-                                        state.temperature_manager.update_target_cache("hotend", *temp).await;
-                                    }
-                                    emb_api::MCommand::SetBedTemp { temp } => {
-                                        state.temperature_manager.update_target_cache("bed", *temp).await;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            let progress = GcodePrintProgress {
-                                filename: filename.to_string(),
-                                current_line: i + 1,
-                                total_lines,
-                                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                                status: format!("Executed: {}", line),
-                                finished: false,
-                                success: true,
-                            };
-                            *state.print_progress.write().await = Some(progress);
-                        }
-                        Err(e) => {
-                            log::warn!("M command failed line {}: {} — {}", i + 1, line, e);
-                            let progress = GcodePrintProgress {
-                                filename: filename.to_string(),
-                                current_line: i + 1,
-                                total_lines,
-                                percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                                status: format!("M cmd error: {}", e),
-                                finished: false,
-                                success: false,
-                            };
-                            *state.print_progress.write().await = Some(progress);
-                            return Err(format!("M command failed at line {}: {}", i + 1, e));
-                        }
-                    }
-                }
-            }
-            _ => {
-                // Other command types (G28, G29, etc.) - skip for now
-                log::info!("  → Skipping (unsupported): {:?}", cmd);
-                let progress = GcodePrintProgress {
-                    filename: filename.to_string(),
-                    current_line: i + 1,
-                    total_lines,
-                    percent: ((i + 1) as f32 / total_lines as f32) * 100.0,
-                    status: format!("Skipped: {:?}", cmd),
-                    finished: false,
-                    success: true,
-                };
-                *state.print_progress.write().await = Some(progress);
-            }
-        }
-
-        // Small delay between commands
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    #[derive(Serialize)]
+    struct PrintProgressResponse {
+        filename: String,
+        current_line: u32,
+        total_lines: u32,
+        percent: f32,
+        status: String,
+        finished: bool,
+        success: bool,
     }
 
-    Ok(())
+    let running = state.print_running.load(Ordering::SeqCst);
+    let resp = PrintProgressResponse {
+        filename: String::new(),
+        current_line: progress.current_line,
+        total_lines: progress.total_lines,
+        percent: progress.percent,
+        status: if !running && progress.percent >= 100.0 {
+            "Completed".to_string()
+        } else if !running && progress.percent == 0.0 {
+            "No print active".to_string()
+        } else {
+            progress.status.clone()
+        },
+        finished: !running,
+        success: !running && progress.percent >= 100.0,
+    };
+
+    Json(ApiResponse::success(resp))
 }
 
 #[tokio::main]
@@ -756,14 +416,11 @@ async fn main() -> anyhow::Result<()> {
     // Step 2: Create host and connect to emb-core-server
     let host = setup::create_and_connect_host(&core_addr).await?;
 
-    // 创建GPIO Manager（内部包含 broadcast channel）
+    // Create GPIO Manager (internal broadcast channel)
     let gpio_manager = GpioManager::new(host.client());
-
-    // 设置GPIO Report回调（通过 GpioManager 转发到 broadcast channel）
     gpio_manager.setup_callback().await;
 
     // Step 3: Initialize device (serial, GPIO subscribe, configs, STM32 seq)
-    // 注意：setup::initialize_device 内部会调用 gpio_subscribe_report
     setup::initialize_device(&host).await?;
 
     // Step 4: Create and initialize temperature manager
@@ -776,7 +433,16 @@ async fn main() -> anyhow::Result<()> {
     ));
     setup::initialize_temperature_manager(&temperature_manager).await?;
 
-    // 后台 pinger：每2秒 ping 一次，触发 read_response 消费 GPIO Report 推送
+    // Create HomingManager
+    let homing_manager = HomingManager::new(host.client());
+
+    // Create PrintController with required dependencies
+    let mut print_controller = PrintController::new();
+    print_controller.set_client(host.client());
+    print_controller.set_temperature_manager(temperature_manager.clone());
+    let print_controller = Arc::new(tokio::sync::RwLock::new(print_controller));
+
+    // Background pinger: every 2s, triggers read_response to consume GPIO Report push
     let ping_client = host.client();
     tokio::spawn(async move {
         loop {
@@ -785,7 +451,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // 后台安全检查
+    // Background safety check loop
     let tm_safety = temperature_manager.clone();
     tokio::spawn(async move {
         tm_safety.start_safety_check_loop().await;
@@ -796,16 +462,15 @@ async fn main() -> anyhow::Result<()> {
         .map(|p| p.join("gcodes").to_string_lossy().to_string())
         .unwrap_or_else(|_| "gcodes".to_string());
 
-    // 打印状态
-    let print_progress: Arc<tokio::sync::RwLock<Option<GcodePrintProgress>>> = Arc::new(tokio::sync::RwLock::new(None));
     let print_running = Arc::new(AtomicBool::new(false));
 
     let state = Arc::new(DebugState { 
         core_client: host.client(),
         gpio_manager,
         temperature_manager,
+        homing_manager,
+        print_controller,
         gcodes_dir,
-        print_progress,
         print_running,
     });
 
