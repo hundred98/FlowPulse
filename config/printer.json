@@ -4,7 +4,7 @@
   "communication": {
     "serial": {
       "port": "COM7",
-      "baud_rate": 57600,
+      "baud_rate": 115200,
       "data_bits": 8,
       "parity": "None",
       "stop_bits": 1,
