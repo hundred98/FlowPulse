@@ -387,7 +387,9 @@ pub struct MotorConfig {
     pub max_speed_mm_per_s: f32,
     /// Per-axis acceleration limit (user can independently restrict each axis).
     pub max_accel: f32,
+    #[serde(default)]
     pub position_min: f32,
+    #[serde(default)]
     pub position_max: f32,
     pub driver: Option<DriverConfig>,
     pub extruder: Option<ExtruderConfig>,
@@ -768,6 +770,14 @@ pub fn build_motion_config_json(configs: &LoadedConfigs) -> Result<String, Strin
     let z_max_accel = z.map(|m| m.max_accel).unwrap_or(500.0);
     let e_max_accel = e.map(|m| m.max_accel).unwrap_or(5000.0);
 
+    // Axis position bounds (from hardware.json motor position_min/max)
+    let x_position_min = x.map(|m| m.position_min).unwrap_or(0.0);
+    let x_position_max = x.map(|m| m.position_max).unwrap_or(0.0);
+    let y_position_min = y.map(|m| m.position_min).unwrap_or(0.0);
+    let y_position_max = y.map(|m| m.position_max).unwrap_or(0.0);
+    let z_position_min = z.map(|m| m.position_min).unwrap_or(0.0);
+    let z_position_max = z.map(|m| m.position_max).unwrap_or(0.0);
+
     // Velocity profile
     let vp = &configs.motion.velocity_profile;
     let six = vp.six_point.as_ref();
@@ -795,6 +805,12 @@ pub fn build_motion_config_json(configs: &LoadedConfigs) -> Result<String, Strin
         "min_segment_distance": configs.motion.segment.min_segment_distance,
         "buffer_ahead_ms": configs.motion.segment.buffer_ahead_ms,
         "microstep_accumulation_enabled": configs.motion.segment.microstep_accumulation_enabled,
+        "x_position_min": x_position_min,
+        "x_position_max": x_position_max,
+        "y_position_min": y_position_min,
+        "y_position_max": y_position_max,
+        "z_position_min": z_position_min,
+        "z_position_max": z_position_max,
         "homing_speed": Some(configs.motion.homing.speed),
         "homing_retract_speed": Some(configs.motion.homing.retract_speed),
         "homing_backoff": Some(configs.motion.homing.backoff),
