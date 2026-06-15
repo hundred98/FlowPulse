@@ -78,7 +78,29 @@
                 </div>
 
                 <div class="card">
-                    <h2>� Homing Control</h2>
+                    <h2>📍 Position</h2>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <div class="temp-row" style="margin-bottom:0;">
+                            <span class="temp-label">X</span>
+                            <span><span class="temp-current" id="pos-x">0.00</span><span class="temp-unit">mm</span></span>
+                        </div>
+                        <div class="temp-row" style="margin-bottom:0;">
+                            <span class="temp-label">Y</span>
+                            <span><span class="temp-current" id="pos-y">0.00</span><span class="temp-unit">mm</span></span>
+                        </div>
+                        <div class="temp-row" style="margin-bottom:0;">
+                            <span class="temp-label">Z</span>
+                            <span><span class="temp-current" id="pos-z">0.00</span><span class="temp-unit">mm</span></span>
+                        </div>
+                        <div class="temp-row" style="margin-bottom:0;">
+                            <span class="temp-label">E</span>
+                            <span><span class="temp-current" id="pos-e">0.00</span><span class="temp-unit">mm</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>🏠 Homing Control</h2>
                     <p style="font-size:12px;color:#888;margin-bottom:10px;">
                         Send homing command to device.
                     </p>
@@ -314,6 +336,26 @@
         // Temperature polling every 1 second
         setInterval(pollTemperature, 1000);
         setTimeout(pollTemperature, 200);
+
+        // ===== Position =====
+        async function pollPosition() {
+            try {
+                const response = await fetch('/debug/api/motion/position');
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('pos-x').textContent = data.data.x.toFixed(2);
+                    document.getElementById('pos-y').textContent = data.data.y.toFixed(2);
+                    document.getElementById('pos-z').textContent = data.data.z.toFixed(2);
+                    document.getElementById('pos-e').textContent = data.data.e.toFixed(2);
+                }
+            } catch (e) {
+                // Silently ignore poll errors
+            }
+        }
+
+        // Position polling every 1 second
+        setInterval(pollPosition, 1000);
+        setTimeout(pollPosition, 200);
 
         // ===== Motion Control =====
         function executeGcode() {

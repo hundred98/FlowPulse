@@ -6,11 +6,16 @@ use crate::state_machine::{StateMachine, PrinterState, TransitionReason};
 use crate::print_control::PrintController;
 use crate::temperature::TemperatureManager;
 use crate::message_queue::{MessageHandler, Message, MessageType};
+use crate::CoreSocketClient;
+use crate::gcode::{GCodeParser, CommandKind, MotionCommand};
 use async_trait::async_trait;
 use std::sync::Arc;
 
 /// Command handler for processing printer commands
 pub struct CommandHandler {
+    /// Core socket client for communicating with emb-core-server
+    core_client: Arc<CoreSocketClient>,
+
     /// Device state manager
     device_state: Arc<DeviceStateManager>,
 
@@ -27,12 +32,14 @@ pub struct CommandHandler {
 impl CommandHandler {
     /// Create a new command handler
     pub fn new(
+        core_client: Arc<CoreSocketClient>,
         device_state: Arc<DeviceStateManager>,
         state_machine: Arc<StateMachine>,
         print_controller: Arc<PrintController>,
         temperature_manager: Arc<TemperatureManager>,
     ) -> Self {
         Self {
+            core_client,
             device_state,
             state_machine,
             print_controller,
@@ -258,6 +265,106 @@ impl CommandHandler {
         log::info!("PID parameters applied");
         Ok(())
     }
+    
+    /// Handle raw G-code line
+    async fn handle_gcode_line(&self, message: &mut Message) -> EmbResult<()> {
+        let gcode_str = message.payload.get("gcode")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| EmbError::MessageQueue("Missing gcode in GcodeLine message".to_string()))?;
+        
+        log::info!("G-code line: {}", gcode_str);
+        
+        let parsed = GCodeParser::parse_line(gcode_str, 0)
+            .ok_or_else(|| EmbError::MessageQueue(format!("Failed to parse G-code: {}", gcode_str)))?;
+        
+        match parsed.kind {
+            CommandKind::Motion(motion_cmd) => {
+                match motion_cmd {
+                    MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
+                        let cmd = if is_rapid { "G0" } else { "G1" };
+                        
+                        // Non-print-mode homed check (server also checks, but do early check here)
+                        let print_mode = message.payload.get("print_mode")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        
+                        if !print_mode {
+                            match self.core_client.motion_query_homed().await {
+                                Ok(homed) if homed != 0b111 => {
+                                    return Err(EmbError::MessageQueue(format!(
+                                        "Cannot move: axes not homed (homed_axes={:#04b}). Use G28 first.", homed
+                                    )));
+                                }
+                                Err(e) => {
+                                    return Err(EmbError::MessageQueue(format!("Homed query failed: {}", e)));
+                                }
+                                _ => {}
+                            }
+                        }
+                        
+                        self.core_client.motion_dispatch(cmd, x, y, z, e, f).await
+                            .map_err(|e| EmbError::MessageQueue(format!("Motion dispatch failed: {}", e)))
+                            .map(|_| ())?;
+                    }
+                    MotionCommand::ArcMove { x, y, z, e, f, i, j, is_cw } => {
+                        let cmd = if is_cw { "G2" } else { "G3" };
+                        let arc = Some(emb_api::ArcParamsApi { i, j, direction: if is_cw { 0 } else { 1 } });
+                        
+                        // Homed check for arc moves
+                        match self.core_client.motion_query_homed().await {
+                            Ok(homed) if homed != 0b111 => {
+                                return Err(EmbError::MessageQueue(format!(
+                                    "Cannot move: axes not homed (homed_axes={:#04b}). Use G28 first.", homed
+                                )));
+                            }
+                            Err(e) => {
+                                return Err(EmbError::MessageQueue(format!("Homed query failed: {}", e)));
+                            }
+                            _ => {}
+                        }
+                        
+                        self.core_client.motion_dispatch_arc(&cmd, x, y, z, e, f, arc).await
+                            .map_err(|e| EmbError::MessageQueue(format!("Arc dispatch failed: {}", e)))
+                            .map(|_| ())?;
+                    }
+                    MotionCommand::Home { .. } => {
+                        // G28
+                        self.core_client.motion_dispatch("G28", None, None, None, None, None).await
+                            .map_err(|e| EmbError::MessageQueue(format!("Home failed: {}", e)))
+                            .map(|_| ())?;
+                    }
+                    MotionCommand::SetPosition { x, y, z, e } => {
+                        self.core_client.motion_set_position(x, y, z, e).await
+                            .map_err(|e| EmbError::MessageQueue(format!("SetPosition failed: {}", e)))?;
+                    }
+                    MotionCommand::AbsolutePositioning => {
+                        self.core_client.motion_execute_m_command(emb_api::MCommand::AbsolutePositioning).await
+                            .map_err(|e| EmbError::MessageQueue(e))?;
+                    }
+                    MotionCommand::RelativePositioning => {
+                        self.core_client.motion_execute_m_command(emb_api::MCommand::RelativePositioning).await
+                            .map_err(|e| EmbError::MessageQueue(e))?;
+                    }
+                    MotionCommand::Dwell { dwell_time_ms } => {
+                        self.core_client.motion_dwell(dwell_time_ms).await
+                            .map_err(|e| EmbError::MessageQueue(e))?;
+                    }
+                    _ => {
+                        return Err(EmbError::MessageQueue(format!("Unsupported motion command: {:?}", motion_cmd)));
+                    }
+                }
+            }
+            CommandKind::Machine(m_cmd) => {
+                self.core_client.motion_execute_m_command(m_cmd).await
+                    .map_err(|e| EmbError::MessageQueue(e))?;
+            }
+            _ => {
+                return Err(EmbError::MessageQueue(format!("Unsupported G-code command: {}", gcode_str)));
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -276,6 +383,7 @@ impl MessageHandler for CommandHandler {
             MessageType::PidTuneProgress => self.handle_pid_tune_progress(message).await,
             MessageType::PidTuneResult => self.handle_pid_tune_result(message).await,
             MessageType::PidTuneApply => self.handle_pid_tune_apply(message).await,
+            MessageType::GcodeLine => self.handle_gcode_line(message).await,
             _ => Err(EmbError::MessageQueue(format!("Unsupported message type: {:?}", message.message_type))),
         }
     }

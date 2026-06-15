@@ -24,7 +24,8 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use axum::http::Method;
 
-use emb_public::{CoreSocketClient, TemperatureManager, TemperatureManagerConfig, SyncEventPublisher, GpioManager, HomingManager, PrintController};
+use emb_public::{CoreSocketClient, TemperatureManager, TemperatureManagerConfig, SyncEventPublisher, GpioManager, HomingManager, PrintController, ConfigManager};
+use emb_public::gcode::MotionCommand;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GpioSetRequest {
@@ -109,6 +110,7 @@ fn create_debug_router(state: Arc<DebugState>) -> Router {
         .route("/api/gcode/progress", get(gcode_print_progress))
         .route("/api/temperature/status", get(temperature_status))
         .route("/api/temperature/set", get(temperature_set))
+        .route("/api/motion/position", get(motion_position))
         .with_state(state)
 }
 
@@ -166,6 +168,24 @@ async fn temperature_set(
     }
 }
 
+#[derive(Debug, Serialize)]
+struct PositionInfo {
+    x: f32,
+    y: f32,
+    z: f32,
+    e: f32,
+}
+
+/// Get current position from server planner (coordinate system)
+async fn motion_position(
+    State(state): State<Arc<DebugState>>,
+) -> impl IntoResponse {
+    match state.core_client.motion_get_position().await {
+        Ok((x, y, z, e)) => Json(ApiResponse::success(PositionInfo { x, y, z, e })),
+        Err(e) => Json(ApiResponse::<PositionInfo>::error(format!("Error: {}", e))),
+    }
+}
+
 /// Homing Start: use HomingManager
 /// Query params: ?x=true&y=true&z=true  or  ?all=true
 #[derive(Debug, Deserialize)]
@@ -203,77 +223,151 @@ async fn gcode_execute(
 ) -> impl IntoResponse {
     log::info!("G-code Execute: {}", req.gcode);
     
-    // Parse G-code (simple parser for G0/G1)
-    let parts: Vec<&str> = req.gcode.split_whitespace().collect();
-    if parts.is_empty() {
-        return Json(ApiResponse::<String>::error("Empty G-code".to_string()));
-    }
+    // Parse G-code using the public parser
+    let parsed = emb_public::gcode::GCodeParser::parse_line(&req.gcode, 0);
     
-    let cmd = parts[0].to_uppercase();
-    if cmd != "G0" && cmd != "G1" && cmd != "G2" && cmd != "G3" {
-        return Json(ApiResponse::<String>::error(format!("Unsupported G-code: {}", cmd)));
-    }
-    
-    // Parse parameters (X, Y, Z, E, F, I, J)
-    let mut x: Option<f32> = None;
-    let mut y: Option<f32> = None;
-    let mut z: Option<f32> = None;
-    let mut e: Option<f32> = None;
-    let mut feed_rate: Option<f32> = None;
-    let mut i: Option<f32> = None;
-    let mut j: Option<f32> = None;
-    
-    for part in parts.iter().skip(1) {
-        let part = part.to_uppercase();
-        if part.starts_with('X') {
-            x = part[1..].parse().ok();
-        } else if part.starts_with('Y') {
-            y = part[1..].parse().ok();
-        } else if part.starts_with('Z') {
-            z = part[1..].parse().ok();
-        } else if part.starts_with('E') {
-            e = part[1..].parse().ok();
-        } else if part.starts_with('F') {
-            feed_rate = part[1..].parse().ok();
-        } else if part.starts_with('I') {
-            i = part[1..].parse().ok();
-        } else if part.starts_with('J') {
-            j = part[1..].parse().ok();
+    let parsed = match parsed {
+        Some(p) => p,
+        None => {
+            return Json(ApiResponse::<String>::error("Parse error".to_string()));
         }
-    }
-    
-    // Build arc parameters for G2/G3
-    let arc = if cmd == "G2" || cmd == "G3" {
-        match (i, j) {
-            (Some(i_val), Some(j_val)) => Some(emb_api::ArcParamsApi {
-                i: i_val,
-                j: j_val,
-                direction: if cmd == "G2" { 0 } else { 1 },
-            }),
-            (Some(i_val), None) => Some(emb_api::ArcParamsApi {
-                i: i_val,
-                j: 0.0,
-                direction: if cmd == "G2" { 0 } else { 1 },
-            }),
-            (None, Some(j_val)) => Some(emb_api::ArcParamsApi {
-                i: 0.0,
-                j: j_val,
-                direction: if cmd == "G2" { 0 } else { 1 },
-            }),
-            (None, None) => None,
-        }
-    } else {
-        None
     };
     
-    // Dispatch motion to server
-    match state.core_client.motion_dispatch_arc(&cmd, x, y, z, e, feed_rate, arc).await {
-        Ok(_) => {
-            Json(ApiResponse::success("Motion dispatched".to_string()))
+    match parsed.kind {
+        emb_public::gcode::CommandKind::Motion(motion_cmd) => {
+            match motion_cmd {
+                MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
+                    let cmd = if is_rapid { "G0" } else { "G1" };
+                    
+                    // G0/G1 homed check before dispatch
+                    match state.core_client.motion_query_homed().await {
+                        Ok(homed) if homed != 0b111 => {
+                            return Json(ApiResponse::<String>::error(
+                                format!("Cannot move: axes not homed (homed_axes={:#04b}). Use G28 first.", homed)
+                            ));
+                        }
+                        Err(e) => {
+                            return Json(ApiResponse::<String>::error(format!("Homed query failed: {}", e)));
+                        }
+                        _ => {}
+                    }
+                    
+                    match state.core_client.motion_dispatch(cmd, x, y, z, e, f).await {
+                        Ok(msg) => Json(ApiResponse::success(if msg.is_empty() { "Motion dispatched".to_string() } else { msg })),
+                        Err(e) => Json(ApiResponse::<String>::error(format!("Motion dispatch failed: {}", e))),
+                    }
+                }
+                MotionCommand::ArcMove { x, y, z, e, f, i, j, is_cw } => {
+                    let cmd = if is_cw { "G2" } else { "G3" };
+                    let arc = Some(emb_api::ArcParamsApi {
+                        i, j,
+                        direction: if is_cw { 0 } else { 1 },
+                    });
+                    
+                    // Arc also requires homed axes
+                    match state.core_client.motion_query_homed().await {
+                        Ok(homed) if homed != 0b111 => {
+                            return Json(ApiResponse::<String>::error(
+                                format!("Cannot move: axes not homed (homed_axes={:#04b}). Use G28 first.", homed)
+                            ));
+                        }
+                        Err(e) => {
+                            return Json(ApiResponse::<String>::error(format!("Homed query failed: {}", e)));
+                        }
+                        _ => {}
+                    }
+                    
+                    match state.core_client.motion_dispatch_arc(&cmd, x, y, z, e, f, arc).await {
+                        Ok(msg) => Json(ApiResponse::success(if msg.is_empty() { "Arc dispatched".to_string() } else { msg })),
+                        Err(e) => Json(ApiResponse::<String>::error(format!("Arc dispatch failed: {}", e))),
+                    }
+                }
+                MotionCommand::Home { x, y, z } => {
+                    // G28 - route through HomingManager
+                    match state.homing_manager.home_by_names(x, y, z, false).await {
+                        Ok(msg) => Json(ApiResponse::success(msg)),
+                        Err(e) => Json(ApiResponse::<String>::error(e)),
+                    }
+                }
+                MotionCommand::SetPosition { x, y, z, e } => {
+                    // G92
+                    match state.core_client.motion_set_position(x, y, z, e).await {
+                        Ok(_) => Json(ApiResponse::success("Position set".to_string())),
+                        Err(e) => Json(ApiResponse::<String>::error(e)),
+                    }
+                }
+                MotionCommand::AbsolutePositioning => {
+                    // G90 - send via MCommand
+                    match state.core_client.motion_execute_m_command(emb_api::MCommand::AbsolutePositioning).await {
+                        Ok(_) => Json(ApiResponse::success("Absolute positioning (G90)".to_string())),
+                        Err(e) => Json(ApiResponse::<String>::error(e)),
+                    }
+                }
+                MotionCommand::RelativePositioning => {
+                    // G91
+                    match state.core_client.motion_execute_m_command(emb_api::MCommand::RelativePositioning).await {
+                        Ok(_) => Json(ApiResponse::success("Relative positioning (G91)".to_string())),
+                        Err(e) => Json(ApiResponse::<String>::error(e)),
+                    }
+                }
+                MotionCommand::Dwell { dwell_time_ms } => {
+                    // G4 — motion_dwell 内部等待设备端 DwellDone 通知
+                    match state.core_client.motion_dwell(dwell_time_ms).await {
+                        Ok(_) => Json(ApiResponse::success(format!("Dwell {}ms", dwell_time_ms))),
+                        Err(e) => Json(ApiResponse::<String>::error(e)),
+                    }
+                }
+                _ => {
+                    Json(ApiResponse::<String>::error(format!("Unsupported G-code: {}", req.gcode)))
+                }
+            }
         }
-        Err(e) => {
-            log::error!("❌ Motion dispatch failed: {}", e);
-            Json(ApiResponse::<String>::error(format!("Motion dispatch failed: {}", e)))
+        emb_public::gcode::CommandKind::Machine(m_cmd) => {
+            log::info!("  → Executing M-command: {:?}", m_cmd);
+
+            // M119 - 限位状态查询，特殊处理以显示配置中定义的限位开关
+            if let emb_api::MCommand::GetEndstopStates = &m_cmd {
+                match state.core_client.motion_get_endstop_states().await {
+                    Ok((x_min, x_max, y_min, y_max, z_min, z_max)) => {
+                        // 读取配置文件，只显示已配置的限位开关
+                        let config = ConfigManager::instance().get_config().ok();
+                        let limit = config.as_ref().map(|c| &c.limit_switch);
+
+                        let mut parts = Vec::new();
+                        if let Some(l) = limit {
+                            if !l.x.pin.is_empty() {
+                                parts.push(format!("x_min:{}", if x_min { "TRIGGERED" } else { "open" }));
+                            }
+                            if !l.y.pin.is_empty() {
+                                parts.push(format!("y_min:{}", if y_min { "TRIGGERED" } else { "open" }));
+                            }
+                            if !l.z.pin.is_empty() {
+                                parts.push(format!("z_min:{}", if z_min { "TRIGGERED" } else { "open" }));
+                            }
+                        } else {
+                            // 无配置时，显示所有限位状态
+                            parts.push(format!("x_min:{}", if x_min { "TRIGGERED" } else { "open" }));
+                            parts.push(format!("x_max:{}", if x_max { "TRIGGERED" } else { "open" }));
+                            parts.push(format!("y_min:{}", if y_min { "TRIGGERED" } else { "open" }));
+                            parts.push(format!("y_max:{}", if y_max { "TRIGGERED" } else { "open" }));
+                            parts.push(format!("z_min:{}", if z_min { "TRIGGERED" } else { "open" }));
+                            parts.push(format!("z_max:{}", if z_max { "TRIGGERED" } else { "open" }));
+                        }
+
+                        let msg = format!("Endstop states: {}", parts.join(" "));
+                        Json(ApiResponse::success(msg))
+                    }
+                    Err(e) => Json(ApiResponse::<String>::error(format!("M119 failed: {}", e))),
+                }
+            } else {
+                match state.core_client.motion_execute_m_command(m_cmd).await {
+                    Ok(_) => Json(ApiResponse::success("M-command executed".to_string())),
+                    Err(e) => Json(ApiResponse::<String>::error(format!("M-command failed: {}", e))),
+                }
+            }
+        }
+        _ => {
+            Json(ApiResponse::<String>::error(format!("Unsupported command: {}", req.gcode)))
         }
     }
 }

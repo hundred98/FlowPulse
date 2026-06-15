@@ -137,6 +137,13 @@ pub enum MotionRequest {
         /// Motor enable mask (bit0=X, bit1=Y, bit2=Z, bit3=E, 1=enable, 0=disable)
         enable_mask: u8,
     },
+    /// G4 Dwell - 暂停指定时间
+    Dwell {
+        /// 暂停时间 (毫秒)
+        dwell_time_ms: u32,
+    },
+    /// 查询归位状态
+    QueryHomed,
     
     // === Bed Mesh Compensation ===
     /// Begin a mesh data transfer session.
@@ -301,6 +308,43 @@ pub enum MCommand {
         e: Option<f32>,
     },
 
+    // === 新增命令 ===
+    /// G4 - 暂停指定时间
+    Dwell {
+        /// 暂停时间 (毫秒)
+        dwell_time_ms: u32,
+    },
+    /// M17 - 使能所有电机
+    MotorEnableAll,
+    /// M84/M18 - 关闭所有电机
+    MotorDisableAll,
+    /// M206 - 设置 Home Offset
+    SetHomeOffset {
+        x: Option<f32>,
+        y: Option<f32>,
+        z: Option<f32>,
+    },
+    /// M119 - 查询限位开关状态
+    GetEndstopStates,
+    /// M114 - 查询当前位置
+    GetPosition,
+    /// M220 - 设置进给率百分比
+    SetFeedratePercentage {
+        /// 百分比 (0~100+)
+        percentage: f32,
+    },
+    /// M221 - 设置流量百分比
+    SetFlowPercentage {
+        /// 挤出机编号
+        extruder: u8,
+        /// 百分比 (0~100+)
+        percentage: f32,
+    },
+    /// G90 - 绝对定位模式
+    AbsolutePositioning,
+    /// G91 - 相对定位模式
+    RelativePositioning,
+
     // === 查询型 ===
     /// M105 - 查询温度
     QueryTemperature,
@@ -316,8 +360,16 @@ impl MCommand {
             MCommand::SetAcceleration { .. }
             | MCommand::SetMaxVelocity { .. }
             | MCommand::SetAccelParams { .. }
-            | MCommand::SetStepsPerMm { .. } => MExecutionType::MotionParam,
-            MCommand::QueryTemperature => MExecutionType::Query,
+            | MCommand::SetStepsPerMm { .. }
+            | MCommand::SetHomeOffset { .. }
+            | MCommand::SetFeedratePercentage { .. }
+            | MCommand::SetFlowPercentage { .. }
+            | MCommand::AbsolutePositioning
+            | MCommand::RelativePositioning => MExecutionType::MotionParam,
+            MCommand::QueryTemperature | MCommand::GetEndstopStates | MCommand::GetPosition => MExecutionType::Query,
+            MCommand::Dwell { .. }
+            | MCommand::MotorEnableAll
+            | MCommand::MotorDisableAll => MExecutionType::SyncSet,
             _ => MExecutionType::SyncSet,
         }
     }
@@ -528,6 +580,20 @@ pub enum MotionResponse {
     MotorEnableResult {
         success: bool,
         error: Option<String>,
+    },
+    /// M119 - 限位状态结果
+    EndstopStates {
+        x_min: bool,
+        x_max: bool,
+        y_min: bool,
+        y_max: bool,
+        z_min: bool,
+        z_max: bool,
+    },
+    /// 归位状态查询结果
+    HomedStatus {
+        /// 归位轴位掩码 (bit0=X, bit1=Y, bit2=Z)
+        homed_axes: u8,
     },
     
     // === Bed Mesh Compensation Responses ===

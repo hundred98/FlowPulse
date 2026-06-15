@@ -68,6 +68,10 @@ pub enum MotionCommand {
     AbsolutePositioning,
     /// 相对定位 (G91)
     RelativePositioning,
+    /// 暂停 (G4)
+    Dwell {
+        dwell_time_ms: u32,
+    },
     /// 英寸单位 (G20)
     Inches,
     /// 毫米单位 (G21)

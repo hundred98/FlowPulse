@@ -51,6 +51,8 @@ pub struct CoreSocketClient {
     writer: RwLock<Option<tokio::io::WriteHalf<TcpStream>>>,
     /// Channel for decoded responses from background reader (bounded for backpressure)
     message_rx: Mutex<Option<mpsc::Receiver<CoreResponse>>>,
+    /// Separate channel for Ping/Pong responses (isolated from message_rx)
+    ping_rx: Mutex<Option<mpsc::Receiver<CoreResponse>>>,
     /// Background reader task handle
     reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// GPIO Report回调（可选），参数: (name, value)
@@ -66,6 +68,7 @@ impl CoreSocketClient {
             config,
             writer: RwLock::new(None),
             message_rx: Mutex::new(None),
+            ping_rx: Mutex::new(None),
             reader_handle: Mutex::new(None),
             gpio_report_callback: Arc::new(RwLock::new(None)),
             status_report_callback: Arc::new(RwLock::new(None)),
@@ -97,18 +100,20 @@ impl CoreSocketClient {
         // Split stream into reader/writer halves
         let (reader, writer) = tokio::io::split(stream);
         
-        // Create message channel (bounded, provides backpressure)
+        // Create message channels (bounded, provides backpressure)
         let (tx, rx) = mpsc::channel(256);
+        let (ping_tx, ping_rx) = mpsc::channel(64);
         
-        // Store writer and receiver
+        // Store writer and receivers
         *self.writer.write().await = Some(writer);
         *self.message_rx.lock().await = Some(rx);
+        *self.ping_rx.lock().await = Some(ping_rx);
         
         // Start background reader task
         let gpio_callback = self.gpio_report_callback.clone();
         let status_callback = self.status_report_callback.clone();
         let handle = tokio::spawn(async move {
-            background_reader(reader, tx, gpio_callback, status_callback).await;
+            background_reader(reader, tx, ping_tx, gpio_callback, status_callback).await;
         });
         *self.reader_handle.lock().await = Some(handle);
 
@@ -129,8 +134,9 @@ impl CoreSocketClient {
             let _ = writer.shutdown().await;
         }
         
-        // Clear message queue
+        // Clear message queues
         self.message_rx.lock().await.take();
+        self.ping_rx.lock().await.take();
         
         info!("Disconnected from core server");
     }
@@ -266,12 +272,48 @@ impl CoreSocketClient {
     // Ping
     // ========================================================================
 
-    /// Ping the server.
+    /// Ping the server through dedicated ping channel.
     pub async fn ping(&self) -> Result<(), String> {
-        match self.send_request(&CoreRequest::Ping).await? {
-            CoreResponse::Pong => Ok(()),
-            CoreResponse::Error(e) => Err(format!("Ping error: {}", e.message)),
-            other => Err(format!("Unexpected response: {:?}", other)),
+        self.ensure_connected().await?;
+
+        let encoded = encode_request(&CoreRequest::Ping)
+            .map_err(|e| format!("Encode error: {}", e))?;
+
+        {
+            let mut guard = self.writer.write().await;
+            let writer = guard.as_mut().ok_or("Not connected")?;
+            writer.write_all(&encoded).await
+                .map_err(|e| format!("Write error: {}", e))?;
+            writer.flush().await
+                .map_err(|e| format!("Flush error: {}", e))?;
+        }
+
+        // Read Pong from dedicated ping channel
+        let deadline = tokio::time::Instant::now()
+            + Duration::from_millis(self.config.request_timeout_ms);
+
+        let mut rx_guard = self.ping_rx.lock().await;
+        let rx = rx_guard.as_mut().ok_or("Not connected")?;
+
+        loop {
+            if tokio::time::Instant::now() > deadline {
+                return Err("Ping timeout".to_string());
+            }
+            match tokio::time::timeout(
+                deadline - tokio::time::Instant::now(),
+                rx.recv(),
+            ).await {
+                Ok(Some(CoreResponse::Pong)) => return Ok(()),
+                Ok(Some(CoreResponse::Error(e))) => {
+                    return Err(format!("Ping error: {}", e.message));
+                }
+                Ok(Some(other)) => {
+                    debug!("ping: skipping non-Pong message: {:?}", other);
+                    continue;
+                }
+                Ok(None) => return Err("Server closed connection".to_string()),
+                Err(_) => return Err("Ping timeout".to_string()),
+            }
         }
     }
 
@@ -480,6 +522,12 @@ impl CoreSocketClient {
             CoreResponse::Motion(MotionResponse::MCommandResult { success: false, error }) => {
                 Err(error.unwrap_or_else(|| "M command failed".to_string()))
             }
+            CoreResponse::Motion(MotionResponse::MotorEnableResult { success: true, .. }) => Ok(()),
+            CoreResponse::Motion(MotionResponse::MotorEnableResult { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "M command failed".to_string()))
+            }
+            // 查询型指令（M119限位状态）返回正常
+            CoreResponse::Motion(MotionResponse::EndstopStates { .. }) => Ok(()),
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),
         }
@@ -508,6 +556,29 @@ impl CoreSocketClient {
             CoreResponse::Motion(MotionResponse::MCommandResult { success: true, .. }) => Ok(()),
             CoreResponse::Motion(MotionResponse::MCommandResult { success: false, error }) => {
                 Err(error.unwrap_or_else(|| "M command failed".to_string()))
+            }
+            CoreResponse::Motion(MotionResponse::MotorEnableResult { success: true, .. }) => Ok(()),
+            CoreResponse::Motion(MotionResponse::MotorEnableResult { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "M command failed".to_string()))
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    /// Execute M119 - 获取限位开关状态.
+    ///
+    /// 返回 (x_min, x_max, y_min, y_max, z_min, z_max) 的限位状态.
+    /// 如果某个轴未配置限位开关，其值可能始终为 false.
+    pub async fn motion_get_endstop_states(&self) -> Result<(bool, bool, bool, bool, bool, bool), String> {
+        match self.send_request(&CoreRequest::Motion(MotionRequest::ExecuteMCommand {
+            command: MCommand::GetEndstopStates,
+        })).await? {
+            CoreResponse::Motion(MotionResponse::EndstopStates { x_min, x_max, y_min, y_max, z_min, z_max }) => {
+                Ok((x_min, x_max, y_min, y_max, z_min, z_max))
+            }
+            CoreResponse::Motion(MotionResponse::MCommandResult { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "M119 failed".to_string()))
             }
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),
@@ -545,11 +616,13 @@ impl CoreSocketClient {
         z: Option<f32>,
         e: Option<f32>,
         feed_rate: Option<f32>,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         self.motion_dispatch_arc(cmd, x, y, z, e, feed_rate, None).await
     }
 
     /// Plan a move (with optional arc) AND dispatch segments to serial.
+    /// Returns Ok(warning_message) on success (may be empty if no warnings),
+    /// or Err(error_message) on failure.
     pub async fn motion_dispatch_arc(
         &self,
         cmd: &str,
@@ -559,21 +632,58 @@ impl CoreSocketClient {
         e: Option<f32>,
         feed_rate: Option<f32>,
         arc: Option<ArcParamsApi>,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         match self.send_request(&CoreRequest::Motion(MotionRequest::DispatchMotion {
             cmd: cmd.to_string(),
             x, y, z, e, feed_rate,
             arc,
         })).await? {
-            CoreResponse::Motion(MotionResponse::DispatchResult { success: true, .. }) => {
-                Ok(())
+            CoreResponse::Motion(MotionResponse::DispatchResult { success: true, error, .. }) => {
+                Ok(error.unwrap_or_default())
             }
             CoreResponse::Motion(MotionResponse::DispatchResult { success: false, error, .. }) => {
                 Err(error.unwrap_or_else(|| "Motion dispatch failed".to_string()))
             }
             CoreResponse::Motion(MotionResponse::DrainResult { success: true, .. }) => {
-                Ok(())
+                Ok(String::new())
             }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    /// Execute a dwell (G4 Pnn) on the device.
+    pub async fn motion_dwell(&self, dwell_time_ms: u32) -> Result<(), String> {
+        self.ensure_connected().await?;
+
+        let request = CoreRequest::Motion(MotionRequest::Dwell { dwell_time_ms });
+        let encoded = encode_request(&request)
+            .map_err(|e| format!("Encode error: {}", e))?;
+
+        let mut guard = self.writer.write().await;
+        let writer = guard.as_mut().ok_or("Not connected")?;
+        writer.write_all(&encoded).await
+            .map_err(|e| format!("Write error: {}", e))?;
+        writer.flush().await
+            .map_err(|e| format!("Flush error: {}", e))?;
+        drop(guard);
+
+        // Dwell 请求的超时应包含 dwell_time + 充足余量
+        let timeout = Duration::from_millis(dwell_time_ms as u64 + 30000);
+        match self.read_response_with_timeout(timeout).await? {
+            CoreResponse::Motion(MotionResponse::MCommandResult { success: true, .. }) => Ok(()),
+            CoreResponse::Motion(MotionResponse::MCommandResult { success: false, error }) => {
+                Err(error.unwrap_or_else(|| "Dwell failed".to_string()))
+            }
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    /// Query homed status from server.
+    pub async fn motion_query_homed(&self) -> Result<u8, String> {
+        match self.send_request(&CoreRequest::Motion(MotionRequest::QueryHomed)).await? {
+            CoreResponse::Motion(MotionResponse::HomedStatus { homed_axes }) => Ok(homed_axes),
             CoreResponse::Error(e) => Err(e.message),
             other => Err(format!("Unexpected response: {:?}", other)),
         }
@@ -723,6 +833,7 @@ impl CoreSocketClient {
 async fn background_reader(
     mut reader: tokio::io::ReadHalf<TcpStream>,
     tx: mpsc::Sender<CoreResponse>,
+    ping_tx: mpsc::Sender<CoreResponse>,
     gpio_callback: Arc<RwLock<Option<Box<dyn Fn(String, f32) + Send + Sync>>>>,
     status_callback: Arc<RwLock<Option<Box<dyn Fn(u8, Vec<u8>) + Send + Sync>>>>,
 ) {
@@ -752,8 +863,15 @@ async fn background_reader(
                     let consumed = buf.len() - remaining.len();
                     buf.drain(..consumed);
                     
-                    // Handle push messages (GPIO Report and Status Report)
+                    // Handle push messages (GPIO Report, Status Report) and Pong
                     match &response {
+                        CoreResponse::Pong => {
+                            // Pong goes to dedicated ping channel
+                            if ping_tx.send(response).await.is_err() {
+                                return;
+                            }
+                            continue;
+                        }
                         CoreResponse::Gpio(emb_api::GpioResponse::PinReport { name, value }) => {
                             let callback_guard = gpio_callback.read().await;
                             if let Some(callback) = callback_guard.as_ref() {

@@ -46,6 +46,17 @@ pub struct TemperatureManager {
 
     /// Cancellation sender for temperature wait (M109/M190)
     cancel_sender: Arc<RwLock<Option<tokio::sync::watch::Sender<bool>>>>,
+
+    /// Last device-reported position from STATUS_R frame
+    device_position: Arc<RwLock<Option<DevicePosition>>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DevicePosition {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub e: i32,
 }
 
 /// PID tune state (for tracking ongoing tune process)
@@ -85,6 +96,7 @@ impl TemperatureManager {
             tune_state: Arc::new(RwLock::new(TuneState::default())),
             config: RwLock::new(config),
             cancel_sender: Arc::new(RwLock::new(None)),
+            device_position: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -236,6 +248,9 @@ impl TemperatureManager {
         // Clone for tune frame handling
         let tune_state = self.tune_state.clone();
 
+        // Clone for position cache
+        let device_position = self.device_position.clone();
+
         // Read auto-fan config
         let cfg = self.config.read().await;
         let auto_fan_cfg = cfg.auto_fan.clone();
@@ -248,20 +263,32 @@ impl TemperatureManager {
         self.client.set_status_report_callback(move |frame_type, payload| {
             // Handle DeviceStatusReport (frame_type = 0x04)
             if frame_type == 0x04 && payload.len() >= 25 {
+                // Parse position data (int32 big-endian)
+                let pos_x = i32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
+                let pos_y = i32::from_be_bytes([payload[5], payload[6], payload[7], payload[8]]);
+                let pos_z = i32::from_be_bytes([payload[9], payload[10], payload[11], payload[12]]);
+                let pos_e = i32::from_be_bytes([payload[13], payload[14], payload[15], payload[16]]);
+
                 // Parse temperature data (in 0.1°C units)
                 let temp_bed_cur = i16::from_be_bytes([payload[17], payload[18]]) as f32 / 10.0;
                 let temp_bed_tgt = i16::from_be_bytes([payload[19], payload[20]]) as f32 / 10.0;
                 let temp_nozzle_cur = i16::from_be_bytes([payload[21], payload[22]]) as f32 / 10.0;
                 let temp_nozzle_tgt = i16::from_be_bytes([payload[23], payload[24]]) as f32 / 10.0;
 
-                // Update temperature in async context
+                // Update in async context
                 let heaters_clone = heaters.clone();
                 let event_publisher_clone = event_publisher.clone();
                 let client_clone = client.clone();
                 let fan_state_clone = fan_state.clone();
                 let af_cfg = auto_fan_cfg.clone();
+                let pos_cache = device_position.clone();
 
                 tokio::spawn(async move {
+                    // Cache device-reported position
+                    *pos_cache.write().await = Some(super::DevicePosition {
+                        x: pos_x, y: pos_y, z: pos_z, e: pos_e,
+                    });
+
                     // Update bed temperature
                     let mut heaters = heaters_clone.write().await;
                     if let Some(bed_state) = heaters.get_mut("bed") {
@@ -841,6 +868,11 @@ impl TemperatureManager {
 
         log::info!("All heaters turned off");
         Ok(())
+    }
+
+    /// Get last device-reported position from STATUS_R frame
+    pub async fn get_device_position(&self) -> Option<DevicePosition> {
+        self.device_position.read().await.clone()
     }
 
     /// Get temperature status (for FrontendDataProvider)

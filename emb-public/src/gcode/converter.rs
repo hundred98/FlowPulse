@@ -92,13 +92,23 @@ impl MCommandConverter {
             MCommand::SetAcceleration { .. } |
             MCommand::SetMaxVelocity { .. } |
             MCommand::SetAccelParams { .. } |
-            MCommand::SetStepsPerMm { .. } => {
+            MCommand::SetStepsPerMm { .. } |
+            MCommand::Dwell { .. } |
+            MCommand::MotorEnableAll |
+            MCommand::MotorDisableAll |
+            MCommand::SetHomeOffset { .. } |
+            MCommand::SetFeedratePercentage { .. } |
+            MCommand::SetFlowPercentage { .. } |
+            MCommand::AbsolutePositioning |
+            MCommand::RelativePositioning => {
                 Ok(vec![DeviceCommand::MotionParamUpdate])
             }
 
             // === 查询型 ===
-            MCommand::QueryTemperature => {
-                // M105 由 TemperatureManager 直接返回缓存温度
+            MCommand::QueryTemperature |
+            MCommand::GetEndstopStates |
+            MCommand::GetPosition => {
+                // 查询型指令，不需要下发到下位机
                 Ok(vec![])
             }
 

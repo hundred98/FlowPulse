@@ -183,6 +183,7 @@ impl AppState {
         
         // Command handler
         let command_handler = Arc::new(CommandHandler::new(
+            self.core_client.clone(),
             self.device_state.clone(),
             self.state_machine.clone(),
             self.print_controller.clone(),
@@ -196,6 +197,7 @@ impl AppState {
         self.message_queue.add_handler(MessageType::TemperatureSet, command_handler.clone()).await;
         self.message_queue.add_handler(MessageType::MoveCommand, command_handler.clone()).await;
         self.message_queue.add_handler(MessageType::HomeCommand, command_handler.clone()).await;
+        self.message_queue.add_handler(MessageType::GcodeLine, command_handler.clone()).await;
         
         // Status handler
         let status_handler = Arc::new(StatusHandler::new(

@@ -280,10 +280,10 @@ impl PrintController {
 
         log::info!("Starting print execution: {} ({} lines)", filename, total_lines);
 
-        for (i, line) in lines.iter().enumerate() {
+        for (line_idx, line) in lines.iter().enumerate() {
             // Check for stop request
             if self.stop_requested.load(Ordering::SeqCst) {
-                log::info!("Print stopped by user request at line {}", i + 1);
+                log::info!("Print stopped by user request at line {}", line_idx + 1);
                 return Err("Print stopped by user".to_string());
             }
 
@@ -291,24 +291,24 @@ impl PrintController {
 
             // Skip empty and comment lines
             if line.is_empty() || line.starts_with(';') || line.starts_with("//") {
-                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                 let mut progress = self.progress.write().await;
                 progress.percent = percent;
-                progress.current_line = (i + 1) as u32;
+                progress.current_line = (line_idx + 1) as u32;
                 progress.total_lines = total_lines as u32;
                 progress.status = format!("Skipping: {}", line);
                 continue;
             }
 
             // Parse the line
-            let cmd = match GCodeParser::parse_line(line, i as u32) {
+            let cmd = match GCodeParser::parse_line(line, line_idx as u32) {
                 Some(parsed) => parsed,
                 None => {
-                    log::warn!("Parse error line {}: {}", i + 1, line);
-                    let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                    log::warn!("Parse error line {}: {}", line_idx + 1, line);
+                    let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                     let mut progress = self.progress.write().await;
                     progress.percent = percent;
-                    progress.current_line = (i + 1) as u32;
+                    progress.current_line = (line_idx + 1) as u32;
                     progress.total_lines = total_lines as u32;
                     progress.status = format!("Parse error: {}", line);
                     continue;
@@ -317,10 +317,29 @@ impl PrintController {
 
             match &cmd.kind {
                 CommandKind::Motion(motion_cmd) => {
-                    let (cmd_str, x, y, z, e, f, arc) = match motion_cmd {
+                    match motion_cmd {
                         MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
                             let cmd_str = if *is_rapid { "G0" } else { "G1" };
-                            (cmd_str.to_string(), *x, *y, *z, *e, *f, None)
+                            match client.motion_dispatch_arc(cmd_str, *x, *y, *z, *e, *f, None).await {
+                                Ok(_) => {
+                                    let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
+                                    let mut progress = self.progress.write().await;
+                                    progress.percent = percent;
+                                    progress.current_line = (line_idx + 1) as u32;
+                                    progress.total_lines = total_lines as u32;
+                                    progress.status = format!("Dispatched: {}", line);
+                                }
+                                Err(e) => {
+                                    log::warn!("Motion dispatch failed line {}: {}", line_idx + 1, e);
+                                    let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
+                                    let mut progress = self.progress.write().await;
+                                    progress.percent = percent;
+                                    progress.current_line = (line_idx + 1) as u32;
+                                    progress.total_lines = total_lines as u32;
+                                    progress.status = format!("Motion error: {}", e);
+                                    return Err(format!("Motion dispatch failed at line {}: {}", line_idx + 1, e));
+                                }
+                            }
                         }
                         MotionCommand::ArcMove { x, y, z, e, f, i, j, is_cw } => {
                             let cmd_str = if *is_cw { "G2" } else { "G3" };
@@ -329,38 +348,51 @@ impl PrintController {
                                 j: *j,
                                 direction: if *is_cw { 0 } else { 1 },
                             });
-                            (cmd_str.to_string(), *x, *y, *z, *e, *f, arc)
+                            match client.motion_dispatch_arc(cmd_str, *x, *y, *z, *e, *f, arc).await {
+                                Ok(_) => {
+                                    let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
+                                    let mut progress = self.progress.write().await;
+                                    progress.percent = percent;
+                                    progress.current_line = (line_idx + 1) as u32;
+                                    progress.total_lines = total_lines as u32;
+                                    progress.status = format!("Dispatched: {}", line);
+                                }
+                                Err(e) => {
+                                    log::warn!("Arc dispatch failed line {}: {}", line_idx + 1, e);
+                                    let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
+                                    let mut progress = self.progress.write().await;
+                                    progress.percent = percent;
+                                    progress.current_line = (line_idx + 1) as u32;
+                                    progress.total_lines = total_lines as u32;
+                                    progress.status = format!("Arc error: {}", e);
+                                    return Err(format!("Arc dispatch failed at line {}: {}", line_idx + 1, e));
+                                }
+                            }
+                        }
+                        MotionCommand::Dwell { dwell_time_ms } => {
+                            match client.motion_dwell(*dwell_time_ms).await {
+                                Ok(()) => {
+                                    let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
+                                    let mut progress = self.progress.write().await;
+                                    progress.percent = percent;
+                                    progress.current_line = (line_idx + 1) as u32;
+                                    progress.total_lines = total_lines as u32;
+                                    progress.status = format!("Dwell: {}ms", dwell_time_ms);
+                                }
+                                Err(e) => {
+                                    log::warn!("Dwell failed line {}: {}", line_idx + 1, e);
+                                    return Err(format!("Dwell failed at line {}: {}", line_idx + 1, e));
+                                }
+                            }
                         }
                         _ => {
                             log::info!("  → Skipping non-motion command: {:?}", motion_cmd);
-                            let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                            let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                             let mut progress = self.progress.write().await;
                             progress.percent = percent;
-                            progress.current_line = (i + 1) as u32;
+                            progress.current_line = (line_idx + 1) as u32;
                             progress.total_lines = total_lines as u32;
                             progress.status = format!("Skipping non-motion");
-                            continue;
-                        }
-                    };
-
-                    match client.motion_dispatch_arc(&cmd_str, x, y, z, e, f, arc).await {
-                        Ok(()) => {
-                            let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
-                            let mut progress = self.progress.write().await;
-                            progress.percent = percent;
-                            progress.current_line = (i + 1) as u32;
-                            progress.total_lines = total_lines as u32;
-                            progress.status = format!("Dispatched: {}", line);
-                        }
-                        Err(e) => {
-                            log::warn!("Motion dispatch failed line {}: {}", i + 1, e);
-                            let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
-                            let mut progress = self.progress.write().await;
-                            progress.percent = percent;
-                            progress.current_line = (i + 1) as u32;
-                            progress.total_lines = total_lines as u32;
-                            progress.status = format!("Motion error: {}", e);
-                            return Err(format!("Motion dispatch failed at line {}: {}", i + 1, e));
                         }
                     }
                 }
@@ -399,10 +431,10 @@ impl PrintController {
 
                                     if wait_start.elapsed() > wait_timeout {
                                         log::warn!("Temperature wait timeout for {} ({}s)", heater, server_timeout_secs);
-                                        let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                        let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                         let mut progress = self.progress.write().await;
                                         progress.percent = percent;
-                                        progress.current_line = (i + 1) as u32;
+                                        progress.current_line = (line_idx + 1) as u32;
                                         progress.total_lines = total_lines as u32;
                                         progress.status = format!("Temp timeout: {} = {:.1}°C", heater, target);
                                         return Err(format!("Temperature wait timeout for {} after {}s", heater, server_timeout_secs));
@@ -428,22 +460,22 @@ impl PrintController {
                                     tokio::time::sleep(wait_check).await;
                                 }
 
-                                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                 let mut progress = self.progress.write().await;
                                 progress.percent = percent;
-                                progress.current_line = (i + 1) as u32;
+                                progress.current_line = (line_idx + 1) as u32;
                                 progress.total_lines = total_lines as u32;
                                 progress.status = format!("Temp OK: {} = {}°C", heater, target);
                             }
                             Err(e) => {
-                                log::warn!("M command failed line {}: {} — {}", i + 1, line, e);
-                                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                log::warn!("M command failed line {}: {} — {}", line_idx + 1, line, e);
+                                let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                 let mut progress = self.progress.write().await;
                                 progress.percent = percent;
-                                progress.current_line = (i + 1) as u32;
+                                progress.current_line = (line_idx + 1) as u32;
                                 progress.total_lines = total_lines as u32;
                                 progress.status = format!("M cmd error: {}", e);
-                                return Err(format!("M command failed at line {}: {}", i + 1, e));
+                                return Err(format!("M command failed at line {}: {}", line_idx + 1, e));
                             }
                         }
                     } else if exec_type == MExecutionType::Query {
@@ -453,10 +485,10 @@ impl PrintController {
                         for (name, s) in &heaters {
                             log::info!("      {}: {:.1}°C / {:.1}°C", name, s.current_temp, s.target_temp);
                         }
-                        let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                        let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                         let mut progress = self.progress.write().await;
                         progress.percent = percent;
-                        progress.current_line = (i + 1) as u32;
+                        progress.current_line = (line_idx + 1) as u32;
                         progress.total_lines = total_lines as u32;
                         progress.status = format!("Temp query (cached): {} heaters", heaters.len());
                     } else {
@@ -480,32 +512,32 @@ impl PrintController {
                                         _ => {}
                                     }
                                 }
-                                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                 let mut progress = self.progress.write().await;
                                 progress.percent = percent;
-                                progress.current_line = (i + 1) as u32;
+                                progress.current_line = (line_idx + 1) as u32;
                                 progress.total_lines = total_lines as u32;
                                 progress.status = format!("Executed: {}", line);
                             }
                             Err(e) => {
-                                log::warn!("M command failed line {}: {} — {}", i + 1, line, e);
-                                let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                                log::warn!("M command failed line {}: {} — {}", line_idx + 1, line, e);
+                                let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                 let mut progress = self.progress.write().await;
                                 progress.percent = percent;
-                                progress.current_line = (i + 1) as u32;
+                                progress.current_line = (line_idx + 1) as u32;
                                 progress.total_lines = total_lines as u32;
                                 progress.status = format!("M cmd error: {}", e);
-                                return Err(format!("M command failed at line {}: {}", i + 1, e));
+                                return Err(format!("M command failed at line {}: {}", line_idx + 1, e));
                             }
                         }
                     }
                 }
                 _ => {
                     // Empty or Unsupported - just update progress
-                    let percent = ((i + 1) as f32 / total_lines as f32) * 100.0;
+                    let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                     let mut progress = self.progress.write().await;
                     progress.percent = percent;
-                    progress.current_line = (i + 1) as u32;
+                    progress.current_line = (line_idx + 1) as u32;
                     progress.total_lines = total_lines as u32;
                     progress.status = "Skipped".to_string();
                 }

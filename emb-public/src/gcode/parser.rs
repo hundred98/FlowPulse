@@ -143,6 +143,21 @@ impl GCodeParser {
             // G91 - 相对定位
             91 => MotionCommand::RelativePositioning,
 
+            // G4 - 暂停（单位：秒或毫秒）
+            4 => {
+                // G4 S<秒> 或 G4 P<毫秒>
+                let seconds = params.get(&'S').copied();
+                let millis = params.get(&'P').copied();
+                let dwell_time_ms = if let Some(ms) = millis {
+                    ms as u32
+                } else if let Some(s) = seconds {
+                    (s * 1000.0) as u32
+                } else {
+                    0
+                };
+                MotionCommand::Dwell { dwell_time_ms }
+            }
+
             // G92 - 设置位置
             92 => MotionCommand::SetPosition {
                 x: params.get(&'X').copied(),
@@ -243,6 +258,36 @@ impl GCodeParser {
                 travel: params.get(&'T').copied(),
                 print: params.get(&'P').copied(),
                 retract: params.get(&'R').copied(),
+            },
+
+            // M17 - 使能所有电机
+            17 => MCommand::MotorEnableAll,
+
+            // M18/M84 - 关闭所有电机
+            18 | 84 => MCommand::MotorDisableAll,
+
+            // M119 - 获取限位状态
+            119 => MCommand::GetEndstopStates,
+
+            // M114 - 获取当前位置
+            114 => MCommand::GetPosition,
+
+            // M206 - 设置归位偏移
+            206 => MCommand::SetHomeOffset {
+                x: params.get(&'X').copied(),
+                y: params.get(&'Y').copied(),
+                z: params.get(&'Z').copied(),
+            },
+
+            // M220 - 设置进给率百分比
+            220 => MCommand::SetFeedratePercentage {
+                percentage: params.get(&'S').copied().unwrap_or(100.0),
+            },
+
+            // M221 - 设置流量百分比
+            221 => MCommand::SetFlowPercentage {
+                extruder: params.get(&'T').copied().unwrap_or(0.0) as u8,
+                percentage: params.get(&'S').copied().unwrap_or(100.0),
             },
 
             _ => return CommandKind::Unsupported { raw: cmd.to_string() },

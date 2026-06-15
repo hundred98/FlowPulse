@@ -127,6 +127,7 @@ impl PrinterHostV2 {
         feed_rate: Option<f32>,
     ) -> Result<(), String> {
         self.client.motion_dispatch(cmd, x, y, z, e, feed_rate).await
+            .map(|_| ())
     }
 
     /// Dispatch an arc move (G2/G3) to the server.
@@ -141,6 +142,7 @@ impl PrinterHostV2 {
             i, j,
             direction: if cmd.to_uppercase().starts_with("G2") { 0 } else { 1 },
         })).await
+            .map(|_| ())
     }
 
     /// Home all axes (G28).

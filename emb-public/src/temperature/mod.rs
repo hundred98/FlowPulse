@@ -17,7 +17,7 @@ pub use types::{
 };
 pub use safety::TemperatureSafetyChecker;
 pub use preset::PresetManager;
-pub use manager::TemperatureManager;
+pub use manager::{TemperatureManager, DevicePosition};
 pub use pid_tune::{
     PidTuneProtocol, PidTuneSubType, PidTuneResult, PidParams,
     TunePhase, TuneProgress, TuneErrorCode,
