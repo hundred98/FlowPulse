@@ -12,6 +12,7 @@ use crate::core_client::CoreSocketClient;
 use crate::temperature::TemperatureManager;
 use crate::gcode::{GCodeParser, CommandKind, MotionCommand};
 use emb_api::{MExecutionType, MCommand, ArcParamsApi};
+use super::state_machine::PrintStateMachine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrintState {
@@ -174,7 +175,7 @@ impl Default for PrintProgress {
 }
 
 pub struct PrintController {
-    state: Arc<RwLock<PrintState>>,
+    state_machine: Arc<RwLock<PrintStateMachine>>,
     current_job: Arc<RwLock<Option<PrintJob>>>,
     gcode_parser: Arc<RwLock<Option<GCodeFileParser>>>,
     presets: Arc<RwLock<Vec<TemperaturePreset>>>,
@@ -202,7 +203,7 @@ pub struct PrintController {
 impl PrintController {
     pub fn new() -> Self {
         Self {
-            state: Arc::new(RwLock::new(PrintState::Idle)),
+            state_machine: Arc::new(RwLock::new(PrintStateMachine::new())),
             current_job: Arc::new(RwLock::new(None)),
             gcode_parser: Arc::new(RwLock::new(None)),
             presets: Arc::new(RwLock::new(vec![
@@ -577,14 +578,11 @@ impl PrintController {
     }
     
     pub async fn start(&self) -> EmbResult<()> {
-        let state = *self.state.read().await;
-        if state != PrintState::Idle {
-            return Err(crate::common::EmbError::StateMachine(
-                format!("Cannot start from state {:?}", state)
-            ));
-        }
-        
-        // New: Run safety checks before starting
+        // Transition to Starting (validates Idle → Starting)
+        self.state_machine.write().await.transition_to(PrintState::Starting)
+            .map_err(|e| crate::common::EmbError::StateMachine(e))?;
+
+        // Run safety checks before starting
         if let Some(ref safety) = self.safety_controller {
             if safety.has_safety_violation().await {
                 return Err(crate::common::EmbError::Safety(
@@ -592,48 +590,40 @@ impl PrintController {
                 ));
             }
         }
-        
-        *self.state.write().await = PrintState::Starting;
-        
+
         if let Some(ref mut job) = *self.current_job.write().await {
             job.started_at = Some(std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs());
         }
-        
+
         // Reset progress
         let mut progress = self.progress.write().await;
         progress.percent = 0.0;
         progress.current_layer = 0;
         progress.elapsed_seconds = 0;
-        
-        *self.state.write().await = PrintState::Printing;
-        
+        drop(progress);
+
+        // Transition to Printing
+        self.state_machine.write().await.transition_to(PrintState::Printing)
+            .map_err(|e| crate::common::EmbError::StateMachine(e))?;
+
         Ok(())
     }
     
     pub async fn pause(&self) -> EmbResult<()> {
-        let state = *self.state.read().await;
-        if state != PrintState::Printing {
-            return Err(crate::common::EmbError::StateMachine(
-                format!("Cannot pause from state {:?}", state)
-            ));
-        }
-        
-        *self.state.write().await = PrintState::Paused;
+        self.state_machine.write().await.transition_to(PrintState::Paused)
+            .map_err(|e| crate::common::EmbError::StateMachine(e))?;
         Ok(())
     }
     
     pub async fn resume(&self) -> EmbResult<()> {
-        let state = *self.state.read().await;
-        if state != PrintState::Paused {
-            return Err(crate::common::EmbError::StateMachine(
-                format!("Cannot resume from state {:?}", state)
-            ));
-        }
-        
-        // New: Run safety checks before resuming
+        // Validate Paused → Printing transition
+        self.state_machine.write().await.transition_to(PrintState::Printing)
+            .map_err(|e| crate::common::EmbError::StateMachine(e))?;
+
+        // Run safety checks before resuming
         if let Some(ref safety) = self.safety_controller {
             if safety.has_safety_violation().await {
                 return Err(crate::common::EmbError::Safety(
@@ -641,14 +631,15 @@ impl PrintController {
                 ));
             }
         }
-        
-        *self.state.write().await = PrintState::Printing;
+
         Ok(())
     }
     
-    pub async fn stop(&self) {
+    pub async fn stop(&self) -> EmbResult<()> {
         self.stop_requested.store(true, Ordering::SeqCst);
-        *self.state.write().await = PrintState::Stopping;
+        self.state_machine.write().await.transition_to(PrintState::Stopping)
+            .map_err(|e| crate::common::EmbError::StateMachine(e))?;
+        Ok(())
     }
     
     /// Emergency stop (new)
@@ -656,15 +647,16 @@ impl PrintController {
         if let Some(ref safety) = self.safety_controller {
             safety.handle_emergency_stop().await?;
         }
-        
+
         self.stop_requested.store(true, Ordering::SeqCst);
-        *self.state.write().await = PrintState::Stopping;
-        
+        self.state_machine.write().await.transition_to(PrintState::Stopping)
+            .map_err(|e| crate::common::EmbError::StateMachine(e))?;
+
         Ok(())
     }
     
     pub async fn get_state(&self) -> PrintState {
-        *self.state.read().await
+        self.state_machine.read().await.current_state()
     }
     
     pub async fn get_current_job(&self) -> Option<PrintJob> {

@@ -121,7 +121,7 @@ impl CommandHandler {
         )?;
         
         // Cancel print job
-        self.print_controller.stop().await;
+        let _ = self.print_controller.stop().await;
         
         log::info!("Print stopped");
         Ok(())

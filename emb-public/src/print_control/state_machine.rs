@@ -24,6 +24,7 @@ impl PrintStateMachine {
             (PrintState::Printing, PrintState::Completed) => true,
             (PrintState::Printing, PrintState::Failed) => true,
             (PrintState::Paused, PrintState::Resuming) => true,
+            (PrintState::Paused, PrintState::Printing) => true,
             (PrintState::Paused, PrintState::Stopping) => true,
             (PrintState::Resuming, PrintState::Printing) => true,
             (PrintState::Stopping, PrintState::Idle) => true,
