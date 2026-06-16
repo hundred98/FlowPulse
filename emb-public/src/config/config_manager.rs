@@ -244,9 +244,17 @@ impl ConfigManager {
         
         // Step 2.6: Send bed mesh data to server
         if let Some(bed_mesh) = &configs_corrected.hardware.bed_mesh {
-            log::info!("📤 Sending bed mesh data to server...");
-            Self::send_mesh_to_server(client, bed_mesh).await
-                .map_err(|e| format!("Failed to send mesh data to server: {}", e))?;
+            if bed_mesh.algorithm.enabled {
+                log::info!("📤 Sending bed mesh data to server...");
+                Self::send_mesh_to_server(client, bed_mesh).await
+                    .map_err(|e| format!("Failed to send mesh data to server: {}", e))?;
+            } else {
+                log::info!("⏭️ Bed mesh algorithm disabled, clearing mesh data on server...");
+                let clear_request = CoreRequest::Motion(MotionRequest::ClearMesh);
+                if let Err(e) = client.send_request(&clear_request).await {
+                    log::warn!("Failed to clear mesh data on server: {}", e);
+                }
+            }
         }
         
         // Step 3: Send hardware config frames to device

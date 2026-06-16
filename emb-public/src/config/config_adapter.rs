@@ -186,6 +186,8 @@ pub struct ProbeHardwareConfig {
     pub mesh_max_y: f32,
 }
 
+fn default_enabled() -> bool { true }
+
 fn default_probe_count() -> u8 { 5 }
 fn default_probe_samples() -> u8 { 3 }
 fn default_travel_speed() -> f32 { 100.0 }
@@ -213,6 +215,10 @@ impl Default for ProbeHardwareConfig {
 /// Interpolation algorithm settings
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BedMeshAlgorithmConfig {
+    /// Enable/disable interpolation algorithm (default: true)
+    /// When disabled, bed mesh compensation is skipped — useful for debugging
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     /// Interpolation algorithm: "lagrange", "bicubic", or "bilinear"
     #[serde(default = "default_algorithm")]
     pub algorithm: String,
@@ -245,6 +251,7 @@ fn default_fade_end() -> f32 { 10.0 }
 impl Default for BedMeshAlgorithmConfig {
     fn default() -> Self {
         Self {
+            enabled: default_enabled(),
             algorithm: default_algorithm(),
             bicubic_tension: default_bicubic_tension(),
             mesh_pps_x: default_mesh_pps(),

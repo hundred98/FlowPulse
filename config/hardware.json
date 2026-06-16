@@ -236,6 +236,7 @@
       "mesh_max_y": 235.0
     },
     "algorithm": {
+      "enabled": true,
       "algorithm": "lagrange",
       "bicubic_tension": 0.5,
       "mesh_pps_x": 1,
