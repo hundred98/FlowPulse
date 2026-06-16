@@ -56,7 +56,8 @@
 
   "resonance_compensation": {
     "enabled": true,
-    "shaper_type": "ZV",
+    "shaper_type": "MZV",
+    "insensitivity": 0.05,
     "max_velocity_jump_mm_s": 10.0,
     "x": {
       "frequency": 45.0,

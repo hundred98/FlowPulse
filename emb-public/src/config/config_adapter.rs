@@ -526,6 +526,11 @@ pub struct ResonanceCompensationSection {
     pub enabled: bool,
     #[serde(default = "default_shaper_type")]
     pub shaper_type: String,
+    /// Insensitivity parameter for EI shapers (0.0–0.25, default 0.05).
+    /// Higher values provide wider suppression bandwidth but may introduce
+    /// more delay. Only affects EI, 2-hump EI, and 3-hump EI shapers.
+    #[serde(default = "default_insensitivity")]
+    pub insensitivity: f32,
     #[serde(default)]
     pub x: AxisResonanceFile,
     #[serde(default)]
@@ -542,6 +547,7 @@ impl Default for ResonanceCompensationSection {
         Self {
             enabled: false,
             shaper_type: default_shaper_type(),
+            insensitivity: default_insensitivity(),
             x: AxisResonanceFile::default(),
             y: AxisResonanceFile::default(),
             max_velocity_jump_mm_s: default_max_velocity_jump_mm_s(),
@@ -553,6 +559,7 @@ fn default_shaper_type() -> String { "ZV".to_string() }
 fn default_resonance_frequency() -> f32 { 45.0 }
 fn default_resonance_damping() -> f32 { 0.1 }
 fn default_max_velocity_jump_mm_s() -> f32 { 10.0 }
+fn default_insensitivity() -> f32 { 0.05 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AxisResonanceFile {
@@ -854,6 +861,7 @@ pub fn build_motion_config_json(configs: &LoadedConfigs) -> Result<String, Strin
     json["resonance_compensation"] = serde_json::json!({
         "enabled": configs.motion.resonance_compensation.enabled,
         "shaper_type": configs.motion.resonance_compensation.shaper_type,
+        "insensitivity": configs.motion.resonance_compensation.insensitivity,
         "max_velocity_jump_mm_s": configs.motion.resonance_compensation.max_velocity_jump_mm_s,
         "x": {
             "frequency": configs.motion.resonance_compensation.x.frequency,
