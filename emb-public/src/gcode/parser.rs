@@ -269,6 +269,9 @@ impl GCodeParser {
             // M119 - 获取限位状态
             119 => MCommand::GetEndstopStates,
 
+            // M112 - 紧急停止
+            112 => MCommand::EmergencyStop,
+
             // M114 - 获取当前位置
             114 => MCommand::GetPosition,
 
