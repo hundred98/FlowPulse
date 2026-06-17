@@ -1,9 +1,9 @@
 //! Frontend data provider interface
 //!
 //! This module defines the unified interface for frontend data access,
-//! supporting UnixSocket (priority), SharedMemory (reserved), and WebSocket.
+//! supporting UnixSocket and WebSocket.
 
-use crate::common::{EmbResult, PrinterStatus, TempStatus, PositionData, SharedState};
+use crate::common::{EmbResult, PrinterStatus, TempStatus, PositionData};
 use crate::CoreSocketClient;
 use crate::gcode::{GCodeParser, CommandKind, MotionCommand};
 use async_trait::async_trait;
@@ -166,69 +166,6 @@ impl FrontendDataProvider for UnixSocketProvider {
     
     async fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
         dispatch_gcode(&self.client, cmd).await
-    }
-}
-
-/// Embedded data provider (reserved for shared memory)
-/// High-performance scenario (>60fps)
-/// Interface reserved, not implemented yet
-pub struct EmbeddedDataProvider {
-    /// Shared memory state (reserved)
-    shared_mem: Arc<RwLock<SharedState>>,
-}
-
-impl EmbeddedDataProvider {
-    /// Create a new embedded data provider
-    /// Reserved for future implementation
-    pub fn new() -> Self {
-        Self {
-            shared_mem: Arc::new(RwLock::new(SharedState::default())),
-        }
-    }
-    
-    /// Update shared memory state (reserved)
-    pub fn update_state(&self, state: SharedState) {
-        let mut shared = self.shared_mem.write().unwrap();
-        *shared = state;
-    }
-}
-
-#[async_trait]
-impl FrontendDataProvider for EmbeddedDataProvider {
-    fn get_printer_status(&self) -> PrinterStatus {
-        // Reserved implementation
-        // TODO: Implement shared memory read
-        let shared = self.shared_mem.read().unwrap();
-        PrinterStatus::new(format!("state_{}", shared.printer_state))
-    }
-    
-    fn get_temperature(&self) -> TempStatus {
-        // Reserved implementation
-        let shared = self.shared_mem.read().unwrap();
-        TempStatus::new(
-            shared.hotend_current,
-            shared.hotend_target,
-            shared.bed_current,
-            shared.bed_target,
-        )
-    }
-    
-    fn get_position(&self) -> PositionData {
-        // Reserved implementation
-        let shared = self.shared_mem.read().unwrap();
-        PositionData::new(
-            shared.position_x,
-            shared.position_y,
-            shared.position_z,
-            shared.position_e,
-        )
-    }
-    
-    async fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
-        // Reserved implementation - no CoreSocketClient available
-        // TODO: Implement shared memory command queue
-        log::info!("EmbeddedDataProvider: Sending G-code (reserved): {}", cmd);
-        Ok(())
     }
 }
 
@@ -447,11 +384,5 @@ impl FrontendDataProvider for WebDataProvider {
     
     async fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
         dispatch_gcode(&self.client, cmd).await
-    }
-}
-
-impl Default for EmbeddedDataProvider {
-    fn default() -> Self {
-        Self::new()
     }
 }

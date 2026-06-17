@@ -13,6 +13,6 @@ pub use events::{
     EventPublisher, SyncEventPublisher,
 };
 pub use messages::{
-    WebSocketMessage, SharedState, PrinterStatus, TempStatus, PositionData,
+    WebSocketMessage, PrinterStatus, TempStatus, PositionData,
 };
 pub use pin_parser::parse_pin;

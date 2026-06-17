@@ -20,8 +20,6 @@ pub struct UnixSocketConfig {
     pub max_connections: usize,
     /// Buffer size for reading
     pub buffer_size: usize,
-    /// Enable HMI mode (shared memory fallback)
-    pub enable_hmi_mode: bool,
 }
 
 impl Default for UnixSocketConfig {
@@ -30,7 +28,6 @@ impl Default for UnixSocketConfig {
             socket_path: "/tmp/flowpulse.sock".to_string(),
             max_connections: 5,
             buffer_size: 4096,
-            enable_hmi_mode: false,
         }
     }
 }

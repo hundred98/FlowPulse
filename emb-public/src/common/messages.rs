@@ -1,6 +1,6 @@
 //! Message types for communication channels
 //!
-//! This module defines unified message types for WebSocket, UnixSocket, and SharedMemory communication.
+//! This module defines unified message types for WebSocket and UnixSocket communication.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -124,71 +124,6 @@ pub struct PositionData {
     
     /// E axis position (extruder)
     pub e: f32,
-}
-
-/// Shared memory state (for high-performance scenarios)
-/// Reserved for future implementation
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct SharedState {
-    /// Printer state (0-255)
-    pub printer_state: u8,
-    
-    /// Position X
-    pub position_x: f32,
-    
-    /// Position Y
-    pub position_y: f32,
-    
-    /// Position Z
-    pub position_z: f32,
-    
-    /// Position E
-    pub position_e: f32,
-    
-    /// Hotend current temperature
-    pub hotend_current: f32,
-    
-    /// Hotend target temperature
-    pub hotend_target: f32,
-    
-    /// Bed current temperature
-    pub bed_current: f32,
-    
-    /// Bed target temperature
-    pub bed_target: f32,
-    
-    /// Progress percentage
-    pub progress_percent: f32,
-    
-    /// Current layer
-    pub current_layer: u32,
-    
-    /// Total layers
-    pub total_layers: u32,
-    
-    /// Update flag (atomic bool for synchronization)
-    pub update_flag: bool,
-}
-
-impl Default for SharedState {
-    fn default() -> Self {
-        Self {
-            printer_state: 0,
-            position_x: 0.0,
-            position_y: 0.0,
-            position_z: 0.0,
-            position_e: 0.0,
-            hotend_current: 0.0,
-            hotend_target: 0.0,
-            bed_current: 0.0,
-            bed_target: 0.0,
-            progress_percent: 0.0,
-            current_layer: 0,
-            total_layers: 0,
-            update_flag: false,
-        }
-    }
 }
 
 impl TempStatus {

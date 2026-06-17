@@ -112,7 +112,7 @@ Each axis can independently set speed and acceleration parameters:
 
 ### 7. Flexible HMI Options
 
-Via shared memory, supports multiple local interfaces:
+Via UnixSocket, supports multiple local interfaces:
 
 ```
 ┌─────────────┐     ┌─────────────┐
@@ -196,10 +196,6 @@ This project adopts a **hybrid open-source + closed-source** architecture, prote
 │        + License Verification)                              │
 └─────────────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────────────┐
-│  emb-public ↔ External HMI communication                   │
-│  Shared Memory - Windows CreateFileMapping                   │
-└─────────────────────────────────────────────────────────────┘
 ```
 
 ### Project Structure

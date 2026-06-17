@@ -11,5 +11,5 @@ pub use device_state::{
     DeviceStateSnapshot,
 };
 pub use frontend_provider::{
-    FrontendDataProvider, UnixSocketProvider, EmbeddedDataProvider, WebDataProvider,
+    FrontendDataProvider, UnixSocketProvider, WebDataProvider,
 };

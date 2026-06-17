@@ -117,7 +117,6 @@ impl AppState {
                 socket_path: "/tmp/flowpulse.sock".to_string(),
                 max_connections: 5,
                 buffer_size: 4096,
-                enable_hmi_mode: false,
             },
             mqtt: MqttConfig::default(),
             enable_unix_socket: true,

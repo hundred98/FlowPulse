@@ -24,7 +24,7 @@ pub use common::{
     EmbError, EmbResult,
     PrinterEvent, EventKind, EventSeverity, EventListener,
     EventPublisher, SyncEventPublisher,
-    WebSocketMessage, SharedState, PrinterStatus, TempStatus, PositionData,
+    WebSocketMessage, PrinterStatus, TempStatus, PositionData,
 };
 
 // Re-export core client
@@ -74,7 +74,7 @@ pub use gateway::{
 pub use state::{
     DeviceStateManager, DeviceStateConfig, Position, MotionStatus, FlowStatus,
     DeviceStateSnapshot, FrontendDataProvider, UnixSocketProvider,
-    EmbeddedDataProvider, WebDataProvider,
+    WebDataProvider,
 };
 
 // Re-export safety types
