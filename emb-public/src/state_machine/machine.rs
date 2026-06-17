@@ -130,15 +130,30 @@ impl StateMachine {
         self.transition_history.lock().unwrap().clone()
     }
     
+    /// Clear all transition history
+    pub fn clear_history(&self) {
+        self.transition_history.lock().unwrap().clear();
+    }
+    
     /// Get the latest transition
     pub fn get_latest_transition(&self) -> Option<StateTransition> {
         let history = self.transition_history.lock().unwrap();
         history.last().cloned()
     }
     
-    /// Add an event listener
-    pub fn add_event_listener(&self, listener: Box<dyn EventListener>) {
-        self.event_publisher.lock().unwrap().add_listener(listener);
+    /// Add an event listener, returns listener ID for later removal
+    pub fn add_event_listener(&self, listener: Box<dyn EventListener>) -> Uuid {
+        self.event_publisher.lock().unwrap().add_listener(listener)
+    }
+
+    /// Remove an event listener by ID
+    pub fn remove_event_listener(&self, id: Uuid) -> bool {
+        self.event_publisher.lock().unwrap().remove_listener(id)
+    }
+
+    /// Remove all event listeners
+    pub fn clear_event_listeners(&self) {
+        self.event_publisher.lock().unwrap().clear_listeners();
     }
     
     /// Reset to idle state
@@ -222,10 +237,14 @@ impl StateMachine {
     
     /// Cancel current operation
     pub fn cancel(&self) -> EmbResult<()> {
-        if matches!(self.get_state(), PrinterState::Preparing | PrinterState::Printing | PrinterState::Paused) {
+        if self.can_cancel() {
             self.transition_to(PrinterState::Idle, TransitionReason::UserRequest)
         } else {
-            Err(EmbError::StateMachine("Cannot cancel in current state".to_string()))
+            let current = self.get_state();
+            Err(EmbError::InvalidTransition {
+                from: format!("{}", current),
+                to: "Idle".to_string(),
+            })
         }
     }
     

@@ -187,7 +187,12 @@ pub trait EventPublisher: Send + Sync {
 
 /// Event publisher for distributing events (synchronous version)
 pub struct SyncEventPublisher {
-    listeners: Vec<Box<dyn EventListener>>,
+    listeners: Vec<ListenerEntry>,
+}
+
+struct ListenerEntry {
+    id: Uuid,
+    listener: Box<dyn EventListener>,
 }
 
 impl SyncEventPublisher {
@@ -197,13 +202,25 @@ impl SyncEventPublisher {
         }
     }
 
-    pub fn add_listener(&mut self, listener: Box<dyn EventListener>) {
-        self.listeners.push(listener);
+    pub fn add_listener(&mut self, listener: Box<dyn EventListener>) -> Uuid {
+        let id = Uuid::new_v4();
+        self.listeners.push(ListenerEntry { id, listener });
+        id
+    }
+
+    pub fn remove_listener(&mut self, id: Uuid) -> bool {
+        let len = self.listeners.len();
+        self.listeners.retain(|entry| entry.id != id);
+        self.listeners.len() != len
+    }
+
+    pub fn clear_listeners(&mut self) {
+        self.listeners.clear();
     }
 
     pub fn publish_sync(&self, event: PrinterEvent) {
-        for listener in &self.listeners {
-            listener.on_event(&event);
+        for entry in &self.listeners {
+            entry.listener.on_event(&event);
         }
     }
 }

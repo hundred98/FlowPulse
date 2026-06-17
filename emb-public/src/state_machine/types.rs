@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
 
 /// 3D Printer states
@@ -19,6 +20,19 @@ pub enum PrinterState {
     Complete,
     /// Error state
     Error,
+}
+
+impl fmt::Display for PrinterState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PrinterState::Idle => write!(f, "Idle"),
+            PrinterState::Preparing => write!(f, "Preparing"),
+            PrinterState::Printing => write!(f, "Printing"),
+            PrinterState::Paused => write!(f, "Paused"),
+            PrinterState::Complete => write!(f, "Complete"),
+            PrinterState::Error => write!(f, "Error"),
+        }
+    }
 }
 
 /// State transition reasons
