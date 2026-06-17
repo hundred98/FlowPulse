@@ -15,7 +15,9 @@ use crate::common::{
 };
 use crate::config::{ConfigFrameBuilder, ConfigManager, TemperatureSafetyConfig};
 use crate::core_client::CoreSocketClient;
+use crate::print_control::PrintController;
 use crate::safety::temperature::{HeaterReading, TemperatureSafetyChecker};
+use emb_api::MCommand;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,6 +51,9 @@ pub struct TemperatureManager {
 
     /// Last device-reported position from STATUS_R frame
     device_position: Arc<RwLock<Option<DevicePosition>>>,
+
+    /// Print controller reference (for pause on safety events)
+    print_controller: Arc<RwLock<Option<Arc<PrintController>>>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -96,7 +101,14 @@ impl TemperatureManager {
             config: RwLock::new(config),
             cancel_sender: Arc::new(RwLock::new(None)),
             device_position: Arc::new(RwLock::new(None)),
+            print_controller: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Set the print controller reference (for pause/stop on safety events)
+    pub async fn set_print_controller(&self, print_controller: Arc<PrintController>) {
+        let mut pc = self.print_controller.write().await;
+        *pc = Some(print_controller);
     }
 
     /// Initialize from ConfigManager
@@ -180,7 +192,31 @@ impl TemperatureManager {
         };
         heaters.insert("hotend".to_string(), hotend_heater);
 
-        // TODO: Support additional heaters from config
+        // Register additional heaters from safety config (e.g., "chamber")
+        let mut next_heater_id = 2u8;
+        if let Some(safety_cfg) = safety_config {
+            let known_heaters = ["bed", "hotend"];
+            for heater_name in safety_cfg.heaters.keys() {
+                if known_heaters.contains(&heater_name.as_str()) {
+                    continue;
+                }
+                let heater_id = next_heater_id;
+                next_heater_id += 1;
+
+                if let Some(heater_safety) = safety_cfg.heaters.get(heater_name) {
+                    let state = HeaterState::with_sensor_fault_thresholds(
+                        heater_name.clone(),
+                        heater_id,
+                        0.0,              // min_temp: default safe range
+                        300.0,            // max_temp: default safe range
+                        heater_safety.sensor_fault.max_temp,
+                        heater_safety.sensor_fault.min_temp,
+                    );
+                    heaters.insert(heater_name.clone(), state);
+                    log::info!("Registered additional heater '{}' (id={}) from safety config", heater_name, heater_id);
+                }
+            }
+        }
 
         log::info!("Loaded {} heaters from config", heaters.len());
         drop(heaters);
@@ -707,8 +743,15 @@ impl TemperatureManager {
         targets.insert("bed".to_string(), preset.bed_temp);
 
         if let Some(chamber_temp) = preset.chamber_temp {
-            // TODO: Support chamber heater when implemented
-            log::info!("Chamber temperature: {}°C (not yet supported)", chamber_temp);
+            let heaters = self.heaters.read().await;
+            if heaters.contains_key("chamber") {
+                drop(heaters);
+                targets.insert("chamber".to_string(), chamber_temp);
+                log::info!("Chamber temperature: {}°C", chamber_temp);
+            } else {
+                drop(heaters);
+                log::warn!("Chamber temperature: {}°C — no chamber heater registered in config", chamber_temp);
+            }
         }
 
         self.set_targets(targets).await?;
@@ -817,7 +860,17 @@ impl TemperatureManager {
             }
             SafetyAction::PausePrint => {
                 log::error!("Critical temperature issue, pausing print: {}", result.message);
-                // TODO: Call PrintController::pause()
+                // Pause print via PrintController if available
+                let pc = self.print_controller.read().await;
+                if let Some(ref controller) = *pc {
+                    if let Err(e) = controller.pause().await {
+                        log::error!("Failed to pause print: {}", e);
+                    }
+                } else {
+                    log::warn!("PrintController not available, cannot pause print");
+                }
+                drop(pc);
+
                 let _ = self.event_publisher.publish(
                     PrinterEvent::new(
                         EventKind::SafetyWarning,
@@ -829,7 +882,17 @@ impl TemperatureManager {
             }
             SafetyAction::EmergencyStop => {
                 log::error!("🚨 Emergency stop triggered: {}", result.message);
-                // TODO: Call EmergencyStop
+
+                // 1. Turn off all heaters
+                if let Err(e) = self.turn_off_all().await {
+                    log::error!("Failed to turn off heaters during E-stop: {}", e);
+                }
+
+                // 2. Disable motors via core client
+                if let Err(e) = self.client.motion_execute_m_command(MCommand::MotorDisableAll).await {
+                    log::error!("Failed to disable motors during E-stop: {}", e);
+                }
+
                 let _ = self.event_publisher.publish(
                     PrinterEvent::new(
                         EventKind::SafetyWarning,
