@@ -689,6 +689,15 @@ impl CoreSocketClient {
         }
     }
 
+    /// Set homed axes bitmask on server (after raw serial frame homing).
+    pub async fn motion_set_homed_axes(&self, homed_axes: u8) -> Result<(), String> {
+        match self.send_request(&CoreRequest::Motion(MotionRequest::SetHomedAxes { homed_axes })).await? {
+            CoreResponse::Motion(MotionResponse::Acknowledged) => Ok(()),
+            CoreResponse::Error(e) => Err(e.message),
+            other => Err(format!("Unexpected response: {:?}", other)),
+        }
+    }
+
     // ========================================================================
     // Config operations
     // ========================================================================

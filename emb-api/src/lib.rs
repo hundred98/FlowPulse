@@ -144,6 +144,11 @@ pub enum MotionRequest {
     },
     /// 查询归位状态
     QueryHomed,
+    /// 设置归位状态位掩码（在通过原始串行帧手动归零后使用）
+    SetHomedAxes {
+        /// 归位轴位掩码 (bit0=X, bit1=Y, bit2=Z)
+        homed_axes: u8,
+    },
     
     // === Bed Mesh Compensation ===
     /// Begin a mesh data transfer session.

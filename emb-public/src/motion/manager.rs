@@ -79,6 +79,8 @@ impl HomingManager {
         // Send homing frame (0x0A = homing command)
         self.client.serial_send_frame(0x0A, vec![axes_mask]).await?;
 
+        let mut ack_received = false;
+
         // Poll for response (ACK/NACK) from device
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         for _ in 0..5 {
@@ -93,7 +95,8 @@ impl HomingManager {
                     } else if ft == 0x06 {
                         // ACK - homing accepted
                         log::info!("Homing ACK received");
-                        return Ok(());
+                        ack_received = true;
+                        break;
                     }
                     // Other frame types - continue polling
                 }
@@ -103,8 +106,21 @@ impl HomingManager {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
-        // If we didn't get a definitive ACK/NACK, assume it was sent
-        log::info!("Homing command sent (no explicit ACK/NACK received within poll window)");
+        if !ack_received {
+            log::info!("Homing command sent (no explicit ACK/NACK received within poll window)");
+        }
+
+        // Update server-side homed_axes so motion planner knows axes are homed.
+        // The 0x0A serial frame controls the firmware directly, bypassing the
+        // motion planner. Without this sync, G0/G1 moves will fail with
+        // "axes not homed" even after successful homing.
+        let current_homed = self.client.motion_query_homed().await.unwrap_or(0);
+        let new_homed = current_homed | axes_mask;
+        if new_homed != current_homed {
+            log::info!("Updating server homed_axes: {:#04b} -> {:#04b}", current_homed, new_homed);
+            self.client.motion_set_homed_axes(new_homed).await?;
+        }
+
         Ok(())
     }
 
