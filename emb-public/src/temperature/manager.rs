@@ -786,7 +786,7 @@ impl TemperatureManager {
             if result.needs_action() {
                 log::warn!(
                     "⚠️  Safety check: {} - {}",
-                    result.heater,
+                    result.source,
                     result.message
                 );
 
@@ -799,7 +799,7 @@ impl TemperatureManager {
     async fn execute_safety_action(&self, result: &SafetyCheckResult) {
         match result.action {
             SafetyAction::None => {}
-            SafetyAction::Warn => {
+            SafetyAction::LogWarning => {
                 let _ = self.event_publisher.publish(
                     PrinterEvent::new(
                         EventKind::SafetyWarning,
@@ -810,8 +810,8 @@ impl TemperatureManager {
                 );
             }
             SafetyAction::TurnOffHeater => {
-                log::warn!("Turning off heater: {}", result.heater);
-                let _ = self.set_target(&result.heater, 0.0).await;
+                log::warn!("Turning off heater: {}", result.source);
+                let _ = self.set_target(&result.source, 0.0).await;
             }
             SafetyAction::PausePrint => {
                 log::error!("Critical temperature issue, pausing print: {}", result.message);
@@ -836,6 +836,9 @@ impl TemperatureManager {
                     )
                     .with_severity(EventSeverity::Critical),
                 );
+            }
+            SafetyAction::DisableMotors => {
+                log::error!("Disable motors: {}", result.message);
             }
         }
     }

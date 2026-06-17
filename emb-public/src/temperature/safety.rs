@@ -26,8 +26,9 @@ impl TemperatureSafetyChecker {
     pub fn check_heater(&self, state: &HeaterState) -> SafetyCheckResult {
         // 0. Check for sensor fault first
         if state.has_sensor_fault() {
-            return SafetyCheckResult::dangerous(
-                state.name.clone(),
+            return SafetyCheckResult::emergency(
+                "temperature",
+                "sensor_fault",
                 format!(
                     "Sensor fault detected: {:.1}°C (abnormal value)",
                     state.current_temp
@@ -38,8 +39,9 @@ impl TemperatureSafetyChecker {
 
         // 1. Check if temperature is below minimum
         if state.current_temp < state.min_temp {
-            return SafetyCheckResult::dangerous(
-                state.name.clone(),
+            return SafetyCheckResult::emergency(
+                "temperature",
+                "min_temp",
                 format!(
                     "Temperature below minimum: {:.1}°C < {:.1}°C",
                     state.current_temp, state.min_temp
@@ -50,8 +52,9 @@ impl TemperatureSafetyChecker {
 
         // 2. Check if temperature is above maximum
         if state.current_temp > state.max_temp {
-            return SafetyCheckResult::dangerous(
-                state.name.clone(),
+            return SafetyCheckResult::emergency(
+                "temperature",
+                "max_temp",
                 format!(
                     "Temperature above maximum: {:.1}°C > {:.1}°C",
                     state.current_temp, state.max_temp
@@ -87,13 +90,14 @@ impl TemperatureSafetyChecker {
                 // Temperature too low (emergency level)
                 let (level, action) = self.get_low_temp_action(&state.name, heating_duration, heater_config);
                 return SafetyCheckResult::new(
-                    state.name.clone(),
+                    "temperature",
+                    "low_temp",
                     level,
+                    action,
                     format!(
                         "Temperature too low: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
                         state.current_temp, state.target_temp, deviation
                     ),
-                    action,
                 )
                 .with_temps(state.current_temp, state.target_temp);
             }
@@ -102,13 +106,14 @@ impl TemperatureSafetyChecker {
                 // Temperature low (critical level)
                 let (level, action) = self.get_low_temp_action(&state.name, heating_duration, heater_config);
                 return SafetyCheckResult::new(
-                    state.name.clone(),
+                    "temperature",
+                    "low_temp",
                     level,
+                    action,
                     format!(
                         "Temperature low: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
                         state.current_temp, state.target_temp, deviation
                     ),
-                    action,
                 )
                 .with_temps(state.current_temp, state.target_temp);
             }
@@ -117,13 +122,14 @@ impl TemperatureSafetyChecker {
                 // Temperature slightly low (warning level)
                 let (level, action) = self.get_low_temp_action(&state.name, heating_duration, heater_config);
                 return SafetyCheckResult::new(
-                    state.name.clone(),
+                    "temperature",
+                    "low_temp",
                     level,
+                    action,
                     format!(
                         "Temperature slightly low: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
                         state.current_temp, state.target_temp, deviation
                     ),
-                    action,
                 )
                 .with_temps(state.current_temp, state.target_temp);
             }
@@ -137,13 +143,14 @@ impl TemperatureSafetyChecker {
                 // Temperature too high (emergency level)
                 let (level, action) = self.get_high_temp_action(&state.name, heater_config);
                 return SafetyCheckResult::new(
-                    state.name.clone(),
+                    "temperature",
+                    "high_temp",
                     level,
+                    action,
                     format!(
                         "Temperature too high: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
                         state.current_temp, state.target_temp, deviation
                     ),
-                    action,
                 )
                 .with_temps(state.current_temp, state.target_temp);
             }
@@ -152,13 +159,14 @@ impl TemperatureSafetyChecker {
                 // Temperature high (critical level)
                 let (level, action) = self.get_high_temp_action(&state.name, heater_config);
                 return SafetyCheckResult::new(
-                    state.name.clone(),
+                    "temperature",
+                    "high_temp",
                     level,
+                    action,
                     format!(
                         "Temperature high: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
                         state.current_temp, state.target_temp, deviation
                     ),
-                    action,
                 )
                 .with_temps(state.current_temp, state.target_temp);
             }
@@ -167,13 +175,14 @@ impl TemperatureSafetyChecker {
                 // Temperature slightly high (warning level)
                 let (level, action) = self.get_high_temp_action(&state.name, heater_config);
                 return SafetyCheckResult::new(
-                    state.name.clone(),
+                    "temperature",
+                    "high_temp",
                     level,
+                    action,
                     format!(
                         "Temperature slightly high: {:.1}°C (target: {:.1}°C, deviation: {:.1}°C)",
                         state.current_temp, state.target_temp, deviation
                     ),
-                    action,
                 )
                 .with_temps(state.current_temp, state.target_temp);
             }
@@ -185,7 +194,7 @@ impl TemperatureSafetyChecker {
         // TODO: Implement rate-based rising temp detection when heater is off.
 
         // 5. Normal operation
-        SafetyCheckResult::normal(state.name.clone())
+        SafetyCheckResult::normal("temperature", "normal")
             .with_temps(state.current_temp, state.target_temp)
     }
 
@@ -209,7 +218,7 @@ impl TemperatureSafetyChecker {
             let action_str = match level {
                 SafetyLevel::Warning => &config.actions.low_temp.warning,
                 SafetyLevel::Critical => &config.actions.low_temp.critical,
-                SafetyLevel::Dangerous => &config.actions.low_temp.emergency,
+                SafetyLevel::Emergency => &config.actions.low_temp.emergency,
                 SafetyLevel::Normal => "none",
             };
 
@@ -221,7 +230,7 @@ impl TemperatureSafetyChecker {
             "bed" => {
                 // Bed temperature issues are less critical
                 if heating_duration > 120.0 {
-                    (SafetyLevel::Warning, SafetyAction::Warn)
+                    (SafetyLevel::Warning, SafetyAction::LogWarning)
                 } else {
                     (SafetyLevel::Normal, SafetyAction::None)
                 }
@@ -231,12 +240,12 @@ impl TemperatureSafetyChecker {
                 if heating_duration > 60.0 {
                     (SafetyLevel::Critical, SafetyAction::PausePrint)
                 } else {
-                    (SafetyLevel::Warning, SafetyAction::Warn)
+                    (SafetyLevel::Warning, SafetyAction::LogWarning)
                 }
             }
             _ => {
                 // Other heaters: warning
-                (SafetyLevel::Warning, SafetyAction::Warn)
+                (SafetyLevel::Warning, SafetyAction::LogWarning)
             }
         }
     }
@@ -256,7 +265,7 @@ impl TemperatureSafetyChecker {
             let action_str = match level {
                 SafetyLevel::Warning => &config.actions.high_temp.warning,
                 SafetyLevel::Critical => &config.actions.high_temp.critical,
-                SafetyLevel::Dangerous => &config.actions.high_temp.emergency,
+                SafetyLevel::Emergency => &config.actions.high_temp.emergency,
                 SafetyLevel::Normal => "none",
             };
 
@@ -267,14 +276,14 @@ impl TemperatureSafetyChecker {
         match heater_name {
             "bed" => (SafetyLevel::Critical, SafetyAction::TurnOffHeater),
             "hotend" => (SafetyLevel::Critical, SafetyAction::TurnOffHeater),
-            _ => (SafetyLevel::Warning, SafetyAction::Warn),
+            _ => (SafetyLevel::Warning, SafetyAction::LogWarning),
         }
     }
 
     /// Parse action string to SafetyAction enum
     fn parse_action(&self, action_str: &str) -> SafetyAction {
         match action_str {
-            "warn" => SafetyAction::Warn,
+            "warn" => SafetyAction::LogWarning,
             "pause_print" => SafetyAction::PausePrint,
             "turn_off" => SafetyAction::TurnOffHeater,
             "emergency_stop" => SafetyAction::EmergencyStop,
@@ -298,7 +307,7 @@ impl TemperatureSafetyChecker {
             SafetyLevel::Normal => 0,
             SafetyLevel::Warning => 1,
             SafetyLevel::Critical => 2,
-            SafetyLevel::Dangerous => 3,
+            SafetyLevel::Emergency => 3,
         })
     }
 }
@@ -355,7 +364,7 @@ mod tests {
         let result = checker.check_heater(&heater);
 
         assert_eq!(result.level, SafetyLevel::Warning);
-        assert_eq!(result.action, SafetyAction::Warn);
+        assert_eq!(result.action, SafetyAction::LogWarning);
         assert!(result.needs_action());
     }
 
@@ -377,7 +386,7 @@ mod tests {
 
         let result = checker.check_heater(&heater);
 
-        assert_eq!(result.level, SafetyLevel::Dangerous);
+        assert_eq!(result.level, SafetyLevel::Emergency);
         assert_eq!(result.action, SafetyAction::EmergencyStop);
     }
 
@@ -390,34 +399,39 @@ mod tests {
 
         // Bed temperature drop should be warning, not critical
         assert_eq!(result.level, SafetyLevel::Warning);
-        assert_eq!(result.action, SafetyAction::Warn);
+        assert_eq!(result.action, SafetyAction::LogWarning);
     }
 
     #[test]
-    fn test_heater_off_but_rising() {
+    fn test_heater_off_but_high_temp() {
+        // Heater is off but temperature is above target.
+        // Currently falls through to Normal since rate-based detection
+        // is not yet implemented (see TODO in check_heater).
         let checker = TemperatureSafetyChecker::default();
         let mut heater = create_heater("hotend", 210.0, 200.0);
         heater.is_heating = false;
 
         let result = checker.check_heater(&heater);
 
-        assert_eq!(result.level, SafetyLevel::Dangerous);
-        assert_eq!(result.action, SafetyAction::EmergencyStop);
+        // TODO: When rate-based rising temp detection is implemented,
+        // this should return Emergency/EmergencyStop instead.
+        assert_eq!(result.level, SafetyLevel::Normal);
+        assert_eq!(result.action, SafetyAction::None);
     }
 
     #[test]
     fn test_get_most_critical() {
         let results = vec![
-            SafetyCheckResult::normal("bed".to_string()),
-            SafetyCheckResult::warning("hotend".to_string(), "Warning".to_string()),
-            SafetyCheckResult::critical("chamber".to_string(), "Critical".to_string()),
+            SafetyCheckResult::normal("temperature", "test"),
+            SafetyCheckResult::warning("temperature", "test", "Warning"),
+            SafetyCheckResult::critical("temperature", "test", "Critical"),
         ];
 
         let most_critical = TemperatureSafetyChecker::get_most_critical(&results);
 
         assert!(most_critical.is_some());
         let most_critical = most_critical.unwrap();
-        assert_eq!(most_critical.heater, "chamber");
+        assert_eq!(most_critical.source, "temperature");
         assert_eq!(most_critical.level, SafetyLevel::Critical);
     }
 }

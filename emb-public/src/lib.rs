@@ -81,6 +81,13 @@ pub use state::{
 pub use safety::{
     SafetyController, SafetyConfig, TemperatureLimit, MotionLimit,
     SafetyCheckResult as SafetyControllerCheckResult,
+    // Note: SafetyLevel/SafetyAction are re-exported via temperature module
+    // for backward compatibility. Access via crate::safety::* for new code.
+    SafetyActionExecutor, MotionSafetyChecker,
+    TemperatureSafetyChecker as UnifiedTemperatureSafetyChecker,
+    HardwareSafetyChecker, HardwareEvent,
+    SafetyMonitor, SafetyDataSource,
+    HeaterReading,
 };
 
 // Re-export temperature types
@@ -88,7 +95,8 @@ pub use temperature::{
     TemperatureManager, TemperatureManagerConfig,
     TemperatureWaitConfig, AutoFanConfig,
     HeaterState, TemperaturePreset, TemperatureSafetyChecker, PresetManager,
-    SafetyLevel, SafetyAction, SafetyCheckResult,
+    // Note: SafetyLevel, SafetyAction, SafetyCheckResult are now
+    // re-exported from the unified safety module (see above).
 };
 
 // Re-export mesh types

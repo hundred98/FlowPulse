@@ -1,4 +1,4 @@
-﻿//! Temperature types and data structures
+//! Temperature types and data structures
 //!
 //! This module defines all types used by the temperature management system.
 
@@ -283,130 +283,8 @@ impl Default for TemperatureManagerConfig {
     }
 }
 
-/// Safety check level
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SafetyLevel {
-    /// Normal operation
-    Normal,
-
-    /// Warning (minor temperature deviation)
-    Warning,
-
-    /// Critical (requires pausing print)
-    Critical,
-
-    /// Dangerous (requires emergency stop)
-    Dangerous,
-}
-
-impl Default for SafetyLevel {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
-/// Safety action to take
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SafetyAction {
-    /// No action needed
-    None,
-
-    /// Publish warning event
-    Warn,
-
-    /// Turn off heater
-    TurnOffHeater,
-
-    /// Pause print
-    PausePrint,
-
-    /// Emergency stop
-    EmergencyStop,
-}
-
-impl Default for SafetyAction {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
-/// Safety check result
-#[derive(Debug, Clone)]
-pub struct SafetyCheckResult {
-    /// Heater name
-    pub heater: String,
-
-    /// Check level
-    pub level: SafetyLevel,
-
-    /// Problem description
-    pub message: String,
-
-    /// Suggested action
-    pub action: SafetyAction,
-
-    /// Current temperature
-    pub current_temp: f32,
-
-    /// Target temperature
-    pub target_temp: f32,
-
-    /// Temperature deviation
-    pub deviation: f32,
-}
-
-impl SafetyCheckResult {
-    /// Create a new safety check result
-    pub fn new(
-        heater: String,
-        level: SafetyLevel,
-        message: String,
-        action: SafetyAction,
-    ) -> Self {
-        Self {
-            heater,
-            level,
-            message,
-            action,
-            current_temp: 0.0,
-            target_temp: 0.0,
-            deviation: 0.0,
-        }
-    }
-
-    /// Create a normal result
-    pub fn normal(heater: String) -> Self {
-        Self::new(heater, SafetyLevel::Normal, "Temperature normal".to_string(), SafetyAction::None)
-    }
-
-    /// Create a warning result
-    pub fn warning(heater: String, message: String) -> Self {
-        Self::new(heater, SafetyLevel::Warning, message, SafetyAction::Warn)
-    }
-
-    /// Create a critical result
-    pub fn critical(heater: String, message: String) -> Self {
-        Self::new(heater, SafetyLevel::Critical, message, SafetyAction::PausePrint)
-    }
-
-    /// Create a dangerous result
-    pub fn dangerous(heater: String, message: String) -> Self {
-        Self::new(heater, SafetyLevel::Dangerous, message, SafetyAction::EmergencyStop)
-    }
-
-    /// Set temperature data
-    pub fn with_temps(mut self, current: f32, target: f32) -> Self {
-        self.current_temp = current;
-        self.target_temp = target;
-        self.deviation = current - target;
-        self
-    }
-
-    /// Check if action is needed
-    pub fn needs_action(&self) -> bool {
-        self.action != SafetyAction::None
-    }
-}
+/// Safety check level — re-exported from unified safety module
+pub use crate::safety::types::{SafetyLevel, SafetyAction, SafetyCheckResult};
 
 #[cfg(test)]
 mod tests {
@@ -444,13 +322,14 @@ mod tests {
 
     #[test]
     fn test_safety_check_result() {
-        let result = SafetyCheckResult::warning("hotend".to_string(), "Temperature too low".to_string())
+        let result = SafetyCheckResult::warning("temperature", "deviation", "Temperature too low")
             .with_temps(180.0, 200.0);
 
-        assert_eq!(result.heater, "hotend");
+        assert_eq!(result.source, "temperature");
         assert_eq!(result.level, SafetyLevel::Warning);
-        assert_eq!(result.action, SafetyAction::Warn);
-        assert_eq!(result.deviation, -20.0);
+        assert_eq!(result.action, SafetyAction::LogWarning);
+        assert_eq!(result.current_temp, Some(180.0));
+        assert_eq!(result.target_temp, Some(200.0));
         assert!(result.needs_action());
     }
 }
