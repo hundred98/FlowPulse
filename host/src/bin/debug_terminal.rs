@@ -545,11 +545,12 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Background safety check loop
-    let tm_safety = temperature_manager.clone();
-    tokio::spawn(async move {
-        tm_safety.start_safety_check_loop().await;
-    });
+    // Background safety check loop — moved to SafetyMonitor (emb_public::safety::SafetyMonitor)
+    // In production, SafetyMonitor is started by SafetyController.
+    // let tm_safety = temperature_manager.clone();
+    // tokio::spawn(async move {
+    //     tm_safety.start_safety_check_loop().await;
+    // });
 
     // Gcodes directory (default: ./gcodes relative to current working dir)
     let gcodes_dir = std::env::current_dir()

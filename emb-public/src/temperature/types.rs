@@ -129,6 +129,20 @@ impl HeaterState {
     pub fn has_sensor_fault(&self) -> bool {
         self.sensor_fault
     }
+
+    /// Convert to safety module's HeaterReading
+    pub fn to_heater_reading(&self) -> crate::safety::temperature::HeaterReading {
+        crate::safety::temperature::HeaterReading {
+            name: self.name.clone(),
+            current_temp: self.current_temp,
+            target_temp: self.target_temp,
+            is_heating: self.is_heating,
+            heating_duration_secs: self.heating_duration_secs(),
+            min_temp: self.min_temp,
+            max_temp: self.max_temp,
+            sensor_fault: self.sensor_fault,
+        }
+    }
 }
 
 /// Temperature preset

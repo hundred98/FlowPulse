@@ -5,7 +5,6 @@
 //! and PID auto-tuning.
 
 use super::preset::PresetManager;
-use super::safety::TemperatureSafetyChecker;
 use super::types::{
     HeaterState, SafetyAction, SafetyCheckResult, TemperatureManagerConfig, TemperaturePreset,
 };
@@ -16,6 +15,7 @@ use crate::common::{
 };
 use crate::config::{ConfigFrameBuilder, ConfigManager, TemperatureSafetyConfig};
 use crate::core_client::CoreSocketClient;
+use crate::safety::temperature::{HeaterReading, TemperatureSafetyChecker};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -84,14 +84,13 @@ impl TemperatureManager {
         client: Arc<CoreSocketClient>,
         event_publisher: Arc<dyn EventPublisher>,
         config: TemperatureManagerConfig,
-        safety_config: Option<TemperatureSafetyConfig>,
+        _safety_config: Option<TemperatureSafetyConfig>,
     ) -> Self {
-        let safety_config = safety_config.unwrap_or_default();
         Self {
             heaters: Arc::new(RwLock::new(HashMap::new())),
             client,
             event_publisher,
-            safety_checker: TemperatureSafetyChecker::new(safety_config),
+            safety_checker: TemperatureSafetyChecker::default(),
             preset_manager: PresetManager::new(),
             tune_state: Arc::new(RwLock::new(TuneState::default())),
             config: RwLock::new(config),
@@ -774,10 +773,13 @@ impl TemperatureManager {
     /// Perform safety check
     pub async fn check_safety(&self) -> Vec<SafetyCheckResult> {
         let heaters = self.heaters.read().await;
-        let heater_list: Vec<_> = heaters.values().cloned().collect();
+        let heater_readings: Vec<HeaterReading> = heaters
+            .values()
+            .map(|h| h.to_heater_reading())
+            .collect();
         drop(heaters);
 
-        self.safety_checker.check_heaters(&heater_list)
+        self.safety_checker.check_heaters(&heater_readings)
     }
 
     /// Handle safety check results
@@ -840,22 +842,6 @@ impl TemperatureManager {
             SafetyAction::DisableMotors => {
                 log::error!("Disable motors: {}", result.message);
             }
-        }
-    }
-
-    /// Start periodic safety check loop
-    pub async fn start_safety_check_loop(&self) {
-        let interval = Duration::from_millis(self.config.read().await.safety_check_interval_ms);
-
-        loop {
-            // Perform safety check
-            let results = self.check_safety().await;
-
-            // Handle results
-            self.handle_safety_results(results).await;
-
-            // Wait for next check
-            tokio::time::sleep(interval).await;
         }
     }
 

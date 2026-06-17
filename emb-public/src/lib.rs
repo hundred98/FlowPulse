@@ -94,7 +94,7 @@ pub use safety::{
 pub use temperature::{
     TemperatureManager, TemperatureManagerConfig,
     TemperatureWaitConfig, AutoFanConfig,
-    HeaterState, TemperaturePreset, TemperatureSafetyChecker, PresetManager,
+    HeaterState, TemperaturePreset, PresetManager,
     // Note: SafetyLevel, SafetyAction, SafetyCheckResult are now
     // re-exported from the unified safety module (see above).
 };

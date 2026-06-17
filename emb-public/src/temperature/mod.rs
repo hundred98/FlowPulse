@@ -5,7 +5,6 @@
 //! and PID auto-tuning.
 
 pub mod types;
-pub mod safety;
 pub mod preset;
 pub mod manager;
 pub mod pid_tune;
@@ -15,7 +14,6 @@ pub use types::{
     TemperatureWaitConfig, AutoFanConfig,
     SafetyLevel, SafetyAction, SafetyCheckResult,
 };
-pub use safety::TemperatureSafetyChecker;
 pub use preset::PresetManager;
 pub use manager::{TemperatureManager, DevicePosition};
 pub use pid_tune::{

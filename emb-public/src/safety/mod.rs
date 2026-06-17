@@ -197,6 +197,40 @@ impl SafetyController {
         }
     }
 
+    // ---- Temperature event handler ----
+
+    /// Handle temperature updates from TemperatureManager.
+    /// Runs temperature safety checks and returns any violations.
+    pub async fn on_temperature_updated(&self, readings: &[HeaterReading]) -> Vec<SafetyCheckResult> {
+        let checker = self.temperature_checker.read().unwrap();
+        if let Some(ref checker) = *checker {
+            checker.check_heaters(readings)
+        } else {
+            // Checker not yet initialized — create a temporary one from config
+            let config = self.config.read().unwrap();
+            let temp_checker = TemperatureSafetyChecker::new(&config);
+            temp_checker.check_heaters(readings)
+        }
+    }
+
+    // ---- Hardware event handler ----
+
+    /// Handle a hardware safety event (filament runout, power loss, etc.)
+    pub async fn on_hardware_event(&self, event: HardwareEvent) -> SafetyCheckResult {
+        let checker = self.hardware_checker.read().unwrap();
+        if let Some(ref checker) = *checker {
+            checker.handle_event(event)
+        } else {
+            // Create temporary checker
+            let config = self.config.read().unwrap();
+            let temp_checker = HardwareSafetyChecker::new(
+                config.enable_safety_checks,
+                config.state_stale_threshold_ms,
+            );
+            temp_checker.handle_event(event)
+        }
+    }
+
     // ---- Helper ----
 
     /// Publish a safety alert event
