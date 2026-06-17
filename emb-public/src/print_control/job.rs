@@ -705,23 +705,46 @@ impl PrintController {
     
     /// Apply temperature preset (new)
     pub async fn apply_preset(&self, preset_name: &str) -> EmbResult<()> {
-        let presets = self.presets.read().await;
-        let preset = presets.iter()
-            .find(|p| p.name == preset_name)
-            .cloned();
-        
-        if preset.is_none() {
-            return Err(crate::common::EmbError::Config(
-                format!("Temperature preset '{}' not found", preset_name)
-            ));
-        }
-        
-        let preset = preset.unwrap();
-        
-        // TODO: Send temperature commands to core server
-        log::info!("Applying temperature preset: {} (hotend={}, bed={})", 
+        let preset = {
+            let presets = self.presets.read().await;
+            presets.iter()
+                .find(|p| p.name == preset_name)
+                .cloned()
+                .ok_or_else(|| crate::common::EmbError::Config(
+                    format!("Temperature preset '{}' not found", preset_name)
+                ))?
+        };
+
+        let client = self.client.as_ref()
+            .ok_or_else(|| crate::common::EmbError::Config(
+                "CoreSocketClient not set".to_string()
+            ))?;
+
+        let temperature_manager = self.temperature_manager.as_ref()
+            .ok_or_else(|| crate::common::EmbError::Config(
+                "TemperatureManager not set".to_string()
+            ))?;
+
+        log::info!("Applying temperature preset: {} (hotend={}, bed={})",
             preset.name, preset.hotend_temp, preset.bed_temp);
-        
+
+        // Set hotend temperature (M104)
+        if preset.hotend_temp > 0.0 {
+            client.motion_execute_m_command(emb_api::MCommand::SetHotendTemp {
+                tool: 0,
+                temp: preset.hotend_temp,
+            }).await?;
+            temperature_manager.update_target_cache("hotend", preset.hotend_temp).await;
+        }
+
+        // Set bed temperature (M140)
+        if preset.bed_temp > 0.0 {
+            client.motion_execute_m_command(emb_api::MCommand::SetBedTemp {
+                temp: preset.bed_temp,
+            }).await?;
+            temperature_manager.update_target_cache("bed", preset.bed_temp).await;
+        }
+
         Ok(())
     }
     
