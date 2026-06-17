@@ -129,21 +129,14 @@ impl SafetyActionExecutor {
     async fn execute_emergency_stop(&self, result: &SafetyCheckResult) {
         log::error!("🚨 Emergency stop triggered: {}", result.message);
 
-        // 1. Turn off all heaters
-        if let Some(ref tm) = self.temperature_manager {
-            if let Err(e) = tm.turn_off_all().await {
-                log::error!("Failed to turn off heaters during E-stop: {}", e);
-            }
-        }
-
-        // 2. Disable motors via core
+        // 1. Send M112 to core server → MCU sched_shutdown (stops motion + disables heaters)
         if let Some(ref client) = self.core_client {
-            if let Err(e) = client.motion_execute_m_command(emb_api::MCommand::MotorDisableAll).await {
-                log::error!("Failed to disable motors during E-stop: {}", e);
+            if let Err(e) = client.motion_execute_m_command(emb_api::MCommand::EmergencyStop).await {
+                log::error!("Failed to send EmergencyStop command: {}", e);
             }
         }
 
-        // 3. Transition state machine to Error
+        // 2. Transition state machine to Error
         if let Some(ref sm) = self.state_machine {
             if let Err(e) = sm.transition_to(
                 crate::state_machine::PrinterState::Error,
@@ -153,7 +146,7 @@ impl SafetyActionExecutor {
             }
         }
 
-        // 4. Publish critical event
+        // 3. Publish critical event
         self.publish_event_with(result, EventSeverity::Critical, "Emergency stop executed");
     }
 
