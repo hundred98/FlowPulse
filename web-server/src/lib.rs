@@ -152,7 +152,8 @@ mod tests {
     fn test_web_server_creation() {
         let config = WebServerConfig::default();
         let (tx, _rx) = broadcast::channel(16);
-        let provider = Arc::new(WebDataProvider::new(tx.clone()));
+        let core_client = Arc::new(CoreSocketClient::new("127.0.0.1:9527".to_string()));
+        let provider = Arc::new(WebDataProvider::new(tx.clone(), core_client.clone()));
         
         // Create a mock temperature manager for testing
         let core_client = Arc::new(CoreSocketClient::new("127.0.0.1:9527".to_string()));

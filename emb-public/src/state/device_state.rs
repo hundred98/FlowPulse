@@ -8,7 +8,14 @@ use crate::common::{
     PrinterEvent, EventKind, EventSeverity,
 };
 use crate::core_client::CoreSocketClient;
+use crate::state_machine::StateMachine;
+use crate::safety::monitor::SafetyDataSource;
+use crate::safety::temperature::HeaterReading;
+use crate::temperature::TemperatureManager;
+use crate::print_control::PrintProgress;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock as SyncRwLock;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc};
@@ -19,9 +26,6 @@ pub struct DeviceStateConfig {
     /// State synchronization interval (milliseconds)
     pub sync_interval_ms: u64,
     
-    /// Enable state caching
-    pub enable_cache: bool,
-    
     /// State history size
     pub history_size: usize,
 }
@@ -30,7 +34,6 @@ impl Default for DeviceStateConfig {
     fn default() -> Self {
         Self {
             sync_interval_ms: 1000,
-            enable_cache: true,
             history_size: 100,
         }
     }
@@ -76,7 +79,7 @@ impl Default for MotionStatus {
 #[derive(Debug, Clone, Copy)]
 pub struct FlowStatus {
     pub flow_rate: f32,
-    pub pressure: f32,
+    pub pressure: Option<f32>,
     pub is_active: bool,
 }
 
@@ -84,7 +87,7 @@ impl Default for FlowStatus {
     fn default() -> Self {
         Self {
             flow_rate: 0.0,
-            pressure: 0.0,
+            pressure: None,
             is_active: false,
         }
     }
@@ -94,7 +97,6 @@ impl Default for FlowStatus {
 /// Synchronizes device state from the core server
 pub struct DeviceStateManager {
     /// Core socket client
-    #[allow(dead_code)]
     client: Arc<CoreSocketClient>,
     
     /// Event publisher
@@ -117,6 +119,21 @@ pub struct DeviceStateManager {
     
     /// State history
     history: Arc<RwLock<Vec<DeviceStateSnapshot>>>,
+    
+    /// Optional temperature manager for temperature state delegation
+    temperature_manager: Option<Arc<TemperatureManager>>,
+    
+    /// Latest state snapshot (sync-friendly, used by SafetyDataSource and sync callers)
+    latest_snapshot: Arc<SyncRwLock<LatestSnapshot>>,
+    
+    /// Optional state machine for high-level printer state
+    state_machine: Option<Arc<StateMachine>>,
+    
+    /// Current print progress (from PrintController)
+    print_progress: Arc<RwLock<PrintProgress>>,
+    
+    /// Shutdown flag for graceful stop of sync loop
+    shutdown: Arc<AtomicBool>,
 }
 
 /// Device state snapshot
@@ -135,6 +152,32 @@ pub struct DeviceStateSnapshot {
     pub flow_status: FlowStatus,
 }
 
+/// Latest state snapshot (sync-friendly, for SafetyDataSource)
+///
+/// Uses std::sync::RwLock for synchronous access, avoiding the
+/// async RwLock impedance when implementing sync traits.
+#[derive(Debug, Clone)]
+struct LatestSnapshot {
+    /// Current position
+    position: Position,
+    
+    /// Latest heater readings from TemperatureManager
+    heater_readings: Vec<HeaterReading>,
+    
+    /// Last sync timestamp
+    last_sync_time: Instant,
+}
+
+impl Default for LatestSnapshot {
+    fn default() -> Self {
+        Self {
+            position: Position::default(),
+            heater_readings: Vec::new(),
+            last_sync_time: Instant::now(),
+        }
+    }
+}
+
 impl DeviceStateManager {
     /// Create a new device state manager
     pub fn new(
@@ -151,6 +194,11 @@ impl DeviceStateManager {
             flow_status: Arc::new(RwLock::new(FlowStatus::default())),
             last_sync: Arc::new(RwLock::new(Instant::now())),
             history: Arc::new(RwLock::new(Vec::new())),
+            temperature_manager: None,
+            latest_snapshot: Arc::new(SyncRwLock::new(LatestSnapshot::default())),
+            state_machine: None,
+            print_progress: Arc::new(RwLock::new(PrintProgress::default())),
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
     
@@ -159,6 +207,12 @@ impl DeviceStateManager {
         let interval = Duration::from_millis(self.config.sync_interval_ms);
         
         loop {
+            // Check graceful shutdown flag
+            if self.shutdown.load(Ordering::SeqCst) {
+                log::info!("DeviceStateManager sync loop stopped gracefully");
+                break;
+            }
+            
             // Sync state from core server
             if let Err(e) = self.sync_state().await {
                 log::error!("Failed to sync device state: {}", e);
@@ -167,6 +221,12 @@ impl DeviceStateManager {
             // Wait for next sync interval
             tokio::time::sleep(interval).await;
         }
+    }
+    
+    /// Stop the synchronization loop gracefully
+    pub fn stop_sync_loop(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        log::info!("DeviceStateManager stop signal sent");
     }
     
     /// Sync state from core server
@@ -190,7 +250,7 @@ impl DeviceStateManager {
             // Update flow status based on stats
             let flow_status = FlowStatus {
                 flow_rate: stats.motion.avg_speed_mm_per_s as f32,
-                pressure: 0.0, // Not available from stats
+                pressure: None, // Not available from stats
                 is_active: stats.motion.total_steps > 0,
             };
             self.update_flow_status(flow_status).await;
@@ -202,6 +262,9 @@ impl DeviceStateManager {
         
         // Save snapshot to history
         self.save_snapshot().await;
+        
+        // Update sync-friendly snapshot (for SafetyDataSource and sync callers)
+        self.update_latest_snapshot().await;
         
         // Publish sync event
         let _ = self.event_publisher.publish(PrinterEvent::new(
@@ -306,16 +369,35 @@ impl DeviceStateManager {
     
     /// Get printer status (for FrontendDataProvider)
     pub async fn get_printer_status(&self) -> PrinterStatus {
-        let motion_status = self.motion_status.read().await;
-        let state = match *motion_status {
-            MotionStatus::Idle => "idle",
-            MotionStatus::Moving => "moving",
-            MotionStatus::Homing => "homing",
-            MotionStatus::Printing => "printing",
-            MotionStatus::Error => "error",
+        // 1. Determine state string — prefer PrinterState from state_machine,
+        //    fall back to MotionStatus if state_machine not available
+        let state = if let Some(ref sm) = self.state_machine {
+            format!("{:?}", sm.get_state()).to_lowercase()
+        } else {
+            let motion_status = self.motion_status.read().await;
+            match *motion_status {
+                MotionStatus::Idle => "idle",
+                MotionStatus::Moving => "moving",
+                MotionStatus::Homing => "homing",
+                MotionStatus::Printing => "printing",
+                MotionStatus::Error => "error",
+            }
+            .to_string()
         };
         
-        PrinterStatus::new(state.to_string())
+        // 2. Read current print progress
+        let progress = self.print_progress.read().await;
+        
+        // 3. Build PrinterStatus with full data
+        PrinterStatus {
+            state,
+            progress_percent: progress.percent,
+            current_layer: progress.current_layer,
+            total_layers: progress.total_layers,
+            elapsed_seconds: progress.elapsed_seconds,
+            remaining_seconds: progress.remaining_seconds,
+            print_file: None, // Available via PrintController.get_current_job()
+        }
     }
 
     /// Get position data (for FrontendDataProvider)
@@ -334,5 +416,100 @@ impl DeviceStateManager {
         let last_sync = self.last_sync.read().await;
         let elapsed = last_sync.elapsed().as_millis() as u64;
         elapsed > threshold_ms
+    }
+    
+    // ── Temperature Management ─────────────────────────────────────────
+    
+    /// Set the optional temperature manager reference for unified state
+    pub fn set_temperature_manager(&mut self, tm: Arc<TemperatureManager>) {
+        self.temperature_manager = Some(tm);
+    }
+    
+    /// Get temperature status (delegates to TemperatureManager if available)
+    pub async fn get_temperature(&self) -> Option<crate::common::TempStatus> {
+        if let Some(tm) = &self.temperature_manager {
+            Some(tm.get_temp_status().await)
+        } else {
+            None
+        }
+    }
+    
+    /// Get heater readings by delegating to TemperatureManager
+    pub async fn get_heater_readings(&self) -> Vec<HeaterReading> {
+        if let Some(tm) = &self.temperature_manager {
+            let heaters = tm.get_all_heaters().await;
+            heaters.into_values().map(|h| {
+                let heating_duration = h.heating_start
+                    .map(|start| start.elapsed().as_secs_f64())
+                    .unwrap_or(0.0);
+                HeaterReading {
+                    name: h.name,
+                    current_temp: h.current_temp,
+                    target_temp: h.target_temp,
+                    is_heating: h.is_heating,
+                    heating_duration_secs: heating_duration,
+                    min_temp: h.min_temp,
+                    max_temp: h.max_temp,
+                    sensor_fault: h.sensor_fault,
+                }
+            }).collect()
+        } else {
+            Vec::new()
+        }
+    }
+    
+    // ── State Machine & Print Progress ─────────────────────────────────
+    
+    /// Set the optional state machine reference for high-level printer state
+    pub fn set_state_machine(&mut self, sm: Arc<StateMachine>) {
+        self.state_machine = Some(sm);
+    }
+    
+    /// Update print progress (called by PrintController during print execution)
+    pub async fn update_print_progress(&self, progress: PrintProgress) {
+        let mut p = self.print_progress.write().await;
+        *p = progress;
+    }
+    
+    /// Get current print progress
+    pub async fn get_print_progress(&self) -> PrintProgress {
+        self.print_progress.read().await.clone()
+    }
+    
+    // ── Sync Snapshot ─────────────────────────────────────────────────
+    
+    /// Update the sync-friendly snapshot (called at end of sync_state)
+    pub async fn update_latest_snapshot(&self) {
+        let position = self.position.read().await.clone();
+        let heater_readings = self.get_heater_readings().await;
+        let mut snap = self.latest_snapshot.write().unwrap();
+        snap.position = position;
+        snap.heater_readings = heater_readings;
+        snap.last_sync_time = Instant::now();
+    }
+}
+
+/// SafetyDataSource implementation
+///
+/// Provides synchronous state access for `SafetyMonitor` by reading
+/// from the latest snapshot (updated at the end of each `sync_state()`).
+impl SafetyDataSource for DeviceStateManager {
+    fn get_positions(&self) -> Vec<(&str, f32)> {
+        let snap = self.latest_snapshot.read().unwrap();
+        vec![
+            ("x", snap.position.x),
+            ("y", snap.position.y),
+            ("z", snap.position.z),
+        ]
+    }
+
+    fn get_heater_readings(&self) -> Vec<HeaterReading> {
+        let snap = self.latest_snapshot.read().unwrap();
+        snap.heater_readings.clone()
+    }
+
+    fn state_elapsed_ms(&self) -> u64 {
+        let snap = self.latest_snapshot.read().unwrap();
+        snap.last_sync_time.elapsed().as_millis() as u64
     }
 }

@@ -298,6 +298,7 @@ impl PrintController {
                 progress.current_line = (line_idx + 1) as u32;
                 progress.total_lines = total_lines as u32;
                 progress.status = format!("Skipping: {}", line);
+                self.sync_progress_to_device_state().await;
                 continue;
             }
 
@@ -312,6 +313,7 @@ impl PrintController {
                     progress.current_line = (line_idx + 1) as u32;
                     progress.total_lines = total_lines as u32;
                     progress.status = format!("Parse error: {}", line);
+                    self.sync_progress_to_device_state().await;
                     continue;
                 }
             };
@@ -543,6 +545,8 @@ impl PrintController {
                     progress.status = "Skipped".to_string();
                 }
             }
+            // Sync progress to DeviceStateManager after each line
+            self.sync_progress_to_device_state().await;
         }
 
         // Mark progress as complete
@@ -551,6 +555,10 @@ impl PrintController {
         progress.current_line = total_lines as u32;
         progress.total_lines = total_lines as u32;
         progress.status = "Completed".to_string();
+        // Push final progress to DeviceStateManager
+        if let Some(ref ds) = self.device_state {
+            ds.update_print_progress(progress.clone()).await;
+        }
 
         log::info!("✅ Print completed: {}", filename);
         Ok(())
@@ -668,7 +676,7 @@ impl PrintController {
         self.progress.read().await.clone()
     }
     
-    /// Update progress (new)
+    /// Update progress (new) and push to DeviceStateManager
     pub async fn update_progress(&self, percent: f32, layer: u32) {
         let mut progress = self.progress.write().await;
         progress.percent = percent;
@@ -690,6 +698,19 @@ impl PrintController {
                         .max(0);
                 }
             }
+        }
+        
+        // Push to DeviceStateManager
+        if let Some(ref ds) = self.device_state {
+            ds.update_print_progress(progress.clone()).await;
+        }
+    }
+    
+    /// Sync current print progress to DeviceStateManager.
+    /// Call after any direct self.progress writes (e.g. in execute_print_loop).
+    pub async fn sync_progress_to_device_state(&self) {
+        if let Some(ref ds) = self.device_state {
+            ds.update_print_progress(self.progress.read().await.clone()).await;
         }
     }
     

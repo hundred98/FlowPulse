@@ -178,7 +178,11 @@ pub async fn initialize_device(host: &PrinterHostV2) -> anyhow::Result<()> {
 pub fn start_web_server(app_state: &AppState) -> JoinHandle<()> {
     // Create WebDataProvider with broadcast channel
     let websocket_broadcast_tx = app_state.websocket_broadcast_tx.clone();
-    let data_provider = Arc::new(WebDataProvider::new(websocket_broadcast_tx.clone()));
+    let core_client = app_state.core_client.clone();
+    let data_provider = Arc::new(WebDataProvider::new(
+        websocket_broadcast_tx.clone(),
+        core_client,
+    ));
 
     // Create and start WebServer with temperature manager
     let web_config = WebServerConfig::default();

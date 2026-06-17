@@ -28,17 +28,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create broadcast channel for WebSocket updates
     let (broadcast_tx, _broadcast_rx) = broadcast::channel(16);
 
-    // Create data provider (using WebDataProvider for now)
-    let data_provider = Arc::new(emb_public::state::WebDataProvider::new(broadcast_tx.clone()));
-
-    // Create a mock temperature manager for standalone mode
-    // Note: This won't actually control temperature - it's just to satisfy the interface
+    // Create CoreSocketClient for communication
     let core_client = Arc::new(CoreSocketClient::new(CoreClientConfig {
         server_addr: "127.0.0.1:9527".to_string(),
         connect_timeout_ms: 5000,
         request_timeout_ms: 30000,
         auto_reconnect: true,
     }));
+
+    // Create data provider (using WebDataProvider for now)
+    let data_provider = Arc::new(emb_public::state::WebDataProvider::new(
+        broadcast_tx.clone(),
+        core_client.clone(),
+    ));
+
+    // Create a mock temperature manager for standalone mode
+    // Note: This won't actually control temperature - it's just to satisfy the interface
     let event_publisher = Arc::new(SyncEventPublisher::new());
     let temp_manager = Arc::new(TemperatureManager::new(
         core_client,

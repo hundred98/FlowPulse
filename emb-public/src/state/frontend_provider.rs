@@ -4,11 +4,16 @@
 //! supporting UnixSocket (priority), SharedMemory (reserved), and WebSocket.
 
 use crate::common::{EmbResult, PrinterStatus, TempStatus, PositionData, SharedState};
+use crate::CoreSocketClient;
+use crate::gcode::{GCodeParser, CommandKind, MotionCommand};
+use async_trait::async_trait;
+use emb_api::{ArcParamsApi, MCommand};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 
 /// Frontend data provider trait
 /// Unified interface for different communication methods
+#[async_trait]
 pub trait FrontendDataProvider: Send + Sync {
     /// Get current printer status
     fn get_printer_status(&self) -> PrinterStatus;
@@ -20,7 +25,73 @@ pub trait FrontendDataProvider: Send + Sync {
     fn get_position(&self) -> PositionData;
     
     /// Send G-code command
-    fn send_gcode(&self, cmd: &str) -> EmbResult<()>;
+    async fn send_gcode(&self, cmd: &str) -> EmbResult<()>;
+}
+
+/// Dispatch a parsed G-code command through CoreSocketClient.
+async fn dispatch_gcode(client: &CoreSocketClient, cmd: &str) -> EmbResult<()> {
+    let parsed = GCodeParser::parse_line(cmd, 0)
+        .ok_or_else(|| crate::common::EmbError::GCodeParse(
+            format!("Failed to parse G-code: {}", cmd)
+        ))?;
+
+    match parsed.kind {
+        CommandKind::Motion(motion_cmd) => {
+            match motion_cmd {
+                MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
+                    let cmd_str = if is_rapid { "G0" } else { "G1" };
+                    client.motion_dispatch_arc(cmd_str, x, y, z, e, f, None).await
+                        .map_err(|e| crate::common::EmbError::MotionControl(e))?;
+                }
+                MotionCommand::ArcMove { x, y, z, e, f, i, j, is_cw } => {
+                    let cmd_str = if is_cw { "G2" } else { "G3" };
+                    let arc = Some(ArcParamsApi {
+                        i, j,
+                        direction: if is_cw { 0 } else { 1 },
+                    });
+                    client.motion_dispatch_arc(cmd_str, x, y, z, e, f, arc).await
+                        .map_err(|e| crate::common::EmbError::MotionControl(e))?;
+                }
+                MotionCommand::Home { .. } => {
+                    client.motion_dispatch("G28", None, None, None, None, None).await
+                        .map_err(|e| crate::common::EmbError::MotionControl(e))?;
+                }
+                MotionCommand::SetPosition { x, y, z, e } => {
+                    client.motion_set_position(x, y, z, e).await
+                        .map_err(|e| crate::common::EmbError::MotionControl(e))?;
+                }
+                MotionCommand::AbsolutePositioning => {
+                    client.motion_execute_m_command(
+                        MCommand::AbsolutePositioning
+                    ).await.map_err(|e| crate::common::EmbError::MotionControl(e))?;
+                }
+                MotionCommand::RelativePositioning => {
+                    client.motion_execute_m_command(
+                        MCommand::RelativePositioning
+                    ).await.map_err(|e| crate::common::EmbError::MotionControl(e))?;
+                }
+                MotionCommand::Dwell { dwell_time_ms } => {
+                    client.motion_dwell(dwell_time_ms).await
+                        .map_err(|e| crate::common::EmbError::MotionControl(e))?;
+                }
+                _ => {
+                    return Err(crate::common::EmbError::GCodeParse(
+                        format!("Unsupported motion command: {:?}", motion_cmd)
+                    ));
+                }
+            }
+        }
+        CommandKind::Machine(m_cmd) => {
+            client.motion_execute_m_command(m_cmd).await
+                .map_err(|e| crate::common::EmbError::MotionControl(e))?;
+        }
+        _ => {
+            return Err(crate::common::EmbError::GCodeParse(
+                format!("Unsupported G-code command: {}", cmd)
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// UnixSocket data provider (priority implementation)
@@ -28,6 +99,9 @@ pub trait FrontendDataProvider: Send + Sync {
 pub struct UnixSocketProvider {
     /// UnixSocket path
     socket_path: String,
+    
+    /// Core socket client for forwarding G-code commands
+    client: Arc<CoreSocketClient>,
     
     /// Cached printer status
     cached_status: Arc<RwLock<PrinterStatus>>,
@@ -41,9 +115,10 @@ pub struct UnixSocketProvider {
 
 impl UnixSocketProvider {
     /// Create a new UnixSocket provider
-    pub fn new(socket_path: String) -> Self {
+    pub fn new(socket_path: String, client: Arc<CoreSocketClient>) -> Self {
         Self {
             socket_path,
+            client,
             cached_status: Arc::new(RwLock::new(PrinterStatus::idle())),
             cached_temp: Arc::new(RwLock::new(TempStatus::new(0.0, 0.0, 0.0, 0.0))),
             cached_position: Arc::new(RwLock::new(PositionData::zero())),
@@ -74,6 +149,7 @@ impl UnixSocketProvider {
     }
 }
 
+#[async_trait]
 impl FrontendDataProvider for UnixSocketProvider {
     fn get_printer_status(&self) -> PrinterStatus {
         // Use std::sync::RwLock for synchronous access
@@ -88,11 +164,8 @@ impl FrontendDataProvider for UnixSocketProvider {
         self.cached_position.read().unwrap().clone()
     }
     
-    fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
-        // TODO: Implement UnixSocket communication
-        // For now, return success
-        log::info!("UnixSocket: Sending G-code: {}", cmd);
-        Ok(())
+    async fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
+        dispatch_gcode(&self.client, cmd).await
     }
 }
 
@@ -120,6 +193,7 @@ impl EmbeddedDataProvider {
     }
 }
 
+#[async_trait]
 impl FrontendDataProvider for EmbeddedDataProvider {
     fn get_printer_status(&self) -> PrinterStatus {
         // Reserved implementation
@@ -150,8 +224,8 @@ impl FrontendDataProvider for EmbeddedDataProvider {
         )
     }
     
-    fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
-        // Reserved implementation
+    async fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
+        // Reserved implementation - no CoreSocketClient available
         // TODO: Implement shared memory command queue
         log::info!("EmbeddedDataProvider: Sending G-code (reserved): {}", cmd);
         Ok(())
@@ -163,6 +237,9 @@ impl FrontendDataProvider for EmbeddedDataProvider {
 pub struct WebDataProvider {
     /// WebSocket broadcast sender
     broadcast_tx: broadcast::Sender<crate::common::WebSocketMessage>,
+    
+    /// Core socket client for forwarding G-code commands
+    client: Arc<CoreSocketClient>,
     
     /// Cached printer status
     cached_status: Arc<RwLock<PrinterStatus>>,
@@ -179,9 +256,13 @@ pub struct WebDataProvider {
 
 impl WebDataProvider {
     /// Create a new Web data provider
-    pub fn new(broadcast_tx: broadcast::Sender<crate::common::WebSocketMessage>) -> Self {
+    pub fn new(
+        broadcast_tx: broadcast::Sender<crate::common::WebSocketMessage>,
+        client: Arc<CoreSocketClient>,
+    ) -> Self {
         let provider = Self {
             broadcast_tx: broadcast_tx.clone(),
+            client,
             cached_status: Arc::new(RwLock::new(PrinterStatus::idle())),
             cached_temp: Arc::new(RwLock::new(TempStatus::new(0.0, 0.0, 0.0, 0.0))),
             cached_position: Arc::new(RwLock::new(PositionData::zero())),
@@ -235,7 +316,36 @@ impl WebDataProvider {
                                 let mut cached = cached_status.write().unwrap();
                                 *cached = PrinterStatus::new(to);
                             }
-                            _ => {}
+                            crate::common::WebSocketMessage::Progress {
+                                percent,
+                                current_layer,
+                                total_layers,
+                            } => {
+                                let mut cached = cached_status.write().unwrap();
+                                cached.progress_percent = percent;
+                                cached.current_layer = current_layer;
+                                cached.total_layers = total_layers;
+                                log::debug!("Web: Progress {:.1}% layer {}/{}", percent, current_layer, total_layers);
+                            }
+                            crate::common::WebSocketMessage::PrintEvent { event, message } => {
+                                log::info!("Web: PrintEvent '{}': {}", event, message);
+                                // Update cached state based on event
+                                let mut cached = cached_status.write().unwrap();
+                                cached.state = event;
+                            }
+                            crate::common::WebSocketMessage::Alert { severity, message } => {
+                                match severity.as_str() {
+                                    "error" | "critical" => log::error!("Web: Alert [{}] {}", severity, message),
+                                    "warning" => log::warn!("Web: Alert [{}] {}", severity, message),
+                                    _ => log::info!("Web: Alert [{}] {}", severity, message),
+                                }
+                            }
+                            crate::common::WebSocketMessage::LimitSwitch { x, y, z } => {
+                                log::info!("Web: LimitSwitch x={} y={} z={}", x, y, z);
+                            }
+                            crate::common::WebSocketMessage::Homing { axis, status, progress } => {
+                                log::info!("Web: Homing axis={} status={} progress={:.0}%", axis, status, progress);
+                            }
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => {
@@ -321,6 +431,7 @@ impl WebDataProvider {
     }
 }
 
+#[async_trait]
 impl FrontendDataProvider for WebDataProvider {
     fn get_printer_status(&self) -> PrinterStatus {
         self.cached_status.read().unwrap().clone()
@@ -334,10 +445,8 @@ impl FrontendDataProvider for WebDataProvider {
         self.cached_position.read().unwrap().clone()
     }
     
-    fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
-        // TODO: Implement WebSocket command sending
-        log::info!("WebDataProvider: Sending G-code: {}", cmd);
-        Ok(())
+    async fn send_gcode(&self, cmd: &str) -> EmbResult<()> {
+        dispatch_gcode(&self.client, cmd).await
     }
 }
 
