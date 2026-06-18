@@ -96,6 +96,7 @@ impl MCommandConverter {
             MCommand::Dwell { .. } |
             MCommand::MotorEnableAll |
             MCommand::MotorDisableAll |
+            MCommand::EmergencyStop |
             MCommand::SetHomeOffset { .. } |
             MCommand::SetFeedratePercentage { .. } |
             MCommand::SetFlowPercentage { .. } |

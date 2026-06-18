@@ -533,7 +533,6 @@ impl TemperatureManager {
         let frame = ConfigFrameBuilder::build_set_temp_frame(heater_id, temp);
 
         // Debug: log frame content
-        log::info!("Temperature set frame: {:02X?}", frame);
         log::info!("Sending temperature frame: heater_id={}, temp={}°C, frame_len={} bytes",
             heater_id, temp, frame.len());
 

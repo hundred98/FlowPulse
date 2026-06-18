@@ -323,6 +323,8 @@ pub enum MCommand {
     MotorEnableAll,
     /// M84/M18 - 关闭所有电机
     MotorDisableAll,
+    /// M112 - 紧急停止
+    EmergencyStop,
     /// M206 - 设置 Home Offset
     SetHomeOffset {
         x: Option<f32>,
@@ -374,7 +376,8 @@ impl MCommand {
             MCommand::QueryTemperature | MCommand::GetEndstopStates | MCommand::GetPosition => MExecutionType::Query,
             MCommand::Dwell { .. }
             | MCommand::MotorEnableAll
-            | MCommand::MotorDisableAll => MExecutionType::SyncSet,
+            | MCommand::MotorDisableAll
+            | MCommand::EmergencyStop => MExecutionType::SyncSet,
             _ => MExecutionType::SyncSet,
         }
     }
