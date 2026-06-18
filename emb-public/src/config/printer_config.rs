@@ -1,4 +1,4 @@
-pub(crate) use crate::temperature::{AutoFanConfig, TemperatureWaitConfig};
+﻿pub(crate) use crate::temperature::{AutoFanConfig, TemperatureWaitConfig};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1100,3 +1100,4 @@ impl Default for PidTuneParams {
         }
     }
 }
+

@@ -1,4 +1,4 @@
-//! Safety action executor
+﻿//! Safety action executor
 //!
 //! This module handles the execution of safety actions such as turning off heaters,
 //! pausing prints, disabling motors, and triggering emergency stops.
@@ -84,7 +84,7 @@ impl SafetyActionExecutor {
         sorted.sort_by(|a, b| b.cmp(a)); // most severe first
         for r in sorted {
             if r.needs_action() {
-                log::warn!("Safety action: {:?} | {}", r.action, r.message);
+                tracing::warn!("Safety action: {:?} | {}", r.action, r.message);
                 self.execute(r).await;
             }
         }
@@ -96,10 +96,10 @@ impl SafetyActionExecutor {
         let heater = result.source.as_str();
         if let Some(ref tm) = self.temperature_manager {
             if let Err(e) = tm.set_target(heater, 0.0).await {
-                log::error!("Failed to turn off heater '{}': {}", heater, e);
+                tracing::error!("Failed to turn off heater '{}': {}", heater, e);
             }
         } else {
-            log::warn!("TemperatureManager not available, cannot turn off heater '{}'", heater);
+            tracing::warn!("TemperatureManager not available, cannot turn off heater '{}'", heater);
         }
         self.publish_event(result, EventSeverity::Error);
     }
@@ -107,10 +107,10 @@ impl SafetyActionExecutor {
     async fn execute_pause_print(&self, result: &SafetyCheckResult) {
         if let Some(ref pc) = self.print_controller {
             if let Err(e) = pc.pause().await {
-                log::error!("Failed to pause print: {}", e);
+                tracing::error!("Failed to pause print: {}", e);
             }
         } else {
-            log::warn!("PrintController not available, cannot pause print");
+            tracing::warn!("PrintController not available, cannot pause print");
         }
         self.publish_event(result, EventSeverity::Error);
     }
@@ -118,21 +118,21 @@ impl SafetyActionExecutor {
     async fn execute_disable_motors(&self, result: &SafetyCheckResult) {
         if let Some(ref client) = self.core_client {
             if let Err(e) = client.motion_execute_m_command(emb_api::MCommand::MotorDisableAll).await {
-                log::error!("Failed to disable motors: {}", e);
+                tracing::error!("Failed to disable motors: {}", e);
             }
         } else {
-            log::warn!("CoreClient not available, cannot disable motors");
+            tracing::warn!("CoreClient not available, cannot disable motors");
         }
         self.publish_event(result, EventSeverity::Critical);
     }
 
     async fn execute_emergency_stop(&self, result: &SafetyCheckResult) {
-        log::error!("🚨 Emergency stop triggered: {}", result.message);
+        tracing::error!("🚨 Emergency stop triggered: {}", result.message);
 
         // 1. Send M112 to core server → MCU sched_shutdown (stops motion + disables heaters)
         if let Some(ref client) = self.core_client {
             if let Err(e) = client.motion_execute_m_command(emb_api::MCommand::EmergencyStop).await {
-                log::error!("Failed to send EmergencyStop command: {}", e);
+                tracing::error!("Failed to send EmergencyStop command: {}", e);
             }
         }
 
@@ -142,7 +142,7 @@ impl SafetyActionExecutor {
                 crate::state_machine::PrinterState::Error,
                 crate::state_machine::TransitionReason::Error(result.message.clone()),
             ) {
-                log::error!("Failed to transition to Error state during E-stop: {}", e);
+                tracing::error!("Failed to transition to Error state during E-stop: {}", e);
             }
         }
 
@@ -173,3 +173,4 @@ impl SafetyActionExecutor {
         );
     }
 }
+

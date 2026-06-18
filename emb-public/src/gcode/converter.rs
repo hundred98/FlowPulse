@@ -1,4 +1,4 @@
-//! M-command converter
+﻿//! M-command converter
 //!
 //! This module converts M-commands to device control commands.
 
@@ -233,3 +233,5 @@ mod tests {
         assert!(matches!(result[0], DeviceCommand::MotionParamUpdate));
     }
 }
+
+

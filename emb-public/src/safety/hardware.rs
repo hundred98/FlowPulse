@@ -1,4 +1,4 @@
-//! Hardware safety event handler
+﻿//! Hardware safety event handler
 //!
 //! This module handles hardware-level safety events such as:
 //! - Filament runout detection (pause print)
@@ -126,7 +126,7 @@ impl HardwareSafetyChecker {
     /// Returns the safety result for downstream processing
     pub fn trigger(&self, event: HardwareEvent) -> SafetyCheckResult {
         let result = self.handle_event(event);
-        log::warn!(
+        tracing::warn!(
             "Hardware safety event: {} (level={:?}, action={:?})",
             event.name(),
             result.level,
@@ -177,3 +177,4 @@ mod tests {
         assert!(result.passed);
     }
 }
+

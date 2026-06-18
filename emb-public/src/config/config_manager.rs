@@ -1,4 +1,4 @@
-//! Configuration Manager
+﻿//! Configuration Manager
 //!
 //! Centralized configuration management module. All configuration file reads
 //! must go through this module, and other modules pull configuration from here.
@@ -15,7 +15,7 @@
 //!
 //! // Register change callback
 //! ConfigManager::instance().on_config_change(Box::new(|config| {
-//!     log::info!("Config changed: {}", config.printer_model);
+//!     tracing::info!("Config changed: {}", config.printer_model);
 //! }));
 //!
 //! // Reload configuration (user triggered)
@@ -90,7 +90,7 @@ impl ConfigManager {
     /// # Example
     /// ```ignore
     /// ConfigManager::instance().on_config_change(Box::new(|config| {
-    ///     log::info!("Temperature PID updated: kp={}", config.temperature.hotend.kp);
+    ///     tracing::info!("Temperature PID updated: kp={}", config.temperature.hotend.kp);
     ///     // Update local cache or reinitialize
     /// }));
     /// ```
@@ -98,7 +98,7 @@ impl ConfigManager {
         let mut inner = match self.inner.write() {
             Ok(guard) => guard,
             Err(e) => {
-                log::error!("Failed to acquire lock for callback registration: {}", e);
+                tracing::error!("Failed to acquire lock for callback registration: {}", e);
                 return;
             }
         };
@@ -124,7 +124,7 @@ impl ConfigManager {
     /// * `Ok(())` if configuration was loaded successfully
     /// * `Err(String)` if any error occurred
     pub fn load(&self, config_dir: &str) -> Result<(), String> {
-        log::info!("📁 Loading configuration from: {}", config_dir);
+        tracing::info!("📁 Loading configuration from: {}", config_dir);
         
         let configs = load_configs(config_dir)?;
         
@@ -169,7 +169,7 @@ impl ConfigManager {
             Self::notify_callbacks(&callbacks, &printer_config);
         }
         
-        log::info!("✅ Configuration loaded successfully");
+        tracing::info!("✅ Configuration loaded successfully");
         Ok(())
     }
 
@@ -189,7 +189,7 @@ impl ConfigManager {
     /// * `Ok(())` if reload was successful
     /// * `Err(String)` if any error occurred
     pub async fn reload(&self, client: &CoreSocketClient) -> Result<(), String> {
-        log::info!("🔄 Reloading configuration...");
+        tracing::info!("🔄 Reloading configuration...");
         
         let config_dir = {
             let inner = self.inner.read().map_err(|e| format!("Lock error: {}", e))?;
@@ -219,13 +219,13 @@ impl ConfigManager {
         validate_config(&printer_config)?;
         
         // Step 2: Send motion config to server
-        log::info!("📤 Sending motion config to server...");
+        tracing::info!("📤 Sending motion config to server...");
         let motion_config_json = build_motion_config_json(&configs_corrected)?;
         client.config_update_motion(&motion_config_json).await
             .map_err(|e| format!("Failed to send motion config to server: {}", e))?;
         
         // Step 2.5: Send fan config to server
-        log::info!("📤 Sending fan config to server...");
+        tracing::info!("📤 Sending fan config to server...");
         let fan_config = emb_api::FanConfig {
             fans: configs_corrected.hardware.fan.as_ref()
                 .map(|fan_list| {
@@ -245,20 +245,20 @@ impl ConfigManager {
         // Step 2.6: Send bed mesh data to server
         if let Some(bed_mesh) = &configs_corrected.hardware.bed_mesh {
             if bed_mesh.algorithm.enabled {
-                log::info!("📤 Sending bed mesh data to server...");
+                tracing::info!("📤 Sending bed mesh data to server...");
                 Self::send_mesh_to_server(client, bed_mesh).await
                     .map_err(|e| format!("Failed to send mesh data to server: {}", e))?;
             } else {
-                log::info!("⏭️ Bed mesh algorithm disabled, clearing mesh data on server...");
+                tracing::info!("⏭️ Bed mesh algorithm disabled, clearing mesh data on server...");
                 let clear_request = CoreRequest::Motion(MotionRequest::ClearMesh);
                 if let Err(e) = client.send_request(&clear_request).await {
-                    log::warn!("Failed to clear mesh data on server: {}", e);
+                    tracing::warn!("Failed to clear mesh data on server: {}", e);
                 }
             }
         }
         
         // Step 3: Send hardware config frames to device
-        log::info!("📤 Sending hardware config to device...");
+        tracing::info!("📤 Sending hardware config to device...");
         let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
         
         for frame_bytes in config_frames.iter() {
@@ -283,7 +283,7 @@ impl ConfigManager {
         // Step 6: Notify all registered callbacks
         Self::notify_callbacks(&callbacks, &printer_config);
         
-        log::info!("✅ Configuration reloaded successfully");
+        tracing::info!("✅ Configuration reloaded successfully");
         Ok(())
     }
 
@@ -364,7 +364,7 @@ impl ConfigManager {
     /// * `Ok(())` if save was successful
     /// * `Err(String)` if any error occurred
     pub fn save_printer_config(&self, updated_config: &PrinterJsonConfig) -> Result<(), String> {
-        log::info!("💾 Saving printer configuration...");
+        tracing::info!("💾 Saving printer configuration...");
 
         // Get config directory
         let config_dir = {
@@ -397,7 +397,7 @@ impl ConfigManager {
         // Notify all registered callbacks
         Self::notify_callbacks(&callbacks, updated_config);
 
-        log::info!("✅ Printer configuration saved to: {}", printer_json_path.display());
+        tracing::info!("✅ Printer configuration saved to: {}", printer_json_path.display());
         Ok(())
     }
 
@@ -416,7 +416,7 @@ impl ConfigManager {
         &self,
         presets: &[super::printer_config::TemperaturePresetConfig],
     ) -> Result<(), String> {
-        log::info!("💾 Saving temperature presets...");
+        tracing::info!("💾 Saving temperature presets...");
 
         // Get config directory and loaded configs
         let (config_dir, mut loaded_configs) = {
@@ -466,7 +466,7 @@ impl ConfigManager {
         // Notify all registered callbacks
         Self::notify_callbacks(&callbacks, &printer_config);
 
-        log::info!("✅ Temperature presets saved to: {}", temperature_json_path.display());
+        tracing::info!("✅ Temperature presets saved to: {}", temperature_json_path.display());
         Ok(())
     }
 
@@ -491,7 +491,7 @@ impl ConfigManager {
         ki: f32,
         kd: f32,
     ) -> Result<(), String> {
-        log::info!("🔧 Updating PID parameters for {}: Kp={:.3}, Ki={:.3}, Kd={:.3}", heater, kp, ki, kd);
+        tracing::info!("🔧 Updating PID parameters for {}: Kp={:.3}, Ki={:.3}, Kd={:.3}", heater, kp, ki, kd);
 
         // Get config directory and loaded configs
         let (config_dir, mut loaded_configs) = {
@@ -550,7 +550,7 @@ impl ConfigManager {
         // Notify all registered callbacks
         Self::notify_callbacks(&callbacks, &printer_config);
 
-        log::info!("✅ PID parameters updated in: {}", hardware_json_path.display());
+        tracing::info!("✅ PID parameters updated in: {}", hardware_json_path.display());
         Ok(())
     }
 
@@ -560,7 +560,7 @@ impl ConfigManager {
             return;
         }
         
-        log::debug!("📢 Notifying {} callback(s) of config change", callbacks.len());
+        tracing::debug!("📢 Notifying {} callback(s) of config change", callbacks.len());
         for callback in callbacks {
             callback(config);
         }
@@ -608,7 +608,7 @@ impl ConfigManager {
             ));
         }
         
-        log::info!("📊 Mesh grid: {}x{}, range: X({:.1}-{:.1}), Y({:.1}-{:.1}), algorithm: {}, mesh_pps: {}x{}, fade: {:.1}-{:.1}, probe_z_adjust: {:.3}",
+        tracing::info!("📊 Mesh grid: {}x{}, range: X({:.1}-{:.1}), Y({:.1}-{:.1}), algorithm: {}, mesh_pps: {}x{}, fade: {:.1}-{:.1}, probe_z_adjust: {:.3}",
             x_count, y_count, x_min, x_max, y_min, y_max,
             algorithm, mesh_pps_x, mesh_pps_y, fade_start, fade_end, probe_z_adjust);
         
@@ -630,7 +630,7 @@ impl ConfigManager {
         
         for attempt in 0..MAX_RETRIES {
             if attempt > 0 {
-                log::warn!("🔄 Mesh transfer retry {}/{}", attempt + 1, MAX_RETRIES);
+                tracing::warn!("🔄 Mesh transfer retry {}/{}", attempt + 1, MAX_RETRIES);
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
             
@@ -654,11 +654,11 @@ impl ConfigManager {
                 CoreResponse::Motion(MotionResponse::Acknowledged) => {
                 }
                 CoreResponse::Error(e) => {
-                    log::warn!("SetMeshBegin failed: {}", e.message);
+                    tracing::warn!("SetMeshBegin failed: {}", e.message);
                     continue; // full retry from top
                 }
                 other => {
-                    log::warn!("Unexpected response to SetMeshBegin: {:?}", other);
+                    tracing::warn!("Unexpected response to SetMeshBegin: {:?}", other);
                     continue;
                 }
             }
@@ -681,12 +681,12 @@ impl ConfigManager {
                     CoreResponse::Motion(MotionResponse::MeshAck { .. } | MotionResponse::Acknowledged) => {
                     }
                     CoreResponse::Error(e) => {
-                        log::warn!("SetMeshChunk {} failed: {}", seq, e.message);
+                        tracing::warn!("SetMeshChunk {} failed: {}", seq, e.message);
                         send_ok = false;
                         break;
                     }
                     other => {
-                        log::warn!("Unexpected response to SetMeshChunk: {:?}", other);
+                        tracing::warn!("Unexpected response to SetMeshChunk: {:?}", other);
                         send_ok = false;
                         break;
                     }
@@ -708,11 +708,11 @@ impl ConfigManager {
             
             match client.send_request(&end_request).await? {
                 CoreResponse::Motion(MotionResponse::MeshComplete) => {
-                    log::info!("✅ Mesh data transfer complete");
+                    tracing::info!("✅ Mesh data transfer complete");
                     return Ok(());
                 }
                 CoreResponse::Motion(MotionResponse::MeshNack { reason: NackReason::MissingSeqs, missing_seqs, .. }) => {
-                    log::warn!("MeshNack: MissingSeqs {:?}, attempting recovery...", missing_seqs);
+                    tracing::warn!("MeshNack: MissingSeqs {:?}, attempting recovery...", missing_seqs);
                     
                     // Recovery path: resend only the missing chunks
                     // (server remains in Stale state, buffer is intact)
@@ -736,7 +736,7 @@ impl ConfigManager {
                             CoreResponse::Motion(MotionResponse::MeshAck { .. } | MotionResponse::Acknowledged) => {
                             }
                             other => {
-                                log::warn!("Missing chunk {} resend failed: {:?}", seq, other);
+                                tracing::warn!("Missing chunk {} resend failed: {:?}", seq, other);
                                 recovery_ok = false;
                                 break;
                             }
@@ -747,11 +747,11 @@ impl ConfigManager {
                         // Retry SetMeshEnd after resending missing chunks
                         match client.send_request(&end_request).await? {
                             CoreResponse::Motion(MotionResponse::MeshComplete) => {
-                                log::info!("✅ Mesh transfer complete after MissingSeqs recovery");
+                                tracing::info!("✅ Mesh transfer complete after MissingSeqs recovery");
                                 return Ok(());
                             }
                             other => {
-                                log::warn!("SetMeshEnd after MissingSeqs recovery failed: {:?}", other);
+                                tracing::warn!("SetMeshEnd after MissingSeqs recovery failed: {:?}", other);
                                 // Fall through to outer retry
                             }
                         }
@@ -759,15 +759,15 @@ impl ConfigManager {
                     // Recovery failed → full retry from SetMeshBegin
                 }
                 CoreResponse::Motion(MotionResponse::MeshNack { reason, .. }) => {
-                    log::warn!("MeshNack: {:?}, retrying from SetMeshBegin", reason);
+                    tracing::warn!("MeshNack: {:?}, retrying from SetMeshBegin", reason);
                     // Fall through to outer retry
                 }
                 CoreResponse::Error(e) => {
-                    log::warn!("SetMeshEnd failed: {}", e.message);
+                    tracing::warn!("SetMeshEnd failed: {}", e.message);
                     // Fall through to outer retry
                 }
                 other => {
-                    log::warn!("Unexpected response to SetMeshEnd: {:?}", other);
+                    tracing::warn!("Unexpected response to SetMeshEnd: {:?}", other);
                     // Fall through to outer retry
                 }
             }
@@ -830,3 +830,5 @@ mod tests {
         // In real usage, load() or reload() would trigger it
     }
 }
+
+

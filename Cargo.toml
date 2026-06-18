@@ -42,8 +42,9 @@ tower-http = { version = "0.5", features = ["cors", "fs"] }
 tower = "0.4"
 
 # Logging
-log = "0.4"
-env_logger = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
 
 # Error handling
 anyhow = "1.0"

@@ -1,0 +1,27 @@
+{
+  "version": "1.0",
+  "console": {
+    "enable": true,
+    "level": "info",
+    "format": "compact"
+  },
+  "file": {
+    "enable": true,
+    "level": "debug",
+    "path": "logs/flowpulse.log",
+    "max_size_mb": 50,
+    "max_files": 5,
+    "rotation": "daily"
+  },
+  "modules": {
+    "emb_public::temperature": "info",
+    "emb_public::safety": "info",
+    "emb_public::gateway::mqtt": "info",
+    "emb_public::gateway::unix_socket": "info",
+    "emb_public::config::config_protocol": "debug",
+    "web_server::handlers::websocket": "info",
+    "web_server::handlers::temperature": "info",
+    "web_server": "info",
+    "debug_terminal": "debug"
+  }
+}

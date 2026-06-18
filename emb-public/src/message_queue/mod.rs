@@ -1,4 +1,4 @@
-//! Message queue system for 3D printer firmware
+﻿//! Message queue system for 3D printer firmware
 //!
 //! This module provides message queue capabilities for inter-component communication.
 
@@ -79,3 +79,4 @@ mod tests {
         Ok(())
     }
 }
+

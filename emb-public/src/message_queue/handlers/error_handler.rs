@@ -1,4 +1,4 @@
-//! Error handler for handling errors and retries
+﻿//! Error handler for handling errors and retries
 
 use crate::{EmbResult, EmbError};
 use crate::safety::SafetyController;
@@ -44,7 +44,7 @@ impl ErrorHandler {
             .and_then(|v| v.as_str())
             .unwrap_or("error");
         
-        log::error!("Error received: type={}, message={}, severity={}", error_type, error_message, severity);
+        tracing::error!("Error received: type={}, message={}, severity={}", error_type, error_message, severity);
         
         // Check if emergency stop is needed
         if severity == "critical" {
@@ -57,7 +57,7 @@ impl ErrorHandler {
                 TransitionReason::Error(error_message.to_string()),
             )?;
             
-            log::warn!("Emergency stop triggered due to critical error");
+            tracing::warn!("Emergency stop triggered due to critical error");
         }
         
         // Update message payload with error handling result
@@ -83,7 +83,7 @@ impl ErrorHandler {
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
         
-        log::error!("Hardware error: component={}, error_code={}", component, error_code);
+        tracing::error!("Hardware error: component={}, error_code={}", component, error_code);
         
         // Check safety violations
         if self.safety_controller.has_safety_violation().await {
@@ -112,7 +112,7 @@ impl ErrorHandler {
     async fn handle_retry(&self, message: &mut Message) -> EmbResult<()> {
         // Check if message can be retried
         if message.can_retry() {
-            log::info!("Retrying message: id={}, retry_count={}", message.id, message.retry_count);
+            tracing::info!("Retrying message: id={}, retry_count={}", message.id, message.retry_count);
             
             // Increment retry count
             message.increment_retry();
@@ -130,7 +130,7 @@ impl ErrorHandler {
                 "retrying": true,
             });
         } else {
-            log::warn!("Message cannot be retried: id={}, max_retries reached", message.id);
+            tracing::warn!("Message cannot be retried: id={}, max_retries reached", message.id);
             
             // Mark as failed permanently
             message.mark_failed();
@@ -170,3 +170,4 @@ impl MessageHandler for ErrorHandler {
         "ErrorHandler"
     }
 }
+

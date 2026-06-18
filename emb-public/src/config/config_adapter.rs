@@ -1,4 +1,4 @@
-//! Configuration Adapter
+﻿//! Configuration Adapter
 //!
 //! Reads `hardware.json`, `motion.json`, and `printer.json`, merges them into:
 //!   1) A `MotionConfig` suitable for emb-core-server (for motion planning)
@@ -1298,12 +1298,12 @@ pub async fn configure_device(client: &CoreSocketClient, config_dir: &str) -> Re
     // Read serial configuration from printer.json
     if let Some(comm) = &configs.printer.communication {
         if let Some(serial) = &comm.serial {
-            log::info!("🔌 连接串口: {} @ {}", serial.port, serial.baud_rate);
+            tracing::info!("🔌 连接串口: {} @ {}", serial.port, serial.baud_rate);
             match client.serial_connect(&serial.port, serial.baud_rate).await {
-                Ok(()) => log::info!("✅ 串口连接成功"),
+                Ok(()) => tracing::info!("✅ 串口连接成功"),
                 Err(e) => {
-                    log::error!("❌ 串口连接失败: {}", e);
-                    log::info!("💡 请确认下位机已连接到 {}", serial.port);
+                    tracing::error!("❌ 串口连接失败: {}", e);
+                    tracing::info!("💡 请确认下位机已连接到 {}", serial.port);
                     return Err(format!("串口连接失败: {}", e));
                 }
             }
@@ -1340,3 +1340,5 @@ pub async fn configure_device(client: &CoreSocketClient, config_dir: &str) -> Re
     
     Ok(())
 }
+
+

@@ -1,4 +1,4 @@
-use super::PrintState;
+﻿use super::PrintState;
 
 pub struct PrintStateMachine {
     current_state: PrintState,
@@ -50,3 +50,5 @@ impl Default for PrintStateMachine {
         Self::new()
     }
 }
+
+

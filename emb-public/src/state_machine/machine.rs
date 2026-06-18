@@ -1,4 +1,4 @@
-//! Core state machine implementation
+﻿//! Core state machine implementation
 
 use crate::{EmbError, EmbResult, PrinterEvent, SyncEventPublisher, EventListener};
 use chrono::Utc;
@@ -88,7 +88,7 @@ impl StateMachine {
         
         self.event_publisher.lock().unwrap().publish_sync(event);
         
-        log::info!("State transition: {:?} -> {:?} (reason: {:?})", 
+        tracing::info!("State transition: {:?} -> {:?} (reason: {:?})", 
                   current_state, new_state, reason);
         
         Ok(())
@@ -352,3 +352,4 @@ mod tests {
         Ok(())
     }
 }
+

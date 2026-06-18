@@ -1,4 +1,4 @@
-//! Temperature types and data structures
+﻿//! Temperature types and data structures
 //!
 //! This module defines all types used by the temperature management system.
 
@@ -347,3 +347,5 @@ mod tests {
         assert!(result.needs_action());
     }
 }
+
+

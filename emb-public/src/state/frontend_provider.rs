@@ -1,4 +1,4 @@
-//! Frontend data provider interface
+﻿//! Frontend data provider interface
 //!
 //! This module defines the unified interface for frontend data access,
 //! supporting UnixSocket and WebSocket.
@@ -262,26 +262,26 @@ impl WebDataProvider {
                                 cached.progress_percent = percent;
                                 cached.current_layer = current_layer;
                                 cached.total_layers = total_layers;
-                                log::debug!("Web: Progress {:.1}% layer {}/{}", percent, current_layer, total_layers);
+                                tracing::debug!("Web: Progress {:.1}% layer {}/{}", percent, current_layer, total_layers);
                             }
                             crate::common::WebSocketMessage::PrintEvent { event, message } => {
-                                log::info!("Web: PrintEvent '{}': {}", event, message);
+                                tracing::info!("Web: PrintEvent '{}': {}", event, message);
                                 // Update cached state based on event
                                 let mut cached = cached_status.write().unwrap();
                                 cached.state = event;
                             }
                             crate::common::WebSocketMessage::Alert { severity, message } => {
                                 match severity.as_str() {
-                                    "error" | "critical" => log::error!("Web: Alert [{}] {}", severity, message),
-                                    "warning" => log::warn!("Web: Alert [{}] {}", severity, message),
-                                    _ => log::info!("Web: Alert [{}] {}", severity, message),
+                                    "error" | "critical" => tracing::error!("Web: Alert [{}] {}", severity, message),
+                                    "warning" => tracing::warn!("Web: Alert [{}] {}", severity, message),
+                                    _ => tracing::info!("Web: Alert [{}] {}", severity, message),
                                 }
                             }
                             crate::common::WebSocketMessage::LimitSwitch { x, y, z } => {
-                                log::info!("Web: LimitSwitch x={} y={} z={}", x, y, z);
+                                tracing::info!("Web: LimitSwitch x={} y={} z={}", x, y, z);
                             }
                             crate::common::WebSocketMessage::Homing { axis, status, progress } => {
-                                log::info!("Web: Homing axis={} status={} progress={:.0}%", axis, status, progress);
+                                tracing::info!("Web: Homing axis={} status={} progress={:.0}%", axis, status, progress);
                             }
                         }
                     }
@@ -386,3 +386,4 @@ impl FrontendDataProvider for WebDataProvider {
         dispatch_gcode(&self.client, cmd).await
     }
 }
+

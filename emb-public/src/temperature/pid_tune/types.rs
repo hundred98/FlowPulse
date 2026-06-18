@@ -1,4 +1,4 @@
-//! PID auto-tune types and data structures
+﻿//! PID auto-tune types and data structures
 //!
 //! This module defines types used for PID auto-tune communication with the lower machine.
 
@@ -282,3 +282,5 @@ mod tests {
         assert_eq!(TuneErrorCode::SensorFault.message(), "Temperature sensor fault");
     }
 }
+
+

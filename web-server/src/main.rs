@@ -15,12 +15,21 @@ use emb_public::temperature::TemperatureManagerConfig;
 /// Main entry point
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logger
-    env_logger::init();
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .compact()
+        .with_ansi(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive("info".parse().unwrap())
+                .from_env_lossy()
+        )
+        .with_writer(std::io::stderr)
+        .init();
 
-    log::info!("Starting standalone web server (development mode)");
-    log::warn!("Note: Temperature control will not work in standalone mode");
-    log::warn!("For production use, run the main host application instead");
+    tracing::info!("Starting standalone web server (development mode)");
+    tracing::warn!("Note: Temperature control will not work in standalone mode");
+    tracing::warn!("For production use, run the main host application instead");
 
     // Load configuration
     let config = WebServerConfig::default();

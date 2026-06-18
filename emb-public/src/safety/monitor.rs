@@ -1,4 +1,4 @@
-//! Safety monitor — periodic safety check loop
+﻿//! Safety monitor — periodic safety check loop
 //!
 //! This module provides the `SafetyMonitor`, which runs periodic safety checks
 //! at a configurable interval, invoking all sub-checkers (motion, temperature,
@@ -118,7 +118,7 @@ impl SafetyMonitor {
     pub async fn run_loop(mut self) {
         let interval = tokio::time::Duration::from_millis(self.interval_ms);
 
-        log::info!(
+        tracing::info!(
             "Safety monitor started (interval={}ms)",
             self.interval_ms
         );
@@ -129,7 +129,7 @@ impl SafetyMonitor {
             loop {
                 tokio::select! {
                     _ = shutdown.changed() => {
-                        log::info!("Safety monitor shutting down");
+                        tracing::info!("Safety monitor shutting down");
                         break;
                     }
                     _ = tokio::time::sleep(interval) => {
@@ -167,3 +167,4 @@ impl SafetyMonitor {
         self.interval_ms = interval_ms;
     }
 }
+

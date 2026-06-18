@@ -1,4 +1,4 @@
-//! Common utilities module
+﻿//! Common utilities module
 //!
 //! Shared utilities used across multiple modules.
 
@@ -16,3 +16,5 @@ pub use messages::{
     WebSocketMessage, PrinterStatus, TempStatus, PositionData,
 };
 pub use pin_parser::parse_pin;
+
+

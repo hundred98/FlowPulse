@@ -1,4 +1,4 @@
-//! State management module
+﻿//! State management module
 //!
 //! This module provides state management functionality for the printer system,
 //! including device state synchronization and frontend data providers.
@@ -13,3 +13,4 @@ pub use device_state::{
 pub use frontend_provider::{
     FrontendDataProvider, UnixSocketProvider, WebDataProvider,
 };
+

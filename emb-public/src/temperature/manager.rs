@@ -1,4 +1,4 @@
-//! Temperature manager
+﻿//! Temperature manager
 //!
 //! This module provides the main temperature management functionality,
 //! including temperature state management, safety checks, preset management,
@@ -120,7 +120,7 @@ impl TemperatureManager {
         // Note: This requires a way to notify TemperatureManager when config changes
         // For now, we'll handle this through the reload method
 
-        log::info!("Temperature manager initialized");
+        tracing::info!("Temperature manager initialized");
         Ok(())
     }
 
@@ -213,12 +213,12 @@ impl TemperatureManager {
                         heater_safety.sensor_fault.min_temp,
                     );
                     heaters.insert(heater_name.clone(), state);
-                    log::info!("Registered additional heater '{}' (id={}) from safety config", heater_name, heater_id);
+                    tracing::info!("Registered additional heater '{}' (id={}) from safety config", heater_name, heater_id);
                 }
             }
         }
 
-        log::info!("Loaded {} heaters from config", heaters.len());
+        tracing::info!("Loaded {} heaters from config", heaters.len());
         drop(heaters);
 
         // Load temperature presets
@@ -230,12 +230,12 @@ impl TemperatureManager {
             cfg.wait = config.temperature_wait.clone();
             cfg.auto_fan = config.auto_fan.clone();
         }
-        log::info!(
+        tracing::info!(
             "Loaded temperature wait config: timeout={}s, tolerance={:.1}°C",
             config.temperature_wait.timeout_secs,
             config.temperature_wait.tolerance,
         );
-        log::info!(
+        tracing::info!(
             "Loaded auto-fan config: enable={}, gpio={}, on={:.1}°C, off={:.1}°C",
             config.auto_fan.enable,
             config.auto_fan.gpio_name,
@@ -264,7 +264,7 @@ impl TemperatureManager {
             self.preset_manager.add(preset).await?;
         }
 
-        log::info!("Loaded {} temperature presets", config.temperature_presets.len());
+        tracing::info!("Loaded {} temperature presets", config.temperature_presets.len());
         Ok(())
     }
 
@@ -343,7 +343,7 @@ impl TemperatureManager {
                         let currently_on = fan_state_clone.load(std::sync::atomic::Ordering::SeqCst);
                         if temp_nozzle_cur >= af_cfg.on_threshold && !currently_on {
                             // Turn fan ON
-                            log::info!(
+                            tracing::info!(
                                 "🌬️  Auto-fan ON: hotend={:.1}°C >= {:.1}°C, setting {}={:.1}",
                                 temp_nozzle_cur, af_cfg.on_threshold,
                                 af_cfg.gpio_name, af_cfg.on_value,
@@ -352,7 +352,7 @@ impl TemperatureManager {
                             fan_state_clone.store(true, std::sync::atomic::Ordering::SeqCst);
                         } else if temp_nozzle_cur <= af_cfg.off_threshold && currently_on {
                             // Turn fan OFF
-                            log::info!(
+                            tracing::info!(
                                 "🌬️  Auto-fan OFF: hotend={:.1}°C <= {:.1}°C, setting {}=0",
                                 temp_nozzle_cur, af_cfg.off_threshold,
                                 af_cfg.gpio_name,
@@ -394,7 +394,7 @@ impl TemperatureManager {
                     let output_power = payload[7] as f32 / 400.0;
                     
                     // Debug: 输出原始字节
-                    log::info!("📊 PID Raw: bytes={:?}, temp_raw={}, temp={:.1}, power={:.2}", 
+                    tracing::info!("📊 PID Raw: bytes={:?}, temp_raw={}, temp={:.1}, power={:.2}", 
                         &payload[..8], temp_raw, current_temp, output_power);
                     
                     let tune_state_clone = tune_state.clone();
@@ -435,7 +435,7 @@ impl TemperatureManager {
                     let success = payload.get(2).unwrap_or(&0);
                     let error_code = payload.get(28).unwrap_or(&0);
                     let cycles_done = payload.get(15).unwrap_or(&0);
-                    log::info!("🏁 PID Tune COMPLETE: heater={}, success={}, cycles={}, error_code={}, len={}", 
+                    tracing::info!("🏁 PID Tune COMPLETE: heater={}, success={}, cycles={}, error_code={}, len={}", 
                         payload.get(1).unwrap_or(&0), 
                         success, 
                         cycles_done,
@@ -449,7 +449,7 @@ impl TemperatureManager {
                     tokio::spawn(async move {
                         use super::pid_tune::PidTuneProtocol;
                         
-                        log::info!("🏁 Spawned: parsing COMPLETE...");
+                        tracing::info!("🏁 Spawned: parsing COMPLETE...");
                         
                         let heater_name = {
                             let state = tune_state_clone.read().await;
@@ -458,7 +458,7 @@ impl TemperatureManager {
                         
                         match PidTuneProtocol::parse_complete(&payload_vec, &heater_name) {
                             Ok(result) => {
-                                log::info!("🏁 Parse OK: success={}, in_progress set to false", result.success);
+                                tracing::info!("🏁 Parse OK: success={}, in_progress set to false", result.success);
                                 
                                 // Update state
                                 {
@@ -487,7 +487,7 @@ impl TemperatureManager {
                                 }
                             }
                             Err(e) => {
-                                log::error!("Failed to parse PID tune complete frame: {}", e);
+                                tracing::error!("Failed to parse PID tune complete frame: {}", e);
                             }
                         }
                     });
@@ -498,7 +498,7 @@ impl TemperatureManager {
         // Subscribe to status reports (notify server)
         self.client.subscribe_status(true).await?;
 
-        log::info!("Subscribed to temperature updates from device");
+        tracing::info!("Subscribed to temperature updates from device");
         Ok(())
     }
 
@@ -533,13 +533,13 @@ impl TemperatureManager {
         let frame = ConfigFrameBuilder::build_set_temp_frame(heater_id, temp);
 
         // Debug: log frame content
-        log::info!("Sending temperature frame: heater_id={}, temp={}°C, frame_len={} bytes",
+        tracing::info!("Sending temperature frame: heater_id={}, temp={}°C, frame_len={} bytes",
             heater_id, temp, frame.len());
 
         // Send to device
         self.client.serial_send_raw(&frame).await
             .map_err(|e| {
-                log::error!("Failed to send temperature frame: {}", e);
+                tracing::error!("Failed to send temperature frame: {}", e);
                 EmbError::Communication(e)
             })?;
 
@@ -553,7 +553,7 @@ impl TemperatureManager {
             .with_severity(EventSeverity::Info),
         );
 
-        log::info!("Set {} target temperature to {}°C", heater, temp);
+        tracing::info!("Set {} target temperature to {}°C", heater, temp);
         Ok(())
     }
 
@@ -583,7 +583,7 @@ impl TemperatureManager {
         let mut heaters = self.heaters.write().await;
         if let Some(state) = heaters.get_mut(heater) {
             state.set_target(temp);
-            log::info!(
+            tracing::info!(
                 "Cache: set {} target to {}°C (no serial send)",
                 heater, temp
             );
@@ -669,7 +669,7 @@ impl TemperatureManager {
         let tolerance = wait_cfg.tolerance;
         let start = std::time::Instant::now();
 
-        log::info!(
+        tracing::info!(
             "⏳ Waiting for {} to reach {:.1}°C (tolerance: ±{:.1}°C, timeout: {}s)",
             heater, target_temp, tolerance, wait_cfg.timeout_secs
         );
@@ -677,7 +677,7 @@ impl TemperatureManager {
         loop {
             // Check cancellation
             if *cancel_rx.borrow() {
-                log::info!("⏹️  Wait for {} cancelled", heater);
+                tracing::info!("⏹️  Wait for {} cancelled", heater);
                 return Err(EmbError::Cancelled);
             }
 
@@ -686,7 +686,7 @@ impl TemperatureManager {
                 let current = self.get_heater(heater).await
                     .map(|h| h.current_temp)
                     .unwrap_or(0.0);
-                log::warn!(
+                tracing::warn!(
                     "⏰ Timeout waiting for {} to reach {:.1}°C (current: {:.1}°C, elapsed: {}s)",
                     heater, target_temp, current, start.elapsed().as_secs()
                 );
@@ -703,7 +703,7 @@ impl TemperatureManager {
 
             // Check if reached
             if (current - target_temp).abs() <= tolerance {
-                log::info!(
+                tracing::info!(
                     "✅ {} reached target temperature: {:.1}°C (elapsed: {}s)",
                     heater, current, start.elapsed().as_secs()
                 );
@@ -722,7 +722,7 @@ impl TemperatureManager {
     pub async fn cancel_wait(&self) {
         if let Some(sender) = self.cancel_sender.write().await.take() {
             let _ = sender.send(true);
-            log::info!("Temperature wait cancelled via cancel_wait()");
+            tracing::info!("Temperature wait cancelled via cancel_wait()");
         }
     }
 
@@ -746,16 +746,16 @@ impl TemperatureManager {
             if heaters.contains_key("chamber") {
                 drop(heaters);
                 targets.insert("chamber".to_string(), chamber_temp);
-                log::info!("Chamber temperature: {}°C", chamber_temp);
+                tracing::info!("Chamber temperature: {}°C", chamber_temp);
             } else {
                 drop(heaters);
-                log::warn!("Chamber temperature: {}°C — no chamber heater registered in config", chamber_temp);
+                tracing::warn!("Chamber temperature: {}°C — no chamber heater registered in config", chamber_temp);
             }
         }
 
         self.set_targets(targets).await?;
 
-        log::info!("Applied preset: {}", preset_name);
+        tracing::info!("Applied preset: {}", preset_name);
         Ok(())
     }
 
@@ -808,7 +808,7 @@ impl TemperatureManager {
             .save_temperature_presets(&preset_configs)
             .map_err(|e| EmbError::Config(e))?;
 
-        log::info!("Saved {} presets to configuration", presets.len());
+        tracing::info!("Saved {} presets to configuration", presets.len());
         Ok(())
     }
 
@@ -828,7 +828,7 @@ impl TemperatureManager {
     async fn handle_safety_results(&self, results: Vec<SafetyCheckResult>) {
         for result in results {
             if result.needs_action() {
-                log::warn!(
+                tracing::warn!(
                     "⚠️  Safety check: {} - {}",
                     result.source,
                     result.message
@@ -854,19 +854,19 @@ impl TemperatureManager {
                 );
             }
             SafetyAction::TurnOffHeater => {
-                log::warn!("Turning off heater: {}", result.source);
+                tracing::warn!("Turning off heater: {}", result.source);
                 let _ = self.set_target(&result.source, 0.0).await;
             }
             SafetyAction::PausePrint => {
-                log::error!("Critical temperature issue, pausing print: {}", result.message);
+                tracing::error!("Critical temperature issue, pausing print: {}", result.message);
                 // Pause print via PrintController if available
                 let pc = self.print_controller.read().await;
                 if let Some(ref controller) = *pc {
                     if let Err(e) = controller.pause().await {
-                        log::error!("Failed to pause print: {}", e);
+                        tracing::error!("Failed to pause print: {}", e);
                     }
                 } else {
-                    log::warn!("PrintController not available, cannot pause print");
+                    tracing::warn!("PrintController not available, cannot pause print");
                 }
                 drop(pc);
 
@@ -880,16 +880,16 @@ impl TemperatureManager {
                 );
             }
             SafetyAction::EmergencyStop => {
-                log::error!("🚨 Emergency stop triggered: {}", result.message);
+                tracing::error!("🚨 Emergency stop triggered: {}", result.message);
 
                 // 1. Turn off all heaters
                 if let Err(e) = self.turn_off_all().await {
-                    log::error!("Failed to turn off heaters during E-stop: {}", e);
+                    tracing::error!("Failed to turn off heaters during E-stop: {}", e);
                 }
 
                 // 2. Disable motors via core client
                 if let Err(e) = self.client.motion_execute_m_command(MCommand::MotorDisableAll).await {
-                    log::error!("Failed to disable motors during E-stop: {}", e);
+                    tracing::error!("Failed to disable motors during E-stop: {}", e);
                 }
 
                 let _ = self.event_publisher.publish(
@@ -902,7 +902,7 @@ impl TemperatureManager {
                 );
             }
             SafetyAction::DisableMotors => {
-                log::error!("Disable motors: {}", result.message);
+                tracing::error!("Disable motors: {}", result.message);
             }
         }
     }
@@ -917,7 +917,7 @@ impl TemperatureManager {
             self.set_target(&heater, 0.0).await?;
         }
 
-        log::info!("All heaters turned off");
+        tracing::info!("All heaters turned off");
         Ok(())
     }
 
@@ -1021,7 +1021,7 @@ impl TemperatureManager {
             ).with_severity(EventSeverity::Info),
         );
         
-        log::info!("Started PID tuning: heater={}, target={}°C, cycles={}", heater, target_temp, cycles);
+        tracing::info!("Started PID tuning: heater={}, target={}°C, cycles={}", heater, target_temp, cycles);
         Ok(())
     }
 
@@ -1063,7 +1063,7 @@ impl TemperatureManager {
             state.heater_id = None;
         }
         
-        log::info!("Cancelled PID tuning");
+        tracing::info!("Cancelled PID tuning");
         Ok(())
     }
 
@@ -1131,7 +1131,7 @@ impl TemperatureManager {
             ).with_severity(EventSeverity::Info),
         );
         
-        log::info!(
+        tracing::info!(
             "Applied new PID parameters: heater={}, Kp={:.3}, Ki={:.3}, Kd={:.3}",
             heater, params.kp, params.ki, params.kd
         );
@@ -1201,7 +1201,7 @@ impl TemperatureManager {
                         ).with_severity(EventSeverity::Info),
                     );
                     
-                    log::info!(
+                    tracing::info!(
                         "PID tuning complete: heater={}, Kp={:.3}, Ki={:.3}, Kd={:.3}",
                         heater_name, result.new_pid.kp, result.new_pid.ki, result.new_pid.kd
                     );
@@ -1214,7 +1214,7 @@ impl TemperatureManager {
                         ).with_severity(EventSeverity::Error),
                     );
                     
-                    log::error!("PID tuning failed: heater={}, error code {}", heater_name, result.error_code);
+                    tracing::error!("PID tuning failed: heater={}, error code {}", heater_name, result.error_code);
                 }
             }
             
@@ -1222,12 +1222,12 @@ impl TemperatureManager {
                 let (sub_type, success, error_code) = PidTuneProtocol::parse_ack(payload)?;
                 
                 if !success {
-                    log::warn!("PID tune ACK: sub_type=0x{:02X}, error_code={}", sub_type, error_code);
+                    tracing::warn!("PID tune ACK: sub_type=0x{:02X}, error_code={}", sub_type, error_code);
                 }
             }
             
             _ => {
-                log::warn!("Unexpected PID tune sub_type: 0x{:02X}", payload[0]);
+                tracing::warn!("Unexpected PID tune sub_type: 0x{:02X}", payload[0]);
             }
         }
         
@@ -1246,3 +1246,5 @@ mod tests {
         // In a real test, we would mock the dependencies
     }
 }
+
+

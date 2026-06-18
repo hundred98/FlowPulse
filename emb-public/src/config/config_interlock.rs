@@ -1,4 +1,4 @@
-//! Configuration Interlock Validation
+﻿//! Configuration Interlock Validation
 //!
 //! Validates cross-section interlock rules for bed mesh configuration.
 //! These rules ensure that probe parameters and interpolation algorithm
@@ -29,7 +29,7 @@ pub fn validate_bed_mesh_interlock(bed_mesh: &mut BedMeshHardwareConfig) -> Resu
     // Rule 1: probe_count ≥ 6 → algorithm forced to bicubic
     if probe.probe_count_x >= 6 || probe.probe_count_y >= 6 {
         if algorithm.algorithm != "bicubic" {
-            log::warn!(
+            tracing::warn!(
                 "Bed mesh interlock: probe_count_x={}, probe_count_y={} ≥ 6, algorithm '{}' forced to 'bicubic'",
                 probe.probe_count_x,
                 probe.probe_count_y,
@@ -42,7 +42,7 @@ pub fn validate_bed_mesh_interlock(bed_mesh: &mut BedMeshHardwareConfig) -> Resu
     // Rule 2: probe_count_x = 6 → mesh_pps_x forced to 1
     if probe.probe_count_x == 6 {
         if algorithm.mesh_pps_x != 1 {
-            log::warn!(
+            tracing::warn!(
                 "Bed mesh interlock: probe_count_x=6, mesh_pps_x={} forced to 1",
                 algorithm.mesh_pps_x
             );
@@ -53,7 +53,7 @@ pub fn validate_bed_mesh_interlock(bed_mesh: &mut BedMeshHardwareConfig) -> Resu
     // Rule 3: probe_count_x ≥ 7 → mesh_pps_x forced to 0
     if probe.probe_count_x >= 7 {
         if algorithm.mesh_pps_x != 0 {
-            log::warn!(
+            tracing::warn!(
                 "Bed mesh interlock: probe_count_x={} ≥ 7, mesh_pps_x={} forced to 0",
                 probe.probe_count_x,
                 algorithm.mesh_pps_x
@@ -65,7 +65,7 @@ pub fn validate_bed_mesh_interlock(bed_mesh: &mut BedMeshHardwareConfig) -> Resu
     // Rule 4: probe_count_y = 6 → mesh_pps_y forced to 1
     if probe.probe_count_y == 6 {
         if algorithm.mesh_pps_y != 1 {
-            log::warn!(
+            tracing::warn!(
                 "Bed mesh interlock: probe_count_y=6, mesh_pps_y={} forced to 1",
                 algorithm.mesh_pps_y
             );
@@ -76,7 +76,7 @@ pub fn validate_bed_mesh_interlock(bed_mesh: &mut BedMeshHardwareConfig) -> Resu
     // Rule 5: probe_count_y ≥ 7 → mesh_pps_y forced to 0
     if probe.probe_count_y >= 7 {
         if algorithm.mesh_pps_y != 0 {
-            log::warn!(
+            tracing::warn!(
                 "Bed mesh interlock: probe_count_y={} ≥ 7, mesh_pps_y={} forced to 0",
                 probe.probe_count_y,
                 algorithm.mesh_pps_y
@@ -115,7 +115,7 @@ pub fn validate_bed_mesh_interlock(bed_mesh: &mut BedMeshHardwareConfig) -> Resu
 
     // Basic validation: fade_start != fade_end (equal视为配置错误)
     if algorithm.fade_start == algorithm.fade_end {
-        log::warn!(
+        tracing::warn!(
             "Bed mesh config: fade_start ({}) equals fade_end ({}), this is a config error",
             algorithm.fade_start,
             algorithm.fade_end
@@ -213,3 +213,4 @@ mod tests {
         assert!(result.is_err());
     }
 }
+

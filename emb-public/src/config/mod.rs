@@ -27,6 +27,7 @@ pub mod printer_config;
 pub mod config_adapter;
 pub mod config_protocol;
 pub mod config_interlock;
+pub mod log_config;
 
 // Re-export ConfigManager as the primary interface
 pub use config_manager::ConfigManager;
@@ -51,3 +52,5 @@ pub use config_interlock::validate_bed_mesh_interlock;
 
 // Note: load_config_from_file, load_configs, and configure_device are NOT re-exported.
 // Use ConfigManager::load() and ConfigManager::reload() instead.
+
+

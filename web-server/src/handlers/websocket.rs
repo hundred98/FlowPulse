@@ -11,7 +11,7 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
-use log::{info, warn};
+use tracing::{info, warn};
 use tokio::sync::broadcast;
 
 use crate::WebServerState;
@@ -177,3 +177,4 @@ mod tests {
         assert_eq!(parsed["type"], "ping");
     }
 }
+

@@ -1,4 +1,4 @@
-//! Temperature safety checker
+﻿//! Temperature safety checker
 //!
 //! This module provides safety checking for temperature management,
 //! including temperature deviation detection and safety action determination.
@@ -422,3 +422,4 @@ mod tests {
         assert_eq!(result.action, SafetyAction::PausePrint);
     }
 }
+

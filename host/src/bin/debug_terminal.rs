@@ -122,7 +122,7 @@ async fn gpio_set(
     State(state): State<Arc<DebugState>>,
     axum::extract::Query(req): axum::extract::Query<GpioSetRequest>,
 ) -> impl IntoResponse {
-    log::info!("Debug: GPIO set {} = {}", req.name, req.value);
+    tracing::info!("Debug: GPIO set {} = {}", req.name, req.value);
     
     match state.gpio_manager.set_pin(&req.name, req.value).await {
         Ok(_) => Json(ApiResponse::success(GpioInfo { name: req.name, value: req.value })),
@@ -134,7 +134,7 @@ async fn gpio_query(
     State(state): State<Arc<DebugState>>,
     axum::extract::Query(req): axum::extract::Query<GpioQueryRequest>,
 ) -> impl IntoResponse {
-    log::info!("Debug: GPIO query {}", req.name);
+    tracing::info!("Debug: GPIO query {}", req.name);
     
     match state.gpio_manager.query_pin(&req.name).await {
         Ok(value) => Json(ApiResponse::success(GpioInfo { name: req.name, value })),
@@ -161,7 +161,7 @@ async fn temperature_set(
     State(state): State<Arc<DebugState>>,
     axum::extract::Query(req): axum::extract::Query<TemperatureSetRequest>,
 ) -> impl IntoResponse {
-    log::info!("Temperature set: {} = {}°C", req.heater, req.temp);
+    tracing::info!("Temperature set: {} = {}°C", req.heater, req.temp);
     match state.temperature_manager.set_target(&req.heater, req.temp).await {
         Ok(_) => Json(ApiResponse::success(format!("{} target set to {}°C", req.heater, req.temp))),
         Err(e) => Json(ApiResponse::<String>::error(format!("Error: {}", e))),
@@ -221,7 +221,7 @@ async fn gcode_execute(
     State(state): State<Arc<DebugState>>,
     Json(req): Json<GcodeRequest>,
 ) -> impl IntoResponse {
-    log::info!("G-code Execute: {}", req.gcode);
+    tracing::info!("G-code Execute: {}", req.gcode);
     
     // Parse G-code using the public parser
     let parsed = emb_public::gcode::GCodeParser::parse_line(&req.gcode, 0);
@@ -323,7 +323,7 @@ async fn gcode_execute(
             }
         }
         emb_public::gcode::CommandKind::Machine(m_cmd) => {
-            log::info!("  → Executing M-command: {:?}", m_cmd);
+            tracing::info!("  → Executing M-command: {:?}", m_cmd);
 
             // M119 - 限位状态查询，特殊处理以显示配置中定义的限位开关
             if let emb_api::MCommand::GetEndstopStates = &m_cmd {
@@ -392,7 +392,7 @@ async fn gcode_file_list(
             Json(ApiResponse::success(files))
         }
         Err(e) => {
-            log::warn!("Failed to read gcodes dir '{}': {}", dir, e);
+            tracing::warn!("Failed to read gcodes dir '{}': {}", dir, e);
             Json(ApiResponse::<Vec<String>>::error(format!("Cannot read directory: {}", e)))
         }
     }
@@ -409,7 +409,7 @@ async fn gcode_file_print(
     }
 
     let file_path = format!("{}/{}", state.gcodes_dir, req.filename);
-    log::info!("Starting print from file: {}", file_path);
+    tracing::info!("Starting print from file: {}", file_path);
 
     // Read file content
     let content = match std::fs::read_to_string(&file_path) {
@@ -442,11 +442,11 @@ async fn gcode_file_print(
 
         let success = result.is_ok();
         if !success {
-            log::error!("Print {} failed: {:?}", filename, result.err());
+            tracing::error!("Print {} failed: {:?}", filename, result.err());
         }
 
         state_clone.print_running.store(false, Ordering::SeqCst);
-        log::info!("Print {}: {}", filename, if success { "✅ completed" } else { "❌ failed" });
+        tracing::info!("Print {}: {}", filename, if success { "✅ completed" } else { "❌ failed" });
     });
 
     Json(ApiResponse::success(format!("Print started: {} ({} lines)", req.filename, total_lines)))
@@ -492,17 +492,18 @@ async fn gcode_print_progress(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
-        "info,emb_public::config::config_protocol=debug,debug_terminal=debug"
-    )).init();
+    // Initialize tracing from logging.json config
+    let log_config = emb_public::config::log_config::LogConfig::load("config")
+        .unwrap_or_default();
+    emb_public::logger::init_tracing(&log_config)?;
 
     let args: Vec<String> = std::env::args().collect();
     let http_addr = args.get(1).unwrap_or(&"127.0.0.1:8080".to_string()).clone();
     let core_addr = args.get(2).unwrap_or(&"127.0.0.1:9527".to_string()).clone();
 
-    log::info!("Debug Terminal starting...");
-    log::info!("HTTP server: {}", http_addr);
-    log::info!("Core server: {}", core_addr);
+    tracing::info!("Debug Terminal starting...");
+    tracing::info!("HTTP server: {}", http_addr);
+    tracing::info!("Core server: {}", core_addr);
 
     // Step 1: Load all configuration files at once
     setup::load_all_configs(setup::CONFIG_DIR)?;
@@ -579,9 +580,10 @@ async fn main() -> anyhow::Result<()> {
         .layer(cors);
 
     let listener = tokio::net::TcpListener::bind(&http_addr).await?;
-    log::info!("Debug terminal available at http://{}/debug", http_addr);
+    tracing::info!("Debug terminal available at http://{}/debug", http_addr);
 
     axum::serve(listener, app).await?;
 
     Ok(())
 }
+

@@ -1,4 +1,4 @@
-//! G-code parsing module
+﻿//! G-code parsing module
 //!
 //! This module provides G-code parsing and processing functionality.
 
@@ -60,3 +60,4 @@ impl Default for GCodeFileParser {
         Self::new()
     }
 }
+

@@ -1,4 +1,4 @@
-//! Command handler for processing printer commands
+﻿//! Command handler for processing printer commands
 
 use crate::{EmbResult, EmbError};
 use crate::state::{DeviceStateManager, Position};
@@ -72,7 +72,7 @@ impl CommandHandler {
             TransitionReason::OperationComplete,
         )?;
         
-        log::info!("Print started: {}", file_path);
+        tracing::info!("Print started: {}", file_path);
         Ok(())
     }
     
@@ -90,7 +90,7 @@ impl CommandHandler {
         // Pause print job
         self.print_controller.pause().await?;
         
-        log::info!("Print paused");
+        tracing::info!("Print paused");
         Ok(())
     }
     
@@ -105,7 +105,7 @@ impl CommandHandler {
         // Resume print job
         self.print_controller.resume().await?;
         
-        log::info!("Print resumed");
+        tracing::info!("Print resumed");
         Ok(())
     }
     
@@ -123,7 +123,7 @@ impl CommandHandler {
         // Cancel print job
         let _ = self.print_controller.stop().await;
         
-        log::info!("Print stopped");
+        tracing::info!("Print stopped");
         Ok(())
     }
     
@@ -141,7 +141,7 @@ impl CommandHandler {
         // Set temperature using TemperatureManager
         self.temperature_manager.set_target(heater, temperature as f32).await?;
 
-        log::info!("Temperature set: {} = {}", heater, temperature);
+        tracing::info!("Temperature set: {} = {}", heater, temperature);
         Ok(())
     }
     
@@ -167,7 +167,7 @@ impl CommandHandler {
         // Update position
         self.device_state.update_position(new_pos).await;
         
-        log::info!("Move command: X={}, Y={}, Z={}, E={}", new_pos.x, new_pos.y, new_pos.z, new_pos.e);
+        tracing::info!("Move command: X={}, Y={}, Z={}, E={}", new_pos.x, new_pos.y, new_pos.z, new_pos.e);
         Ok(())
     }
     
@@ -190,7 +190,7 @@ impl CommandHandler {
         
         self.device_state.update_position(new_pos).await;
         
-        log::info!("Home command: axes = {:?}", axes);
+        tracing::info!("Home command: axes = {:?}", axes);
         Ok(())
     }
     
@@ -220,14 +220,14 @@ impl CommandHandler {
         // Start PID tuning
         self.temperature_manager.start_pid_tune(heater, target_temp, cycles).await?;
         
-        log::info!("PID tuning started: heater={}, target={}°C", heater, target_temp);
+        tracing::info!("PID tuning started: heater={}, target={}°C", heater, target_temp);
         Ok(())
     }
     
     /// Handle PID tune cancel command
     async fn handle_pid_tune_cancel(&self, _message: &mut Message) -> EmbResult<()> {
         self.temperature_manager.cancel_pid_tune().await?;
-        log::info!("PID tuning cancelled");
+        tracing::info!("PID tuning cancelled");
         Ok(())
     }
     
@@ -262,7 +262,7 @@ impl CommandHandler {
         // Apply the last tune result
         self.temperature_manager.apply_tune_result().await?;
         
-        log::info!("PID parameters applied");
+        tracing::info!("PID parameters applied");
         Ok(())
     }
     
@@ -272,7 +272,7 @@ impl CommandHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| EmbError::MessageQueue("Missing gcode in GcodeLine message".to_string()))?;
         
-        log::info!("G-code line: {}", gcode_str);
+        tracing::info!("G-code line: {}", gcode_str);
         
         let parsed = GCodeParser::parse_line(gcode_str, 0)
             .ok_or_else(|| EmbError::MessageQueue(format!("Failed to parse G-code: {}", gcode_str)))?;
@@ -392,3 +392,4 @@ impl MessageHandler for CommandHandler {
         "CommandHandler"
     }
 }
+

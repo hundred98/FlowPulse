@@ -1,4 +1,4 @@
-//! Communication Gateway Module
+﻿//! Communication Gateway Module
 //!
 //! Provides communication channel management.
 
@@ -154,3 +154,5 @@ impl Default for CommunicationGateway {
         Self::new()
     }
 }
+
+

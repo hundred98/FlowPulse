@@ -1,4 +1,4 @@
-//! Motion safety checker
+﻿//! Motion safety checker
 //!
 //! This module provides safety checks related to motion:
 //! - Position limit checks (X/Y/Z axis bounds)
@@ -141,3 +141,4 @@ mod tests {
         assert!(result.passed);
     }
 }
+

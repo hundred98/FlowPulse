@@ -1,4 +1,4 @@
-//! MQTT client for remote monitoring
+﻿//! MQTT client for remote monitoring
 //!
 //! Provides MQTT-based communication channel for remote monitoring and control.
 
@@ -9,7 +9,7 @@ use crate::temperature::TemperatureManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use log::info;
+use tracing::info;
 
 /// MQTT client configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -411,3 +411,4 @@ mod tests {
         assert_eq!(topic, "flowpulse/command");
     }
 }
+

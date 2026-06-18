@@ -1,4 +1,4 @@
-//! Event types for the 3D printer system
+﻿//! Event types for the 3D printer system
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -237,3 +237,5 @@ impl Default for SyncEventPublisher {
         Self::new()
     }
 }
+
+

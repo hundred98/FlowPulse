@@ -1,4 +1,4 @@
-//! Core state machine for 3D printer control
+﻿//! Core state machine for 3D printer control
 //!
 //! This module provides state machine capabilities for managing printer states.
 
@@ -9,3 +9,4 @@ pub use types::{
     PrinterState, TransitionReason, StateTransition, StateMachineConfig,
 };
 pub use machine::StateMachine;
+

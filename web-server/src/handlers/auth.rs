@@ -45,7 +45,7 @@ pub async fn login(
         let expires_in_hours = 24;
         let token = auth::generate_token("user", secret, expires_in_hours)
             .map_err(|e| {
-                log::error!("Failed to generate token: {}", e);
+                tracing::error!("Failed to generate token: {}", e);
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
         
@@ -59,20 +59,20 @@ pub async fn login(
     // Get expected password
     let expected_password = state.config.access_password.as_ref()
         .ok_or_else(|| {
-            log::error!("Access password not configured");
+            tracing::error!("Access password not configured");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
     // Validate password
     if req.password != *expected_password {
-        log::warn!("Invalid password attempt");
+        tracing::warn!("Invalid password attempt");
         return Err(StatusCode::UNAUTHORIZED);
     }
     
     // Get JWT secret
     let secret = state.config.jwt_secret.as_ref()
         .ok_or_else(|| {
-            log::error!("JWT secret not configured");
+            tracing::error!("JWT secret not configured");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
@@ -80,11 +80,11 @@ pub async fn login(
     let expires_in_hours = 24;
     let token = auth::generate_token("user", secret, expires_in_hours)
         .map_err(|e| {
-            log::error!("Failed to generate token: {}", e);
+            tracing::error!("Failed to generate token: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
-    log::info!("User logged in successfully");
+    tracing::info!("User logged in successfully");
     
     Ok(Json(LoginResponse {
         token,
@@ -101,7 +101,7 @@ pub async fn validate_token(
     // Get JWT secret
     let secret = state.config.jwt_secret.as_ref()
         .ok_or_else(|| {
-            log::error!("JWT secret not configured");
+            tracing::error!("JWT secret not configured");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
@@ -113,7 +113,7 @@ pub async fn validate_token(
     // Validate token
     let claims = auth::validate_token(token, secret)
         .map_err(|e| {
-            log::warn!("Token validation failed: {}", e);
+            tracing::warn!("Token validation failed: {}", e);
             StatusCode::UNAUTHORIZED
         })?;
     
@@ -123,3 +123,4 @@ pub async fn validate_token(
         "expires_at": claims.exp,
     })))
 }
+

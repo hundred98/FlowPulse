@@ -1,4 +1,4 @@
-//! State machine types and definitions
+﻿//! State machine types and definitions
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -87,3 +87,4 @@ impl Default for StateMachineConfig {
         }
     }
 }
+

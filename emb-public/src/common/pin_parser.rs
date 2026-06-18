@@ -1,4 +1,4 @@
-//! Pin parser for GPIO pin configuration
+﻿//! Pin parser for GPIO pin configuration
 //!
 //! Parses pin strings like "PE3", "!PA0" into PinInfo.
 
@@ -117,3 +117,4 @@ mod tests {
         assert_eq!(pin_to_port_pin("NC"), None);
     }
 }
+

@@ -1,4 +1,4 @@
-//! Channel Manager for unified access
+﻿//! Channel Manager for unified access
 //!
 //! Manages all communication channels (UnixSocket, MQTT) and provides
 //! a unified interface for message routing and state synchronization.
@@ -15,7 +15,7 @@ use super::{UnixSocketServer, UnixSocketConfig, MqttClient, MqttConfig};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use log::{info, warn};
+use tracing::{info, warn};
 
 /// Channel manager configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,3 +302,4 @@ mod tests {
         assert_eq!(config.status_broadcast_interval, 1);
     }
 }
+

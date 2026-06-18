@@ -1,4 +1,4 @@
-//! G-code data types
+﻿//! G-code data types
 //!
 //! This module defines the data structures for G-code parsing.
 
@@ -169,3 +169,5 @@ impl MotionParams {
         }
     }
 }
+
+

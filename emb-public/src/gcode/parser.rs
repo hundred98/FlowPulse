@@ -1,4 +1,4 @@
-//! G-code parser
+﻿//! G-code parser
 //!
 //! This module provides G-code parsing functionality.
 
@@ -399,3 +399,5 @@ mod tests {
         }
     }
 }
+
+

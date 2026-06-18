@@ -1,4 +1,4 @@
-//! Setup and initialization module
+﻿//! Setup and initialization module
 //!
 //! This module contains functions for initializing the FlowPulse host application.
 
@@ -38,7 +38,7 @@ pub fn load_all_configs(config_dir: &str) -> anyhow::Result<PrinterJsonConfig> {
     let printer_config = ConfigManager::instance().get_config()
         .map_err(|e| anyhow::anyhow!("Failed to get config: {}", e))?;
 
-    log::info!(
+    tracing::info!(
         "Loaded {} motors, printer model: {}",
         printer_config.motor.len(),
         printer_config.printer_model,
@@ -65,10 +65,10 @@ pub fn load_all_configs(config_dir: &str) -> anyhow::Result<PrinterJsonConfig> {
 /// * `Ok(())` - If all configs sent successfully
 /// * `Err(anyhow::Error)` - If sending fails
 pub async fn send_all_configs(client: &CoreSocketClient) -> anyhow::Result<()> {
-    log::info!("Sending all configs to server and device...");
+    tracing::info!("Sending all configs to server and device...");
     ConfigManager::instance().reload(client).await
         .map_err(|e| anyhow::anyhow!("Failed to send configs: {}", e))?;
-    log::info!("All configs sent (including Mesh data if available)");
+    tracing::info!("All configs sent (including Mesh data if available)");
     Ok(())
 }
 
@@ -85,12 +85,12 @@ pub async fn send_all_configs(client: &CoreSocketClient) -> anyhow::Result<()> {
 /// * `Ok(())` - If initialization succeeds
 /// * `Err(anyhow::Error)` - If initialization fails
 pub async fn initialize_temperature_manager(temperature_manager: &TemperatureManager) -> anyhow::Result<()> {
-    log::info!("Initializing temperature manager...");
+    tracing::info!("Initializing temperature manager...");
     temperature_manager.initialize().await
         .map_err(|e| anyhow::anyhow!("Failed to initialize temperature manager: {}", e))?;
     temperature_manager.subscribe_temperature_updates().await
         .map_err(|e| anyhow::anyhow!("Failed to subscribe temperature updates: {}", e))?;
-    log::info!("Temperature manager initialized");
+    tracing::info!("Temperature manager initialized");
     Ok(())
 }
 
@@ -107,7 +107,7 @@ pub async fn initialize_temperature_manager(temperature_manager: &TemperatureMan
 pub async fn subscribe_gpio_report(client: &CoreSocketClient) -> anyhow::Result<()> {
     client.gpio_subscribe_report(true).await
         .map_err(|e| anyhow::anyhow!("Failed to subscribe GPIO report: {}", e))?;
-    log::info!("Subscribed to GPIO report");
+    tracing::info!("Subscribed to GPIO report");
     Ok(())
 }
 
@@ -131,38 +131,38 @@ pub async fn initialize_device(host: &PrinterHostV2) -> anyhow::Result<()> {
         (serial.port.clone(), serial.baud_rate)
     };
 
-    log::info!("Connecting serial {} @ {} baud...", serial_port, serial_baud);
+    tracing::info!("Connecting serial {} @ {} baud...", serial_port, serial_baud);
     match host.client().serial_connect(&serial_port, serial_baud).await {
-        Ok(()) => log::info!("✅ Serial connected to {}", serial_port),
+        Ok(()) => tracing::info!("✅ Serial connected to {}", serial_port),
         Err(e) => {
-            log::error!("❌ Serial connect failed: {}", e);
-            log::error!("Continuing in plan-only mode (no motor movement)");
+            tracing::error!("❌ Serial connect failed: {}", e);
+            tracing::error!("Continuing in plan-only mode (no motor movement)");
         }
     }
 
     // Step 2: Subscribe to GPIO report events
     match subscribe_gpio_report(&host.client()).await {
-        Ok(()) => log::info!("✅ GPIO report subscribed"),
-        Err(e) => log::warn!("⚠️  GPIO report subscribe failed: {}", e),
+        Ok(()) => tracing::info!("✅ GPIO report subscribed"),
+        Err(e) => tracing::warn!("⚠️  GPIO report subscribe failed: {}", e),
     }
 
     // Step 3: Send all configs to server and device
     match send_all_configs(&host.client()).await {
-        Ok(()) => log::info!("✅ All configs sent (including Mesh data if available)"),
-        Err(e) => log::warn!("⚠️  Send configs failed: {}", e),
+        Ok(()) => tracing::info!("✅ All configs sent (including Mesh data if available)"),
+        Err(e) => tracing::warn!("⚠️  Send configs failed: {}", e),
     }
 
     // Step 4: Initialize STM32 device (seq reset)
     match host.client().serial_init_seq().await {
-        Ok(()) => log::info!("✅ Device seq initialized"),
-        Err(e) => log::warn!("⚠️  Init seq failed: {}", e),
+        Ok(()) => tracing::info!("✅ Device seq initialized"),
+        Err(e) => tracing::warn!("⚠️  Init seq failed: {}", e),
     }
 
     // Step 5: 发送 StatusQuery 帧 (0x03)，触发下位机立即上报状态并激活定时上报
     let query_frame = ConfigFrameBuilder::build_status_query_frame();
     match host.client().serial_send_raw(&query_frame).await {
-        Ok(()) => log::info!("✅ StatusQuery sent (trigger device to start periodic reporting)"),
-        Err(e) => log::warn!("⚠️  StatusQuery send failed: {}", e),
+        Ok(()) => tracing::info!("✅ StatusQuery sent (trigger device to start periodic reporting)"),
+        Err(e) => tracing::warn!("⚠️  StatusQuery send failed: {}", e),
     }
 
     Ok(())
@@ -196,7 +196,7 @@ pub fn start_web_server(app_state: &AppState) -> JoinHandle<()> {
     // Start WebServer in background
     tokio::spawn(async move {
         if let Err(e) = web_server.start().await {
-            log::error!("WebServer error: {}", e);
+            tracing::error!("WebServer error: {}", e);
         }
     })
 }
@@ -220,10 +220,12 @@ pub async fn create_and_connect_host(server_addr: &str) -> anyhow::Result<Printe
     let host = PrinterHostV2::new(host_config);
 
     // Connect to emb-core-server
-    log::info!("Connecting to emb-core-server...");
+    tracing::info!("Connecting to emb-core-server...");
     host.connect_socket().await
         .map_err(|e| anyhow::anyhow!("TCP connection failed: {}", e))?;
-    log::info!("✅ Connected to emb-core-server");
+    tracing::info!("✅ Connected to emb-core-server");
 
     Ok(host)
 }
+
+

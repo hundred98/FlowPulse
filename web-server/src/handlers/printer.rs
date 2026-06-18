@@ -1,4 +1,4 @@
-//! Printer Control Handlers
+﻿//! Printer Control Handlers
 //!
 //! HTTP handlers for printer control endpoints.
 
@@ -112,3 +112,4 @@ pub async fn stop_print(
         message: None,
     }))
 }
+

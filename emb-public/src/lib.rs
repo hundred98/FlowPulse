@@ -18,6 +18,7 @@ pub mod temperature;  // New module (temperature management)
 pub mod mesh;  // New module (bed mesh management)
 pub mod gpio;  // New module (GPIO management)
 pub mod motion;  // New module (homing, motion management)
+pub mod logger;  // New module (tracing initialization)
 
 // Re-export common types
 pub use common::{
@@ -112,3 +113,4 @@ pub use motion::HomingManager;
 pub use message_queue::{
     CommandHandler, StatusHandler, ErrorHandler,
 };
+

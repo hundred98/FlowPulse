@@ -1,4 +1,4 @@
-//! Safety controller module
+﻿//! Safety controller module
 //!
 //! This module provides a unified safety management system for the printer,
 //! consolidating motion limits, temperature safety, hardware event handling,
@@ -87,7 +87,7 @@ impl SafetyController {
             "Emergency stop activated".to_string(),
         ).with_severity(EventSeverity::Critical));
 
-        log::warn!("Emergency stop activated");
+        tracing::warn!("Emergency stop activated");
         Ok(())
     }
 
@@ -107,7 +107,7 @@ impl SafetyController {
             "Emergency stop cleared".to_string(),
         ).with_severity(EventSeverity::Info));
 
-        log::info!("Emergency stop cleared");
+        tracing::info!("Emergency stop cleared");
         Ok(())
     }
 
@@ -167,7 +167,7 @@ impl SafetyController {
             "Safety recovery completed".to_string(),
         ).with_severity(EventSeverity::Info));
 
-        log::info!("Safety recovery completed");
+        tracing::info!("Safety recovery completed");
         Ok(())
     }
 
@@ -259,3 +259,4 @@ impl Default for SafetyController {
         )
     }
 }
+

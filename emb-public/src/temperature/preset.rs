@@ -1,4 +1,4 @@
-//! Temperature preset manager
+﻿//! Temperature preset manager
 //!
 //! This module manages temperature presets for different materials (PLA, ABS, PETG, etc.).
 
@@ -263,3 +263,5 @@ mod tests {
         assert!(manager.exists("PLA").await);
     }
 }
+
+

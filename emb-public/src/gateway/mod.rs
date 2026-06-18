@@ -1,4 +1,4 @@
-//! Communication Gateway Module
+﻿//! Communication Gateway Module
 //!
 //! Unified communication management between systems.
 //!
@@ -27,3 +27,5 @@ pub use mqtt::{
 pub use channel_manager::{
     ChannelManager, ChannelManagerConfig, ChannelManagerStatus,
 };
+
+

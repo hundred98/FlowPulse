@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+﻿use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
@@ -279,12 +279,12 @@ impl PrintController {
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = total_lines.max(lines.len());
 
-        log::info!("Starting print execution: {} ({} lines)", filename, total_lines);
+        tracing::info!("Starting print execution: {} ({} lines)", filename, total_lines);
 
         for (line_idx, line) in lines.iter().enumerate() {
             // Check for stop request
             if self.stop_requested.load(Ordering::SeqCst) {
-                log::info!("Print stopped by user request at line {}", line_idx + 1);
+                tracing::info!("Print stopped by user request at line {}", line_idx + 1);
                 return Err("Print stopped by user".to_string());
             }
 
@@ -306,7 +306,7 @@ impl PrintController {
             let cmd = match GCodeParser::parse_line(line, line_idx as u32) {
                 Some(parsed) => parsed,
                 None => {
-                    log::warn!("Parse error line {}: {}", line_idx + 1, line);
+                    tracing::warn!("Parse error line {}: {}", line_idx + 1, line);
                     let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                     let mut progress = self.progress.write().await;
                     progress.percent = percent;
@@ -333,7 +333,7 @@ impl PrintController {
                                     progress.status = format!("Dispatched: {}", line);
                                 }
                                 Err(e) => {
-                                    log::warn!("Motion dispatch failed line {}: {}", line_idx + 1, e);
+                                    tracing::warn!("Motion dispatch failed line {}: {}", line_idx + 1, e);
                                     let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                     let mut progress = self.progress.write().await;
                                     progress.percent = percent;
@@ -361,7 +361,7 @@ impl PrintController {
                                     progress.status = format!("Dispatched: {}", line);
                                 }
                                 Err(e) => {
-                                    log::warn!("Arc dispatch failed line {}: {}", line_idx + 1, e);
+                                    tracing::warn!("Arc dispatch failed line {}: {}", line_idx + 1, e);
                                     let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                     let mut progress = self.progress.write().await;
                                     progress.percent = percent;
@@ -383,13 +383,13 @@ impl PrintController {
                                     progress.status = format!("Dwell: {}ms", dwell_time_ms);
                                 }
                                 Err(e) => {
-                                    log::warn!("Dwell failed line {}: {}", line_idx + 1, e);
+                                    tracing::warn!("Dwell failed line {}: {}", line_idx + 1, e);
                                     return Err(format!("Dwell failed at line {}: {}", line_idx + 1, e));
                                 }
                             }
                         }
                         _ => {
-                            log::info!("  → Skipping non-motion command: {:?}", motion_cmd);
+                            tracing::info!("  → Skipping non-motion command: {:?}", motion_cmd);
                             let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                             let mut progress = self.progress.write().await;
                             progress.percent = percent;
@@ -418,7 +418,7 @@ impl PrintController {
 
                         match client.motion_execute_m_command_with_timeout(m_cmd.clone(), timeout).await {
                             Ok(()) => {
-                                log::info!("  → Command sent, waiting for {} to reach {:.1}°C...", heater, target);
+                                tracing::info!("  → Command sent, waiting for {} to reach {:.1}°C...", heater, target);
 
                                 let wait_start = std::time::Instant::now();
                                 let wait_timeout = std::time::Duration::from_secs(server_timeout_secs);
@@ -433,7 +433,7 @@ impl PrintController {
                                     }
 
                                     if wait_start.elapsed() > wait_timeout {
-                                        log::warn!("Temperature wait timeout for {} ({}s)", heater, server_timeout_secs);
+                                        tracing::warn!("Temperature wait timeout for {} ({}s)", heater, server_timeout_secs);
                                         let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                         let mut progress = self.progress.write().await;
                                         progress.percent = percent;
@@ -449,11 +449,11 @@ impl PrintController {
                                     if current >= target - wait_tolerance {
                                         current_stable += 1;
                                         let elapsed = wait_start.elapsed().as_secs();
-                                        log::info!("Temperature stable {}/{}: {} = {:.1}°C (target {:.1}°C, elapsed {}s)",
+                                        tracing::info!("Temperature stable {}/{}: {} = {:.1}°C (target {:.1}°C, elapsed {}s)",
                                             current_stable, wait_stable_count, heater, current, target, elapsed);
 
                                         if current_stable >= wait_stable_count {
-                                            log::info!("  ✅ Temperature reached: {} = {:.1}°C (elapsed {}s)", heater, current, elapsed);
+                                            tracing::info!("  ✅ Temperature reached: {} = {:.1}°C (elapsed {}s)", heater, current, elapsed);
                                             break;
                                         }
                                     } else if current_stable > 0 {
@@ -471,7 +471,7 @@ impl PrintController {
                                 progress.status = format!("Temp OK: {} = {}°C", heater, target);
                             }
                             Err(e) => {
-                                log::warn!("M command failed line {}: {} — {}", line_idx + 1, line, e);
+                                tracing::warn!("M command failed line {}: {} — {}", line_idx + 1, line, e);
                                 let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                 let mut progress = self.progress.write().await;
                                 progress.percent = percent;
@@ -484,9 +484,9 @@ impl PrintController {
                     } else if exec_type == MExecutionType::Query {
                         // M105: read from cache only
                         let heaters = temperature_manager.get_all_heaters().await;
-                        log::info!("  → Temperature query (cached):");
+                        tracing::info!("  → Temperature query (cached):");
                         for (name, s) in &heaters {
-                            log::info!("      {}: {:.1}°C / {:.1}°C", name, s.current_temp, s.target_temp);
+                            tracing::info!("      {}: {:.1}°C / {:.1}°C", name, s.current_temp, s.target_temp);
                         }
                         let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                         let mut progress = self.progress.write().await;
@@ -523,7 +523,7 @@ impl PrintController {
                                 progress.status = format!("Executed: {}", line);
                             }
                             Err(e) => {
-                                log::warn!("M command failed line {}: {} — {}", line_idx + 1, line, e);
+                                tracing::warn!("M command failed line {}: {} — {}", line_idx + 1, line, e);
                                 let percent = ((line_idx + 1) as f32 / total_lines as f32) * 100.0;
                                 let mut progress = self.progress.write().await;
                                 progress.percent = percent;
@@ -560,7 +560,7 @@ impl PrintController {
             ds.update_print_progress(progress.clone()).await;
         }
 
-        log::info!("✅ Print completed: {}", filename);
+        tracing::info!("✅ Print completed: {}", filename);
         Ok(())
     }
     
@@ -746,7 +746,7 @@ impl PrintController {
                 "TemperatureManager not set".to_string()
             ))?;
 
-        log::info!("Applying temperature preset: {} (hotend={}, bed={})",
+        tracing::info!("Applying temperature preset: {} (hotend={}, bed={})",
             preset.name, preset.hotend_temp, preset.bed_temp);
 
         // Set hotend temperature (M104)
@@ -785,3 +785,5 @@ impl Default for PrintController {
         Self::new()
     }
 }
+
+

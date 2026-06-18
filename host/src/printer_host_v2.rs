@@ -1,4 +1,4 @@
-//! Printer Host V2 — Socket Architecture
+﻿//! Printer Host V2 — Socket Architecture
 //!
 //! Replaces direct serial driver usage with CoreSocketClient (TCP Socket to emb-core-server).
 //! Provides the same high-level printing interface as PrinterHost but through
@@ -78,12 +78,12 @@ impl PrinterHostV2 {
         self.client.connect().await
             .map_err(|e| format!("Socket connect failed: {}", e))?;
 
-        log::info!("Connected to emb-core-server at {}", self.config.server_addr);
+        tracing::info!("Connected to emb-core-server at {}", self.config.server_addr);
 
         self.client.ping().await
             .map_err(|e| format!("Ping failed: {}", e))?;
 
-        log::info!("Server ping OK");
+        tracing::info!("Server ping OK");
         Ok(())
     }
 
@@ -95,7 +95,7 @@ impl PrinterHostV2 {
         self.client.config_load(&self.config.config_path).await
             .map_err(|e| format!("Load config failed: {}", e))?;
 
-        log::info!("Printer config loaded from {}", self.config.config_path);
+        tracing::info!("Printer config loaded from {}", self.config.config_path);
 
         // Send config complete + init device seq
         self.client.serial_config_complete().await
@@ -104,7 +104,7 @@ impl PrinterHostV2 {
         self.client.serial_init_seq().await
             .map_err(|e| format!("Init device seq failed: {}", e))?;
 
-        log::info!("Device initialized");
+        tracing::info!("Device initialized");
         Ok(())
     }
 
@@ -112,7 +112,7 @@ impl PrinterHostV2 {
     /// Serial write task continues running until all pending frames are sent.
     pub async fn disconnect(&self) -> Result<(), String> {
         let _ = self.client.disconnect().await;
-        log::info!("Disconnected from server (serial kept alive)");
+        tracing::info!("Disconnected from server (serial kept alive)");
         Ok(())
     }
 
@@ -219,3 +219,5 @@ mod tests {
         assert_eq!(host.config().config_path, "test_config.json");
     }
 }
+
+

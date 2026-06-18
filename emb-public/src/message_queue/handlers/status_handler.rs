@@ -1,4 +1,4 @@
-//! Status handler for querying printer status
+﻿//! Status handler for querying printer status
 
 use crate::{EmbResult, EmbError};
 use crate::state::DeviceStateManager;
@@ -70,7 +70,7 @@ impl StatusHandler {
             "temperatures": temperatures,
         });
 
-        log::debug!("State query: {:?}", state);
+        tracing::debug!("State query: {:?}", state);
         Ok(())
     }
     
@@ -115,7 +115,7 @@ impl StatusHandler {
             });
         }
 
-        log::debug!("Temperature get: {} heaters", heaters.len());
+        tracing::debug!("Temperature get: {} heaters", heaters.len());
         Ok(())
     }
     
@@ -151,7 +151,7 @@ impl StatusHandler {
             "is_stale": self.device_state.is_stale(5000).await,
         });
 
-        log::debug!("Hardware status query");
+        tracing::debug!("Hardware status query");
         Ok(()
 )
     }
@@ -170,7 +170,7 @@ impl StatusHandler {
             "remaining_seconds": progress.remaining_seconds,
         });
         
-        log::debug!("Print progress: {}%", progress.percent);
+        tracing::debug!("Print progress: {}%", progress.percent);
         Ok(())
     }
 }
@@ -193,3 +193,4 @@ impl MessageHandler for StatusHandler {
         "StatusHandler"
     }
 }
+

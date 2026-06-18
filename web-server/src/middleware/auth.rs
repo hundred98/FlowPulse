@@ -1,4 +1,4 @@
-//! Authentication Middleware
+﻿//! Authentication Middleware
 //!
 //! JWT-based authentication middleware for API endpoints.
 
@@ -41,7 +41,7 @@ pub async fn auth_middleware(
     // Get JWT secret
     let secret = state.config.jwt_secret.as_ref()
         .ok_or_else(|| {
-            log::error!("JWT secret not configured");
+            tracing::error!("JWT secret not configured");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
@@ -62,7 +62,7 @@ pub async fn auth_middleware(
     
     let claims = decode::<Claims>(token, &decoding_key, &validation)
         .map_err(|e| {
-            log::warn!("JWT validation failed: {}", e);
+            tracing::warn!("JWT validation failed: {}", e);
             StatusCode::UNAUTHORIZED
         })?;
     
@@ -112,3 +112,4 @@ mod tests {
         assert_eq!(claims.sub, user_id);
     }
 }
+

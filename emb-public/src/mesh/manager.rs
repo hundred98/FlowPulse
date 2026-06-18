@@ -1,4 +1,4 @@
-//! Mesh Manager
+﻿//! Mesh Manager
 //!
 //! Provides operations for bed mesh data management,
 //! including clearing, querying, and sending mesh data.
@@ -35,33 +35,34 @@ impl MeshManager {
     /// * `Ok(())` - If mesh data was cleared successfully
     /// * `Err(String)` - If the request failed
     pub async fn clear_mesh(&self) -> Result<(), String> {
-        log::info!("Clearing mesh data on server...");
+        tracing::info!("Clearing mesh data on server...");
 
         let request = CoreRequest::Motion(MotionRequest::ClearMesh);
         match self.client.send_request(&request).await {
             Ok(CoreResponse::Motion(MotionResponse::MeshComplete)) => {
-                log::info!("✅ Mesh data cleared successfully");
+                tracing::info!("✅ Mesh data cleared successfully");
                 Ok(())
             }
             Ok(CoreResponse::Motion(MotionResponse::MeshNack { reason, .. })) => {
                 let msg = format!("Mesh clear failed (NACK: {:?})", reason);
-                log::error!("❌ {}", msg);
+                tracing::error!("❌ {}", msg);
                 Err(msg)
             }
             Ok(CoreResponse::Error(e)) => {
                 let msg = format!("Mesh clear failed: {}", e.message);
-                log::error!("❌ {}", msg);
+                tracing::error!("❌ {}", msg);
                 Err(msg)
             }
             Ok(other) => {
-                log::info!("✅ Mesh cleared (response: {:?})", other);
+                tracing::info!("✅ Mesh cleared (response: {:?})", other);
                 Ok(())
             }
             Err(e) => {
                 let msg = format!("Mesh clear request failed: {}", e);
-                log::error!("❌ {}", msg);
+                tracing::error!("❌ {}", msg);
                 Err(msg)
             }
         }
     }
 }
+

@@ -1,4 +1,4 @@
-//! Device state manager
+﻿//! Device state manager
 //!
 //! This module manages device state synchronization and caching,
 //! providing unified access to device status from the core server.
@@ -209,13 +209,13 @@ impl DeviceStateManager {
         loop {
             // Check graceful shutdown flag
             if self.shutdown.load(Ordering::SeqCst) {
-                log::info!("DeviceStateManager sync loop stopped gracefully");
+                tracing::info!("DeviceStateManager sync loop stopped gracefully");
                 break;
             }
             
             // Sync state from core server
             if let Err(e) = self.sync_state().await {
-                log::error!("Failed to sync device state: {}", e);
+                tracing::error!("Failed to sync device state: {}", e);
             }
             
             // Wait for next sync interval
@@ -226,7 +226,7 @@ impl DeviceStateManager {
     /// Stop the synchronization loop gracefully
     pub fn stop_sync_loop(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
-        log::info!("DeviceStateManager stop signal sent");
+        tracing::info!("DeviceStateManager stop signal sent");
     }
     
     /// Sync state from core server
@@ -513,3 +513,4 @@ impl SafetyDataSource for DeviceStateManager {
         snap.last_sync_time.elapsed().as_millis() as u64
     }
 }
+

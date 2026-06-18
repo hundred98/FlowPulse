@@ -1,4 +1,4 @@
-//! Priority message queue implementation
+﻿//! Priority message queue implementation
 
 use crate::{EmbError, EmbResult, PrinterEvent, EventKind, SyncEventPublisher};
 use chrono::Utc;
@@ -101,7 +101,7 @@ impl MessageQueue {
             
             self.event_publisher.lock().unwrap().publish_sync(event);
             
-            log::debug!("Message {} enqueued: {:?}", message.id, message.message_type);
+            tracing::debug!("Message {} enqueued: {:?}", message.id, message.message_type);
             Ok(())
         } else {
             Err(EmbError::MessageQueue("Invalid priority".to_string()))
@@ -138,7 +138,7 @@ impl MessageQueue {
     
     /// Process messages continuously
     pub async fn start_processing(&self) -> EmbResult<()> {
-        log::info!("Starting message queue processing");
+        tracing::info!("Starting message queue processing");
         
         let shutdown = self.shutdown_notify.notified();
         tokio::pin!(shutdown);
@@ -150,14 +150,14 @@ impl MessageQueue {
                     // Continue processing
                 }
                 Err(e) => {
-                    log::error!("Error in message processing: {}", e);
+                    tracing::error!("Error in message processing: {}", e);
                 }
             }
             
             // Check for shutdown or wait
             tokio::select! {
                 _ = &mut shutdown => {
-                    log::info!("Message queue processing stopped");
+                    tracing::info!("Message queue processing stopped");
                     break;
                 }
                 _ = tokio::time::sleep(Duration::from_millis(self.config.check_interval_ms)) => {
@@ -200,11 +200,11 @@ impl MessageQueue {
                     match result {
                         Ok(_) => {
                             message.mark_completed();
-                            log::debug!("Message {} processed successfully", message.id);
+                            tracing::debug!("Message {} processed successfully", message.id);
                         }
                         Err(e) => {
                             message.mark_failed();
-                            log::error!("Message {} processing failed: {}", message.id, e);
+                            tracing::error!("Message {} processing failed: {}", message.id, e);
                             
                             // Retry if possible
                             if message.can_retry() {
@@ -232,7 +232,7 @@ impl MessageQueue {
                 } else {
                     // No handler found
                     message.mark_failed();
-                    log::warn!("No handler found for message type: {:?}", message.message_type);
+                    tracing::warn!("No handler found for message type: {:?}", message.message_type);
                 }
                 
                 processed += 1;
@@ -300,3 +300,4 @@ impl Default for MessageQueue {
         Self::new(MessageQueueConfig::default())
     }
 }
+

@@ -1,4 +1,4 @@
-//! Temperature management module
+﻿//! Temperature management module
 //!
 //! This module provides comprehensive temperature management for the printer system,
 //! including temperature state management, safety checks, temperature presets,
@@ -20,3 +20,5 @@ pub use pid_tune::{
     PidTuneProtocol, PidTuneSubType, PidTuneResult, PidParams,
     TunePhase, TuneProgress, TuneErrorCode,
 };
+
+

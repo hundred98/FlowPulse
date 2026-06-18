@@ -1,4 +1,4 @@
-//! UnixSocket server for CLI and HMI
+﻿//! UnixSocket server for CLI and HMI
 //!
 //! Provides Unix domain socket-based communication channel for local CLI and HMI interfaces.
 
@@ -8,7 +8,7 @@ use crate::state::DeviceStateManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
-use log::info;
+use tracing::info;
 use std::path::PathBuf;
 
 /// UnixSocket server configuration
@@ -290,3 +290,4 @@ mod tests {
         assert_eq!(config.buffer_size, 4096);
     }
 }
+

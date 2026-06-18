@@ -1,4 +1,4 @@
-//! FlowPulse Web Server Library
+﻿//! FlowPulse Web Server Library
 //!
 //! Axum-based REST API and WebSocket server for FlowPulse 3D printer control system.
 //! Optimized for embedded Linux environments with limited memory (RAM < 128MB).
@@ -15,7 +15,7 @@ use axum::{
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tokio::sync::broadcast;
-use log::info;
+use tracing::info;
 use emb_public::state::FrontendDataProvider;
 use emb_public::TemperatureManager;
 
@@ -169,3 +169,4 @@ mod tests {
         assert_eq!(server.state.config.port, 8080);
     }
 }
+

@@ -1,4 +1,4 @@
-//! Application logic
+﻿//! Application logic
 //!
 //! Contains the main application state and logic.
 //! Integrates state management, message queue, and multi-channel access.
@@ -148,18 +148,18 @@ impl AppState {
     
     /// Initialize all components
     pub async fn initialize(&self) -> emb_public::EmbResult<()> {
-        log::info!("Initializing application state...");
+        tracing::info!("Initializing application state...");
         
         // Verify core client connection
-        log::info!("Verifying core client connection...");
+        tracing::info!("Verifying core client connection...");
         if let Err(e) = self.core_client.ping().await {
-            log::warn!("Core client ping failed: {}, continuing anyway", e);
+            tracing::warn!("Core client ping failed: {}, continuing anyway", e);
         } else {
-            log::info!("Core client connection verified");
+            tracing::info!("Core client connection verified");
         }
         
         // Initialize temperature manager (load heaters from config)
-        log::info!("Initializing temperature manager...");
+        tracing::info!("Initializing temperature manager...");
         self.temperature_manager.initialize().await?;
         
         // Register message handlers
@@ -172,7 +172,7 @@ impl AppState {
         );
         self.event_publisher.publish(event).await;
         
-        log::info!("Application state initialized");
+        tracing::info!("Application state initialized");
         Ok(())
     }
     
@@ -219,13 +219,13 @@ impl AppState {
         self.message_queue.add_handler(MessageType::PrintError, error_handler.clone()).await;
         self.message_queue.add_handler(MessageType::HardwareError, error_handler.clone()).await;
         
-        log::info!("Message handlers registered");
+        tracing::info!("Message handlers registered");
         Ok(())
     }
     
     /// Start all background services
     pub async fn start_services(&self) -> emb_public::EmbResult<()> {
-        log::info!("Starting background services...");
+        tracing::info!("Starting background services...");
         
         // Publish service starting event
         let event = emb_public::common::events::PrinterEvent::info(
@@ -244,7 +244,7 @@ impl AppState {
         let message_queue_clone = self.message_queue.clone();
         tokio::spawn(async move {
             if let Err(e) = message_queue_clone.start_processing().await {
-                log::error!("Message queue processing error: {}", e);
+                tracing::error!("Message queue processing error: {}", e);
             }
         });
         
@@ -259,7 +259,7 @@ impl AppState {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 
                 if let Err(e) = channel_manager_clone.broadcast_status().await {
-                    log::error!("Status broadcast error: {}", e);
+                    tracing::error!("Status broadcast error: {}", e);
                     
                     // Publish error event
                     let error_event = emb_public::common::events::PrinterEvent::error(
@@ -273,9 +273,9 @@ impl AppState {
         
         // Start temperature subscription (get real temperature from device)
         if let Err(e) = self.temperature_manager.subscribe_temperature_updates().await {
-            log::warn!("Failed to subscribe temperature updates: {}", e);
+            tracing::warn!("Failed to subscribe temperature updates: {}", e);
         } else {
-            log::info!("Temperature subscription started");
+            tracing::info!("Temperature subscription started");
         }
         
         // Start temperature broadcast loop
@@ -297,7 +297,7 @@ impl AppState {
                 };
                 
                 if websocket_broadcast_tx_clone.send(msg).is_err() {
-                    log::warn!("Failed to broadcast temperature update");
+                    tracing::warn!("Failed to broadcast temperature update");
                 }
             }
         });
@@ -309,13 +309,13 @@ impl AppState {
         );
         self.event_publisher.publish(event).await;
         
-        log::info!("Background services started");
+        tracing::info!("Background services started");
         Ok(())
     }
     
     /// Stop all services
     pub async fn stop_services(&self) -> emb_public::EmbResult<()> {
-        log::info!("Stopping services...");
+        tracing::info!("Stopping services...");
         
         // Publish service stopping event
         let event = emb_public::common::events::PrinterEvent::info(
@@ -327,7 +327,7 @@ impl AppState {
         self.channel_manager.stop_all().await?;
         self.message_queue.shutdown().await;
         
-        log::info!("Services stopped");
+        tracing::info!("Services stopped");
         Ok(())
     }
     
@@ -361,3 +361,4 @@ impl AppState {
         &self.print_controller
     }
 }
+

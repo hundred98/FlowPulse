@@ -1,4 +1,4 @@
-//! Message types for communication channels
+﻿//! Message types for communication channels
 //!
 //! This module defines unified message types for WebSocket and UnixSocket communication.
 
@@ -175,3 +175,4 @@ impl PrinterStatus {
         Self::new("idle".to_string())
     }
 }
+

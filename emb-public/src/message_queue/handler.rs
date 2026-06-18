@@ -1,4 +1,4 @@
-//! Message handler trait
+﻿//! Message handler trait
 
 use crate::EmbResult;
 use super::types::Message;
@@ -12,3 +12,4 @@ pub trait MessageHandler: Send + Sync {
     /// Get handler name
     fn name(&self) -> &str;
 }
+

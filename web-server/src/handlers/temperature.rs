@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use log::info;
+use tracing::info;
 
 use crate::WebServerState;
 use emb_public::temperature::pid_tune::PidTuneProtocol;
@@ -133,7 +133,7 @@ pub async fn set_temperature(
         match state.temperature_manager.set_target("hotend", hotend_temp).await {
             Ok(()) => info!("Set hotend temperature to {}°C", hotend_temp),
             Err(e) => {
-                log::error!("Failed to set hotend temperature: {}", e);
+                tracing::error!("Failed to set hotend temperature: {}", e);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
         }
@@ -144,7 +144,7 @@ pub async fn set_temperature(
         match state.temperature_manager.set_target("bed", bed_temp).await {
             Ok(()) => info!("Set bed temperature to {}°C", bed_temp),
             Err(e) => {
-                log::error!("Failed to set bed temperature: {}", e);
+                tracing::error!("Failed to set bed temperature: {}", e);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
         }
@@ -182,7 +182,7 @@ pub async fn pid_tune_start(
             }))
         }
         Err(e) => {
-            log::error!("Failed to start PID tune: {}", e);
+            tracing::error!("Failed to start PID tune: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -210,7 +210,7 @@ pub async fn pid_tune_cancel(
             }))
         }
         Err(e) => {
-            log::error!("Failed to cancel PID tune: {}", e);
+            tracing::error!("Failed to cancel PID tune: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -226,7 +226,7 @@ pub async fn pid_tune_progress(
     
     // Debug log
     if let Some(ref p) = progress {
-        log::info!("🔄 Progress API: cycle={}, temp={}, power={}, is_tuning={}", 
+        tracing::info!("🔄 Progress API: cycle={}, temp={}, power={}, is_tuning={}", 
             p.current_cycle, p.current_temp, p.output_power, is_tuning);
     }
     
@@ -293,7 +293,7 @@ pub async fn pid_tune_apply(
             }))
         }
         Err(e) => {
-            log::error!("Failed to send PID tune APPLY frame: {}", e);
+            tracing::error!("Failed to send PID tune APPLY frame: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -340,3 +340,4 @@ pub async fn pid_tune_result(
         }
     }
 }
+

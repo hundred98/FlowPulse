@@ -4,18 +4,25 @@
 //! Connects to emb-core-server, manages device state, and provides multi-channel access.
 
 use host::{app::AppState, setup};
+use emb_public::config::log_config::LogConfig;
+use emb_public::logger;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logger
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Initialize tracing from logging.json config
+    let log_config = LogConfig::load(setup::CONFIG_DIR)
+        .unwrap_or_else(|e| {
+            eprintln!("Warning: Failed to load logging config: {}, using defaults", e);
+            LogConfig::default()
+        });
+    logger::init_tracing(&log_config)?;
 
-    log::info!("========================================");
-    log::info!("FlowPulse Host Service Starting");
-    log::info!("========================================");
+    tracing::info!("========================================");
+    tracing::info!("FlowPulse Host Service Starting");
+    tracing::info!("========================================");
 
-    log::info!("Server: {}", setup::SERVER_ADDR);
-    log::info!("Config: {}", setup::CONFIG_DIR);
+    tracing::info!("Server: {}", setup::SERVER_ADDR);
+    tracing::info!("Config: {}", setup::CONFIG_DIR);
 
     // Step 1: Load all configuration files at once
     let _printer_config = setup::load_all_configs(setup::CONFIG_DIR)?;
@@ -31,38 +38,40 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize application state
     app_state.initialize().await?;
-    log::info!("✅ Application state initialized");
+    tracing::info!("✅ Application state initialized");
 
     // Step 5: Start WebServer in background
     let _web_server_handle = setup::start_web_server(&app_state);
     
     // Step 6: Start services (including temperature subscription)
     app_state.start_services().await?;
-    log::info!("✅ Background services started");
+    tracing::info!("✅ Background services started");
 
     // Get initial position
     match host.get_position().await {
-        Ok((x, y, z, e)) => log::info!("Initial position: X={:.3} Y={:.3} Z={:.3} E={:.3}", x, y, z, e),
-        Err(e) => log::warn!("Get position failed: {}", e),
+        Ok((x, y, z, e)) => tracing::info!("Initial position: X={:.3} Y={:.3} Z={:.3} E={:.3}", x, y, z, e),
+        Err(e) => tracing::warn!("Get position failed: {}", e),
     }
 
-    log::info!("========================================");
-    log::info!("✅ FlowPulse Host Service Ready");
-    log::info!("========================================");
-    log::info!("Web UI:     http://127.0.0.1:8080");
-    log::info!("WebSocket:  ws://127.0.0.1:8080/ws");
-    log::info!("UnixSocket: /tmp/flowpulse.sock");
-    log::info!("Press Ctrl+C to stop");
-    log::info!("========================================");
+    tracing::info!("========================================");
+    tracing::info!("✅ FlowPulse Host Service Ready");
+    tracing::info!("========================================");
+    tracing::info!("Web UI:     http://127.0.0.1:8080");
+    tracing::info!("WebSocket:  ws://127.0.0.1:8080/ws");
+    tracing::info!("UnixSocket: /tmp/flowpulse.sock");
+    tracing::info!("Press Ctrl+C to stop");
+    tracing::info!("========================================");
     
     // Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
     
-    log::info!("Shutting down...");
+    tracing::info!("Shutting down...");
     app_state.stop_services().await?;
-    log::info!("✅ Services stopped");
+    tracing::info!("✅ Services stopped");
     
     host.disconnect().await.ok();
 
     Ok(())
 }
+
+

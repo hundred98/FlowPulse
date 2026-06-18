@@ -1,4 +1,4 @@
-//! Configuration Handlers
+﻿//! Configuration Handlers
 //!
 //! HTTP handlers for configuration management endpoints.
 
@@ -24,3 +24,4 @@ pub async fn get_config(
     
     Ok(Json(config))
 }
+

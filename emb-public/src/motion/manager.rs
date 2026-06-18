@@ -1,4 +1,4 @@
-//! Homing Manager
+﻿//! Homing Manager
 //!
 //! Provides homing operations for printer axes.
 //! Encapsulates the low-level serial frame protocol (0x0A frame type)
@@ -74,7 +74,7 @@ impl HomingManager {
     pub async fn home_axes(&self, axes_mask: u8) -> Result<(), String> {
         let axes_names = self.format_axes_names(axes_mask);
 
-        log::info!("Homing start: axes_mask=0x{:02X} ({})", axes_mask, axes_names);
+        tracing::info!("Homing start: axes_mask=0x{:02X} ({})", axes_mask, axes_names);
 
         // Send homing frame (0x0A = homing command)
         self.client.serial_send_frame(0x0A, vec![axes_mask]).await?;
@@ -90,24 +90,24 @@ impl HomingManager {
                         // NACK
                         let err = if pld.len() > 1 { pld[1] } else { 0xFF };
                         let desc = self.nack_description(err);
-                        log::error!("Homing NACK (error={}, meaning: {})", err, desc);
+                        tracing::error!("Homing NACK (error={}, meaning: {})", err, desc);
                         return Err(format!("Homing NACK: {} (error={})", desc, err));
                     } else if ft == 0x06 {
                         // ACK - homing accepted
-                        log::info!("Homing ACK received");
+                        tracing::info!("Homing ACK received");
                         ack_received = true;
                         break;
                     }
                     // Other frame types - continue polling
                 }
                 Ok(None) => break, // no more frames
-                Err(e) => log::warn!("Recv error: {}", e),
+                Err(e) => tracing::warn!("Recv error: {}", e),
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
         if !ack_received {
-            log::info!("Homing command sent (no explicit ACK/NACK received within poll window)");
+            tracing::info!("Homing command sent (no explicit ACK/NACK received within poll window)");
         }
 
         // Update server-side homed_axes so motion planner knows axes are homed.
@@ -117,7 +117,7 @@ impl HomingManager {
         let current_homed = self.client.motion_query_homed().await.unwrap_or(0);
         let new_homed = current_homed | axes_mask;
         if new_homed != current_homed {
-            log::info!("Updating server homed_axes: {:#04b} -> {:#04b}", current_homed, new_homed);
+            tracing::info!("Updating server homed_axes: {:#04b} -> {:#04b}", current_homed, new_homed);
             self.client.motion_set_homed_axes(new_homed).await?;
         }
 
@@ -146,3 +146,4 @@ impl HomingManager {
         }
     }
 }
+

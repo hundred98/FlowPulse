@@ -1,4 +1,4 @@
-//! Safety module configuration
+﻿//! Safety module configuration
 //!
 //! This module consolidates all configuration types used by the safety subsystem,
 //! including motion limits, temperature safety thresholds, and general settings.
@@ -196,3 +196,4 @@ impl Default for SafetyConfig {
         }
     }
 }
+

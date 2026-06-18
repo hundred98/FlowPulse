@@ -1,4 +1,4 @@
-//! Unified safety types for the safety module
+﻿//! Unified safety types for the safety module
 //!
 //! This module defines all shared types used across the safety subsystem,
 //! consolidating previously duplicated types from temperature and safety modules.
@@ -240,3 +240,4 @@ mod tests {
         assert!(emergency > critical);
     }
 }
+

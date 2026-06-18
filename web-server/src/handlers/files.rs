@@ -52,7 +52,7 @@ pub async fn upload_file(
     while let Some(_field) = multipart.next_field().await.unwrap_or(None) {
         // Process uploaded file
         // For now, just log that we received it
-        log::info!("Received file upload");
+        tracing::info!("Received file upload");
     }
     
     Ok(Json(ApiResponse {
@@ -67,10 +67,11 @@ pub async fn delete_file(
     Path(name): Path<String>,
 ) -> Result<Json<ApiResponse>, StatusCode> {
     // TODO: Implement actual file deletion
-    log::info!("Delete file: {}", name);
+    tracing::info!("Delete file: {}", name);
     
     Ok(Json(ApiResponse {
         success: true,
         message: format!("File {} deleted successfully", name),
     }))
 }
+

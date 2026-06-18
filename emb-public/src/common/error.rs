@@ -1,4 +1,4 @@
-//! Error types for the 3D printer firmware system
+﻿//! Error types for the 3D printer firmware system
 
 use thiserror::Error;
 
@@ -75,3 +75,5 @@ impl From<String> for EmbError {
 }
 
 pub type EmbResult<T> = Result<T, EmbError>;
+
+

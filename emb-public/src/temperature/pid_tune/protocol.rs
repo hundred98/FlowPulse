@@ -1,4 +1,4 @@
-//! PID auto-tune protocol handling
+﻿//! PID auto-tune protocol handling
 //!
 //! This module handles frame building and parsing for PID auto-tune communication.
 //!
@@ -288,3 +288,5 @@ mod tests {
         assert!((value - recovered).abs() < 0.001);
     }
 }
+
+

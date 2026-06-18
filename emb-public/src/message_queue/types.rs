@@ -1,4 +1,4 @@
-//! Message types and definitions
+﻿//! Message types and definitions
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -312,3 +312,4 @@ pub struct QueueStats {
     /// Queue utilization (0.0 to 1.0)
     pub utilization: f64,
 }
+

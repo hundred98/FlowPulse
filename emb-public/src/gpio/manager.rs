@@ -1,4 +1,4 @@
-//! GPIO Manager
+﻿//! GPIO Manager
 //!
 //! Provides high-level GPIO operations including pin control, querying,
 //! and standardized event subscription via broadcast channel.
@@ -61,7 +61,7 @@ impl GpioManager {
         // Send subscribe request to server
         self.client.gpio_subscribe_report(true).await?;
 
-        log::info!("GPIO report subscribed (broadcast channel active)");
+        tracing::info!("GPIO report subscribed (broadcast channel active)");
         Ok(())
     }
 
@@ -121,7 +121,8 @@ impl GpioManager {
         // Send unsubscribe request
         self.client.gpio_subscribe_report(false).await?;
 
-        log::info!("GPIO report unsubscribed");
+        tracing::info!("GPIO report unsubscribed");
         Ok(())
     }
 }
+

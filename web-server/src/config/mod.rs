@@ -155,10 +155,10 @@ impl WebServerConfig {
         // Try to load from file first
         if let Some(path) = config_path {
             if std::path::Path::new(path).exists() {
-                log::info!("Loading config from file: {}", path);
+                tracing::info!("Loading config from file: {}", path);
                 return Self::from_file(path);
             } else {
-                log::warn!("Config file not found: {}, using defaults", path);
+                tracing::warn!("Config file not found: {}, using defaults", path);
             }
         }
         
@@ -168,12 +168,12 @@ impl WebServerConfig {
                       std::env::var("FLOWPULSE_ACCESS_PASSWORD").is_ok();
         
         if has_env {
-            log::info!("Loading config from environment variables");
+            tracing::info!("Loading config from environment variables");
             return Ok(Self::from_env());
         }
         
         // Use default
-        log::info!("Using default config");
+        tracing::info!("Using default config");
         Ok(Self::default())
     }
 
@@ -211,3 +211,4 @@ mod tests {
         assert!(!config.serve_static_files);
     }
 }
+

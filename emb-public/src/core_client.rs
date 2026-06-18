@@ -1,4 +1,4 @@
-//! Core Socket Client for emb-public
+﻿//! Core Socket Client for emb-public
 //!
 //! Connects to emb-core-server over TCP Socket and provides
 //! convenient methods for all CoreRequest/CoreResponse operations.
@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, RwLock};
 use tokio::sync::mpsc;
-use log::{info, warn, debug};
+use tracing::{info, warn, trace};
 
 use emb_api::{
     CoreRequest, CoreResponse,
@@ -204,7 +204,7 @@ impl CoreSocketClient {
         let mut guard = self.writer.write().await;
         let writer = guard.as_mut().ok_or("Not connected")?;
 
-        debug!("Sending request: {:?}", request);
+        // trace!("Sending request: {:?}", request);
         writer.write_all(&encoded).await
             .map_err(|e| format!("Write error: {}", e))?;
         writer.flush().await
@@ -308,7 +308,7 @@ impl CoreSocketClient {
                     return Err(format!("Ping error: {}", e.message));
                 }
                 Ok(Some(other)) => {
-                    debug!("ping: skipping non-Pong message: {:?}", other);
+                    trace!("ping: skipping non-Pong message: {:?}", other);
                     continue;
                 }
                 Ok(None) => return Err("Server closed connection".to_string()),
@@ -505,7 +505,7 @@ impl CoreSocketClient {
                 CoreResponse::Motion(MotionResponse::DrainResult { success: false, .. }) => {
                     // Server internally blocks for ~5s before returning timeout.
                     // The server's blocking acts as the natural retry interval.
-                    debug!("Motion drain not yet complete, retrying...");
+                    trace!("Motion drain not yet complete, retrying...");
                     continue;
                 }
                 CoreResponse::Error(e) => return Err(e.message),
@@ -853,7 +853,7 @@ async fn background_reader(
         // Read from stream
         match reader.read(&mut tmp).await {
             Ok(0) => {
-                debug!("Background reader: server closed connection");
+                trace!("Background reader: server closed connection");
                 break;
             }
             Ok(n) => {
@@ -917,3 +917,4 @@ async fn background_reader(
         }
     }
 }
+
