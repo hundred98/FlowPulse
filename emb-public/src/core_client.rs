@@ -1,4 +1,4 @@
-﻿//! Core Socket Client for emb-public
+//! Core Socket Client for emb-public
 //!
 //! Connects to emb-core-server over TCP Socket and provides
 //! convenient methods for all CoreRequest/CoreResponse operations.
@@ -53,6 +53,8 @@ pub struct CoreSocketClient {
     message_rx: Mutex<Option<mpsc::Receiver<CoreResponse>>>,
     /// Separate channel for Ping/Pong responses (isolated from message_rx)
     ping_rx: Mutex<Option<mpsc::Receiver<CoreResponse>>>,
+    /// Separate channel for state sync responses (GetPosition, QueryStats, etc.)
+    state_sync_rx: Mutex<Option<mpsc::Receiver<CoreResponse>>>,
     /// Background reader task handle
     reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// GPIO Report回调（可选），参数: (name, value)
@@ -69,6 +71,7 @@ impl CoreSocketClient {
             writer: RwLock::new(None),
             message_rx: Mutex::new(None),
             ping_rx: Mutex::new(None),
+            state_sync_rx: Mutex::new(None),
             reader_handle: Mutex::new(None),
             gpio_report_callback: Arc::new(RwLock::new(None)),
             status_report_callback: Arc::new(RwLock::new(None)),
@@ -103,17 +106,19 @@ impl CoreSocketClient {
         // Create message channels (bounded, provides backpressure)
         let (tx, rx) = mpsc::channel(256);
         let (ping_tx, ping_rx) = mpsc::channel(64);
+        let (state_sync_tx, state_sync_rx) = mpsc::channel(64);
         
         // Store writer and receivers
         *self.writer.write().await = Some(writer);
         *self.message_rx.lock().await = Some(rx);
         *self.ping_rx.lock().await = Some(ping_rx);
+        *self.state_sync_rx.lock().await = Some(state_sync_rx);
         
         // Start background reader task
         let gpio_callback = self.gpio_report_callback.clone();
         let status_callback = self.status_report_callback.clone();
         let handle = tokio::spawn(async move {
-            background_reader(reader, tx, ping_tx, gpio_callback, status_callback).await;
+            background_reader(reader, tx, ping_tx, state_sync_tx, gpio_callback, status_callback).await;
         });
         *self.reader_handle.lock().await = Some(handle);
 
@@ -137,6 +142,7 @@ impl CoreSocketClient {
         // Clear message queues
         self.message_rx.lock().await.take();
         self.ping_rx.lock().await.take();
+        self.state_sync_rx.lock().await.take();
         
         info!("Disconnected from core server");
     }
@@ -261,9 +267,15 @@ impl CoreSocketClient {
                 deadline - tokio::time::Instant::now(),
                 rx.recv(),
             ).await {
-                Ok(Some(response)) => return Ok(response),
-                Ok(None) => return Err("Server closed connection".to_string()),
-                Err(_) => return Err("Request timeout".to_string()),
+                Ok(Some(response)) => {
+                    return Ok(response);
+                }
+                Ok(None) => {
+                    return Err("Server closed connection".to_string());
+                }
+                Err(_) => {
+                    return Err("Request timeout".to_string());
+                }
             }
         }
     }
@@ -484,12 +496,52 @@ impl CoreSocketClient {
 
     /// Get current position.
     pub async fn motion_get_position(&self) -> Result<(f32, f32, f32, f32), String> {
-        match self.send_request(&CoreRequest::Motion(MotionRequest::GetPosition)).await? {
-            CoreResponse::Motion(MotionResponse::PositionResult { x, y, z, e }) => {
-                Ok((x, y, z, e))
+        self.ensure_connected().await?;
+        
+        // Send request
+        let encoded = encode_request(&CoreRequest::Motion(MotionRequest::GetPosition))
+            .map_err(|e| format!("Encode error: {}", e))?;
+        
+        let mut guard = self.writer.write().await;
+        let writer = guard.as_mut().ok_or("Not connected")?;
+        
+        writer.write_all(&encoded).await
+            .map_err(|e| format!("Write error: {}", e))?;
+        writer.flush().await
+            .map_err(|e| format!("Flush error: {}", e))?;
+        
+        // Drop write lock before reading response
+        drop(guard);
+        
+        // Read response from state_sync_rx channel (dedicated for PositionResult)
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(self.config.request_timeout_ms);
+        
+        let mut rx_guard = self.state_sync_rx.lock().await;
+        let rx = rx_guard.as_mut().ok_or("Not connected")?;
+        
+        loop {
+            // Check timeout
+            if tokio::time::Instant::now() > deadline {
+                return Err("Request timeout".to_string());
             }
-            CoreResponse::Error(e) => Err(e.message),
-            other => Err(format!("Unexpected response: {:?}", other)),
+            
+            // Calculate remaining time
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            
+            // Wait for response with timeout
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Some(response)) => {
+                    match response {
+                        CoreResponse::Motion(MotionResponse::PositionResult { x, y, z, e }) => {
+                            return Ok((x, y, z, e));
+                        }
+                        CoreResponse::Error(e) => return Err(e.message),
+                        other => return Err(format!("Unexpected response: {:?}", other)),
+                    }
+                }
+                Ok(None) => return Err("Channel closed".to_string()),
+                Err(_) => return Err("Request timeout".to_string()),
+            }
         }
     }
 
@@ -843,6 +895,7 @@ async fn background_reader(
     mut reader: tokio::io::ReadHalf<TcpStream>,
     tx: mpsc::Sender<CoreResponse>,
     ping_tx: mpsc::Sender<CoreResponse>,
+    state_sync_tx: mpsc::Sender<CoreResponse>,
     gpio_callback: Arc<RwLock<Option<Box<dyn Fn(String, f32) + Send + Sync>>>>,
     status_callback: Arc<RwLock<Option<Box<dyn Fn(u8, Vec<u8>) + Send + Sync>>>>,
 ) {
@@ -894,6 +947,13 @@ async fn background_reader(
                                 callback(*frame_type, payload.clone());
                             }
                             continue; // Don't send to channel
+                        }
+                        // PositionResult goes to dedicated state_sync channel
+                        CoreResponse::Motion(emb_api::MotionResponse::PositionResult { .. }) => {
+                            if state_sync_tx.send(response).await.is_err() {
+                                return;
+                            }
+                            continue;
                         }
                         _ => {
                             // Non-push message, send to channel
