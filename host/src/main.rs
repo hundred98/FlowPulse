@@ -6,6 +6,7 @@
 use host::{app::AppState, setup};
 use emb_public::config::log_config::LogConfig;
 use emb_public::logger;
+use emb_public::{GpioManager, HomingManager};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -30,11 +31,19 @@ async fn main() -> anyhow::Result<()> {
     // Step 2: Create host and connect to emb-core-server
     let host = setup::create_and_connect_host(setup::SERVER_ADDR).await?;
 
-    // Step 3: Initialize device (serial, configs, STM32)
+    // Step 2.5: Create GpioManager and setup callback (before GPIO subscribe in initialize_device)
+    let gpio_manager = GpioManager::new(host.client());
+    gpio_manager.setup_callback().await;
+    tracing::info!("✅ GpioManager callback setup");
+
+    // Step 3: Initialize device (serial, GPIO subscribe, configs, STM32 seq)
     setup::initialize_device(&host).await?;
 
-    // Step 4: Create application state
-    let app_state = AppState::new(host.client());
+    // Step 3.5: Create HomingManager
+    let homing_manager = HomingManager::new(host.client());
+
+    // Step 4: Create application state with all managers
+    let app_state = AppState::new(host.client(), gpio_manager, homing_manager);
 
     // Initialize application state
     app_state.initialize().await?;

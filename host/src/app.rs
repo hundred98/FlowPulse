@@ -8,6 +8,12 @@ use emb_public::{
     // Core client
     CoreSocketClient,
 
+    // GPIO management
+    GpioManager,
+
+    // Homing management
+    HomingManager,
+
     // State management
     DeviceStateManager, DeviceStateConfig,
     StateMachine, StateMachineConfig,
@@ -37,7 +43,13 @@ use tokio::sync::broadcast;
 pub struct AppState {
     /// Core socket client for communication with emb-core-server
     pub core_client: Arc<CoreSocketClient>,
-    
+
+    /// GPIO Manager (handles pin control + event broadcast)
+    pub gpio_manager: GpioManager,
+
+    /// Homing Manager (encapsulates homing protocol)
+    pub homing_manager: HomingManager,
+
     /// Device state manager for state synchronization
     pub device_state: Arc<DeviceStateManager>,
     
@@ -68,7 +80,11 @@ pub struct AppState {
 
 impl AppState {
     /// Create a new application state with all components
-    pub fn new(core_client: Arc<CoreSocketClient>) -> Self {
+    pub fn new(
+        core_client: Arc<CoreSocketClient>,
+        gpio_manager: GpioManager,
+        homing_manager: HomingManager,
+    ) -> Self {
         // Create broadcast channel for WebSocket updates
         let (websocket_broadcast_tx, _websocket_broadcast_rx) = broadcast::channel(32);
         
@@ -134,6 +150,8 @@ impl AppState {
         
         Self {
             core_client,
+            gpio_manager,
+            homing_manager,
             device_state,
             state_machine,
             safety_controller,
@@ -359,6 +377,18 @@ impl AppState {
     #[allow(dead_code)]
     pub fn print_controller(&self) -> &Arc<PrintController> {
         &self.print_controller
+    }
+
+    /// Get GPIO manager
+    #[allow(dead_code)]
+    pub fn gpio_manager(&self) -> &GpioManager {
+        &self.gpio_manager
+    }
+
+    /// Get homing manager
+    #[allow(dead_code)]
+    pub fn homing_manager(&self) -> &HomingManager {
+        &self.homing_manager
     }
 }
 
