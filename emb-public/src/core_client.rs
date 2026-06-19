@@ -61,6 +61,8 @@ pub struct CoreSocketClient {
     gpio_report_callback: Arc<RwLock<Option<Box<dyn Fn(String, f32) + Send + Sync>>>>,
     /// Status Report回调（可选），参数: (frame_type, payload)
     status_report_callback: Arc<RwLock<Option<Box<dyn Fn(u8, Vec<u8>) + Send + Sync>>>>,
+    /// BufTime Report回调（可选，仅 0x1A），参数: (buf_time_ms, free_slots)
+    buf_time_callback: Arc<RwLock<Option<Box<dyn Fn(u16, u8) + Send + Sync>>>>,
 }
 
 impl CoreSocketClient {
@@ -75,6 +77,7 @@ impl CoreSocketClient {
             reader_handle: Mutex::new(None),
             gpio_report_callback: Arc::new(RwLock::new(None)),
             status_report_callback: Arc::new(RwLock::new(None)),
+            buf_time_callback: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -117,8 +120,9 @@ impl CoreSocketClient {
         // Start background reader task
         let gpio_callback = self.gpio_report_callback.clone();
         let status_callback = self.status_report_callback.clone();
+        let buf_time_callback = self.buf_time_callback.clone();
         let handle = tokio::spawn(async move {
-            background_reader(reader, tx, ping_tx, state_sync_tx, gpio_callback, status_callback).await;
+            background_reader(reader, tx, ping_tx, state_sync_tx, gpio_callback, status_callback, buf_time_callback).await;
         });
         *self.reader_handle.lock().await = Some(handle);
 
@@ -174,6 +178,21 @@ impl CoreSocketClient {
     /// 清除Status Report回调
     pub async fn clear_status_report_callback(&self) {
         let mut guard = self.status_report_callback.write().await;
+        *guard = None;
+    }
+
+    /// 设置BufTime Report回调（0x1A），参数: (buf_time_ms, free_slots)
+    pub async fn set_buf_time_callback<F>(&self, callback: F)
+    where
+        F: Fn(u16, u8) + Send + Sync + 'static,
+    {
+        let mut guard = self.buf_time_callback.write().await;
+        *guard = Some(Box::new(callback));
+    }
+
+    /// 清除BufTime Report回调
+    pub async fn clear_buf_time_callback(&self) {
+        let mut guard = self.buf_time_callback.write().await;
         *guard = None;
     }
 
@@ -898,6 +917,7 @@ async fn background_reader(
     state_sync_tx: mpsc::Sender<CoreResponse>,
     gpio_callback: Arc<RwLock<Option<Box<dyn Fn(String, f32) + Send + Sync>>>>,
     status_callback: Arc<RwLock<Option<Box<dyn Fn(u8, Vec<u8>) + Send + Sync>>>>,
+    buf_time_callback: Arc<RwLock<Option<Box<dyn Fn(u16, u8) + Send + Sync>>>>,
 ) {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 8192];
@@ -945,6 +965,15 @@ async fn background_reader(
                             let callback_guard = status_callback.read().await;
                             if let Some(callback) = callback_guard.as_ref() {
                                 callback(*frame_type, payload.clone());
+                            }
+                            // Dispatch 0x1A (BufTimeReport) to dedicated callback
+                            if *frame_type == 0x1A && payload.len() >= 2 {
+                                let bt_guard = buf_time_callback.read().await;
+                                if let Some(cb) = bt_guard.as_ref() {
+                                    let buf_time = u16::from_be_bytes([payload[0], payload[1]]);
+                                    let free_slots = if payload.len() >= 3 { payload[2] } else { 0 };
+                                    cb(buf_time, free_slots);
+                                }
                             }
                             continue; // Don't send to channel
                         }

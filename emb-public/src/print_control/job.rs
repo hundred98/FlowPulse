@@ -1,4 +1,4 @@
-﻿use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
@@ -273,13 +273,36 @@ impl PrintController {
     /// * `Ok(())` - If the print completed successfully
     /// * `Err(String)` - If any command failed
     pub async fn execute_print_loop(&self, filename: &str, content: &str, total_lines: usize) -> Result<(), String> {
-        let client = self.client.as_ref().ok_or("PrintController: CoreSocketClient not set")?;
+        use std::sync::atomic::{AtomicU16, Ordering};
+
+        let client = self.client.as_ref().ok_or("PrintController: CoreSocketClient not set")?.clone();
         let temperature_manager = self.temperature_manager.as_ref().ok_or("PrintController: TemperatureManager not set")?;
 
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = total_lines.max(lines.len());
 
+        // Register buf_time callback to track MCU execution progress.
+        // Initialize to u16::MAX (sentinel) meaning "no 0x1A data yet".
+        // Until the first real 0x1A arrives, we assume MCU buffer is full,
+        // which forces aggressive correction and prevents instant 100% on small files.
+        let mcu_buf_time_ms = Arc::new(AtomicU16::new(u16::MAX));
+        {
+            let bt = mcu_buf_time_ms.clone();
+            client.set_buf_time_callback(move |buf_time_ms, _free_slots| {
+                bt.store(buf_time_ms, Ordering::Relaxed);
+            }).await;
+        }
+
         tracing::info!("Starting print execution: {} ({} lines)", filename, total_lines);
+
+        // Send EnterPrintMode to MCU to enable 0x1A status reporting.
+        // Without this, the MCU will not send buf_time updates, and the
+        // client-side drain detection via buf_time will not work.
+        tracing::info!("Sending EnterPrintMode to MCU...");
+        client.serial_enter_print_mode().await.map_err(|e| {
+            tracing::error!("EnterPrintMode failed: {}", e);
+            format!("EnterPrintMode failed: {}", e)
+        })?;
 
         for (line_idx, line) in lines.iter().enumerate() {
             // Check for stop request
@@ -545,9 +568,77 @@ impl PrintController {
                     progress.status = "Skipped".to_string();
                 }
             }
-            // Sync progress to DeviceStateManager after each line
+            // Adjust progress for MCU execution buffer lag, then sync.
+            // Uses a max 50% correction factor: when buf_time >= 1000ms,
+            // displayed progress = 50% of raw line-based progress.
+            // Before any 0x1A arrives, buf_time holds u16::MAX (sentinel),
+            // which clamps to 1000ms → maximum correction.
+            {
+                let mut progress = self.progress.write().await;
+                let buf_time = mcu_buf_time_ms.load(Ordering::Relaxed);
+                // Sentinels and values > 1000ms both map to full correction
+                let buf_ratio = ((buf_time as f32).min(1000.0) / 1000.0).max(0.0);
+                progress.percent = progress.percent * (1.0 - buf_ratio * 0.5);
+            }
             self.sync_progress_to_device_state().await;
         }
+
+        // All lines dispatched. Wait for MCU to finish executing before marking 100%.
+        tracing::info!("All G-code lines dispatched, waiting for MCU to drain buffer...");
+        {
+            let mut progress = self.progress.write().await;
+            progress.status = "Waiting for MCU to finish...".to_string();
+        }
+
+        // Use client-side 0x1A buf_time polling to detect MCU drain.
+        // The MCU stays in print mode (no ExitPrintMode sent yet), so 0x1A frames
+        // continue streaming. This bypasses the complex server-side flow controller
+        // drain chain (fc ↔ process_queued_batches ↔ write_task), which has proven
+        // unreliable for detecting when ALL motion has completed.
+        //
+        // The buf_time reflects the MCU's remaining execution time in ms.
+        // When it drops to 0 (or near 0), all motion is physically done.
+        {
+            let drain_timeout = std::time::Duration::from_secs(300);
+            let check_interval = std::time::Duration::from_millis(100);
+            let drain_start = std::time::Instant::now();
+
+            loop {
+                tokio::time::sleep(check_interval).await;
+                let buf_time = mcu_buf_time_ms.load(Ordering::Relaxed);
+
+                // Log buf_time every ~5s for debugging
+                let elapsed_ms = drain_start.elapsed().as_millis() as u64;
+                if elapsed_ms % 5000 < 100 {
+                    tracing::info!("Drain polling: buf_time={}ms (elapsed={}s)", buf_time, elapsed_ms / 1000);
+                }
+
+                if buf_time <= 10 {
+                    // tracing::info!("MCU buffer drained via 0x1A buf_time: buf_time={}ms", buf_time);
+                    break;
+                }
+
+                if drain_start.elapsed() > drain_timeout {
+                    tracing::warn!(
+                        "MCU drain timeout after {:.0}s, buf_time={}ms, forcing complete",
+                        drain_start.elapsed().as_secs_f64(),
+                        buf_time
+                    );
+                    break;
+                }
+            }
+        }
+
+        // Send ExitPrintMode to MCU before cleaning up the callback,
+        // so the MCU knows to stop status reporting and clean up its state.
+        tracing::info!("Sending ExitPrintMode to MCU...");
+        match client.serial_exit_print_mode().await {
+            Ok(_) => tracing::info!("ExitPrintMode acknowledged"),
+            Err(e) => tracing::warn!("ExitPrintMode failed: {}", e),
+        }
+
+        // Clean up buf_time callback (no more 0x1A frames after ExitPrintMode)
+        client.clear_buf_time_callback().await;
 
         // Mark progress as complete
         let mut progress = self.progress.write().await;
@@ -560,7 +651,7 @@ impl PrintController {
             ds.update_print_progress(progress.clone()).await;
         }
 
-        tracing::info!("✅ Print completed: {}", filename);
+        tracing::info!("Print completed: {}", filename);
         Ok(())
     }
     
