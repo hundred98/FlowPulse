@@ -41,10 +41,12 @@ impl GCodeFileParser {
         }
     }
 
-    /// Load G-code file and count total lines
+    /// Load G-code file and count total lines (using BufReader, no full load into memory)
     pub fn load_file(&mut self, path: &str) -> crate::common::EmbResult<()> {
-        let content = std::fs::read_to_string(path)?;
-        self.total_lines = content.lines().count() as u32;
+        use std::io::BufRead;
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+        self.total_lines = reader.lines().count() as u32;
         self.file_path = Some(path.to_string());
         Ok(())
     }

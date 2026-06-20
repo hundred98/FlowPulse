@@ -411,17 +411,10 @@ async fn gcode_file_print(
     let file_path = format!("{}/{}", state.gcodes_dir, req.filename);
     tracing::info!("Starting print from file: {}", file_path);
 
-    // Read file content
-    let content = match std::fs::read_to_string(&file_path) {
-        Ok(c) => c,
-        Err(e) => {
-            return Json(ApiResponse::<String>::error(format!("Failed to read file: {}", e)));
-        }
-    };
-    let total_lines = content.lines().count();
-
-    if total_lines == 0 {
-        return Json(ApiResponse::<String>::error("File is empty".to_string()));
+    // Quick file existence check without loading into memory.
+    // The file is read lazily inside execute_print_loop via BufReader.
+    if !std::path::Path::new(&file_path).exists() {
+        return Json(ApiResponse::<String>::error(format!("File not found: {}", file_path)));
     }
 
     // Set running flag
@@ -431,13 +424,13 @@ async fn gcode_file_print(
     let state_clone = state.clone();
     let filename = req.filename.clone();
 
-    // Spawn background print task using PrintController
+    // Spawn background print task using PrintController.
+    // execute_print_loop handles all file I/O internally (BufReader, two-pass scan).
     tokio::spawn(async move {
         let print_controller = state_clone.print_controller.read().await;
         let result = print_controller.execute_print_loop(
             &filename,
-            &content,
-            total_lines,
+            &file_path,
         ).await;
 
         let success = result.is_ok();
@@ -446,10 +439,10 @@ async fn gcode_file_print(
         }
 
         state_clone.print_running.store(false, Ordering::SeqCst);
-        tracing::info!("Print {}: {}", filename, if success { "✅ completed" } else { "❌ failed" });
+        tracing::info!("Print {}: {}", filename, if success { "completed" } else { "failed" });
     });
 
-    Json(ApiResponse::success(format!("Print started: {} ({} lines)", req.filename, total_lines)))
+    Json(ApiResponse::success(format!("Print started: {}", req.filename)))
 }
 
 /// Poll print progress from PrintController
