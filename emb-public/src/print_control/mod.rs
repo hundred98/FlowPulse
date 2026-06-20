@@ -1,7 +1,8 @@
-﻿//! Print control module
+//! Print control module
 //!
-//! Manages print jobs and print state machine.
+//! Manages print jobs, power-loss resume checkpoints, and print state machine.
 
+pub mod checkpoint;
 pub mod job;
 pub mod state_machine;
 

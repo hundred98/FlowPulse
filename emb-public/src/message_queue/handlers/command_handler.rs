@@ -1,4 +1,4 @@
-﻿//! Command handler for processing printer commands
+//! Command handler for processing printer commands
 
 use crate::{EmbResult, EmbError};
 use crate::state::{DeviceStateManager, Position};
@@ -54,6 +54,40 @@ impl CommandHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| EmbError::MessageQueue("Missing file_path in print start command".to_string()))?;
         
+        // Check for resume flag
+        let resume = message.payload.get("resume")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        
+        // If this is a resume request, send recovery G-code commands first
+        if resume {
+            if !self.print_controller.has_checkpoint_for(file_path) {
+                return Err(EmbError::MessageQueue(
+                    format!("Resume requested but no checkpoint found for: {}", file_path)
+                ));
+            }
+            let resume_commands = self.print_controller.get_resume_commands();
+            if !resume_commands.is_empty() {
+                tracing::info!("Sending {} resume G-code commands", resume_commands.len());
+                for cmd in &resume_commands {
+                    // Send raw G-code line directly to the MCU via serial.
+                    // The MCU will parse it like a normal G-code input in print mode.
+                    let line = format!("{}\n", cmd);
+                    self.core_client.serial_send_raw(line.as_bytes()).await
+                        .map_err(|e| EmbError::MessageQueue(format!("Resume command failed: {} — {}", cmd, e)))?;
+                    // Brief delay to let MCU process before next command
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }
+        } else if self.print_controller.has_checkpoint_for(file_path) {
+            // Normal (non-resume) start with existing checkpoint: warn and clear
+            tracing::warn!(
+                "Starting print from scratch for '{}', clearing existing checkpoint",
+                file_path
+            );
+            let _ = self.print_controller.clear_checkpoint();
+        }
+        
         // Request state transition to Preparing
         self.state_machine.transition_to(
             PrinterState::Preparing,
@@ -72,7 +106,7 @@ impl CommandHandler {
             TransitionReason::OperationComplete,
         )?;
         
-        tracing::info!("Print started: {}", file_path);
+        tracing::info!("Print started{}: {}", if resume { " (resumed)" } else { "" }, file_path);
         Ok(())
     }
     

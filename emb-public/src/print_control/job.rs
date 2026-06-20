@@ -1,18 +1,19 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::gcode::GCodeFileParser;
 use crate::common::EmbResult;
+use crate::print_control::checkpoint::{CheckpointManager, CheckpointContext, build_resume_commands};
 use crate::state::DeviceStateManager;
 use crate::safety::SafetyController;
 use crate::temperature::TemperaturePreset;
 use crate::core_client::CoreSocketClient;
 use crate::temperature::TemperatureManager;
 use crate::gcode::{GCodeParser, CommandKind, MotionCommand};
-use emb_api::{MExecutionType, MCommand, ArcParamsApi};
 use super::state_machine::PrintStateMachine;
+use emb_api::{MExecutionType, MCommand, ArcParamsApi};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrintState {
@@ -174,6 +175,36 @@ impl Default for PrintProgress {
     }
 }
 
+/// Serializable checkpoint snapshot returned by `PrintController::checkpoint_info()`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointSnapshot {
+    pub exists: bool,
+    pub file_path: String,
+    pub line: u32,
+    pub z_pos: f32,
+    pub hotend_temp: f32,
+    pub bed_temp: f32,
+    pub feed_rate: u16,
+    pub flow_rate: u16,
+    pub fan_speed: u8,
+}
+
+impl Default for CheckpointSnapshot {
+    fn default() -> Self {
+        Self {
+            exists: false,
+            file_path: String::new(),
+            line: 0,
+            z_pos: 0.0,
+            hotend_temp: 0.0,
+            bed_temp: 0.0,
+            feed_rate: 100,
+            flow_rate: 100,
+            fan_speed: 0,
+        }
+    }
+}
+
 pub struct PrintController {
     state_machine: Arc<RwLock<PrintStateMachine>>,
     current_job: Arc<RwLock<Option<PrintJob>>>,
@@ -198,6 +229,8 @@ pub struct PrintController {
     client: Option<Arc<CoreSocketClient>>,
     // New: Temperature manager for temperature control during print
     temperature_manager: Option<Arc<TemperatureManager>>,
+    // Power-loss resume checkpoint manager (optional)
+    checkpoint_manager: Option<Arc<Mutex<CheckpointManager>>>,
 }
 
 impl PrintController {
@@ -224,6 +257,7 @@ impl PrintController {
             progress: Arc::new(RwLock::new(PrintProgress::default())),
             client: None,
             temperature_manager: None,
+            checkpoint_manager: None,
         }
     }
     
@@ -258,6 +292,67 @@ impl PrintController {
         self.temperature_manager = Some(temperature_manager);
     }
 
+    /// Set power-loss resume checkpoint manager.
+    /// Creates or loads `resume.json` from the given path.
+    pub fn set_resume_path(&mut self, path: &str) {
+        self.checkpoint_manager = Some(Arc::new(Mutex::new(CheckpointManager::new(path))));
+    }
+
+    /// Check if a checkpoint exists for the given file path.
+    pub fn has_checkpoint_for(&self, file_path: &str) -> bool {
+        self.checkpoint_manager.as_ref().map_or(false, |cm| {
+            let mgr = cm.lock().unwrap();
+            mgr.has_checkpoint() && mgr.checkpoint_data().file_path == file_path
+        })
+    }
+
+    /// Get resume G-code commands for the current checkpoint, if any.
+    pub fn get_resume_commands(&self) -> Vec<String> {
+        self.checkpoint_manager.as_ref().map_or_else(Vec::new, |cm| {
+            let mgr = cm.lock().unwrap();
+            if mgr.has_checkpoint() {
+                build_resume_commands(&mgr.checkpoint_data(), &mgr.config())
+            } else {
+                Vec::new()
+            }
+        })
+    }
+
+    /// Clear the current checkpoint.
+    pub fn clear_checkpoint(&self) -> EmbResult<()> {
+        if let Some(ref cm) = self.checkpoint_manager {
+            let mut mgr = cm.lock().unwrap();
+            mgr.clear()?;
+        }
+        Ok(())
+    }
+
+    /// Return a snapshot of the current checkpoint (if any).
+    pub fn checkpoint_info(&self) -> Option<CheckpointSnapshot> {
+        self.checkpoint_manager.as_ref().and_then(|cm| {
+            let mgr = cm.lock().unwrap();
+            if mgr.has_checkpoint() {
+                let cp = mgr.checkpoint_data();
+                Some(CheckpointSnapshot {
+                    exists: true,
+                    file_path: cp.file_path,
+                    line: cp.line,
+                    z_pos: cp.z_pos,
+                    hotend_temp: cp.hotend_temp,
+                    bed_temp: cp.bed_temp,
+                    feed_rate: cp.feed_rate,
+                    flow_rate: cp.flow_rate,
+                    fan_speed: cp.fan_speed,
+                })
+            } else {
+                Some(CheckpointSnapshot {
+                    exists: false,
+                    ..Default::default()
+                })
+            }
+        })
+    }
+
     /// Execute G-code file print loop.
     ///
     /// Processes each line of the G-code file, dispatching motion commands,
@@ -272,9 +367,9 @@ impl PrintController {
     /// # Returns
     /// * `Ok(())` - If the print completed successfully
     /// * `Err(String)` - If any command failed
-    pub async fn execute_print_loop(&self, filename: &str, file_path: &str) -> Result<(), String> {
+    pub async fn execute_print_loop(&self, filename: &str, file_path: &str, resume: bool) -> Result<(), String> {
         use std::sync::atomic::{AtomicU16, Ordering};
-        use std::io::BufRead;
+        use std::io::{BufRead, Read};
 
         let client = self.client.as_ref().ok_or("PrintController: CoreSocketClient not set")?.clone();
         let temperature_manager = self.temperature_manager.as_ref().ok_or("PrintController: TemperatureManager not set")?;
@@ -326,9 +421,118 @@ impl PrintController {
 
         // Pass 2: process lines sequentially using BufReader (lazy I/O, ~100 lines per buffer).
         let file = std::fs::File::open(file_path).map_err(|e| format!("Failed to open '{}': {}", file_path, e))?;
-        let reader = std::io::BufReader::new(file);
+        let mut reader = std::io::BufReader::new(file);
         let mut valid_processed: u32 = 0;
         let mut current_line: u32 = 0;
+
+        // Position and mode tracking for power-loss resume checkpoints.
+        let mut position_x = 0.0_f32;
+        let mut position_y = 0.0_f32;
+        let mut position_z = 0.0_f32;
+        let mut position_e = 0.0_f32;
+        let mut is_absolute = true;
+        let mut e_is_relative = true;
+        let mut feed_rate = 100_u16;
+        let mut flow_rate = 100_u16;
+        let mut fan_speed = 0_u8;
+        // Flag: when set, force an immediate checkpoint save regardless of interval.
+        let mut save_immediately = false;
+
+        // ── Resume support ──
+        // If requested and a valid checkpoint exists for this file, send recovery
+        // G-code commands (heat, home, position, etc.) before resuming, then skip
+        // the BufReader past the already-processed lines.
+        if resume {
+            let has_cp = self.checkpoint_manager.as_ref().map_or(false, |cm| {
+                let mgr = cm.lock().unwrap();
+                mgr.has_checkpoint() && mgr.checkpoint_data().file_path == file_path
+            });
+            if !has_cp {
+                return Err(format!(
+                    "Resume requested but no checkpoint found for file '{}'",
+                    file_path
+                ));
+            }
+            // Send resume G-code commands
+            if let Some(ref cm) = self.checkpoint_manager {
+                let (commands, cp_line) = {
+                    let mgr = cm.lock().unwrap();
+                    let cp = mgr.checkpoint_data();
+                    let cmd_list = build_resume_commands(&cp, &mgr.config());
+                    let skip_line = cp.line;
+                    (cmd_list, skip_line)
+                };
+                tracing::info!(
+                    "Resuming print from line {} ({} commands to skip)",
+                    cp_line, cp_line
+                );
+                // Send each resume command to the MCU
+                for cmd in &commands {
+                    let line = format!("{}\n", cmd);
+                    client.serial_send_raw(line.as_bytes()).await
+                        .map_err(|e| format!("Resume command failed: {} — {}", cmd, e))?;
+                }
+                // Skip BufReader past already-processed lines
+                // During the skip, capture the last E value seen
+                let mut last_e: Option<f32> = None;
+                let mut skipped: u32 = 0;
+                for line_result in reader.by_ref().lines() {
+                    let l = line_result.map_err(|e| format!("Skip read error: {}", e))?;
+                    // Extract E value from the line
+                    if let Some(e_val) = extract_e_value(&l) {
+                        last_e = Some(e_val);
+                    }
+                    skipped += 1;
+                    if skipped >= cp_line {
+                        break;
+                    }
+                }
+                // If no E value found in the skipped range, scan forward
+                // up to 200 lines using a separate file handle.
+                if last_e.is_none() {
+                    if let Ok(scan_file) = std::fs::File::open(file_path) {
+                        let scan_reader = std::io::BufReader::new(scan_file);
+                        let mut scan_skipped: u32 = 0;
+                        let mut scanned: u32 = 0;
+                        for line_result in scan_reader.lines() {
+                            if let Ok(l) = line_result {
+                                scan_skipped += 1;
+                                if scan_skipped <= cp_line {
+                                    continue; // skip already-processed lines
+                                }
+                                if scanned >= 200 {
+                                    break;
+                                }
+                                scanned += 1;
+                                if let Some(e_val) = extract_e_value(&l) {
+                                    last_e = Some(e_val);
+                                    tracing::info!(
+                                        "Found E value {:.4} at line {} ({} lines ahead of checkpoint)",
+                                        e_val, cp_line + scanned, scanned
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        tracing::warn!("Could not re-open '{}' for E-value forward scan", file_path);
+                    }
+                }
+                // Send G92 E to restore the extruder position
+                if let Some(e_val) = last_e {
+                    let e_cmd = format!("G92 E{:.4}\n", e_val);
+                    client.serial_send_raw(e_cmd.as_bytes()).await
+                        .map_err(|e| format!("Resume G92 E failed: {}", e))?;
+                    tracing::info!("Restored E position to {:.4}", e_val);
+                } else {
+                    tracing::warn!(
+                        "No E value found in skipped lines or up to 200 lines ahead; extruder position not restored"
+                    );
+                }
+                current_line = cp_line;
+                tracing::info!("Skipped to line {}, resuming command dispatch", current_line);
+            }
+        }
 
         for line_result in reader.lines() {
             let line_raw = line_result.map_err(|e| format!("Read error at line {}: {}", current_line + 1, e))?;
@@ -374,6 +578,11 @@ impl PrintController {
                 CommandKind::Motion(motion_cmd) => {
                     match motion_cmd {
                         MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
+                            // Track position for checkpoint
+                            position_x = x.unwrap_or(position_x);
+                            position_y = y.unwrap_or(position_y);
+                            position_z = z.unwrap_or(position_z);
+                            position_e = e.unwrap_or(position_e);
                             let cmd_str = if *is_rapid { "G0" } else { "G1" };
                             match client.motion_dispatch_arc(cmd_str, *x, *y, *z, *e, *f, None).await {
                                 Ok(_) => {
@@ -397,6 +606,11 @@ impl PrintController {
                             }
                         }
                         MotionCommand::ArcMove { x, y, z, e, f, i, j, is_cw } => {
+                            // Track position for checkpoint
+                            position_x = x.unwrap_or(position_x);
+                            position_y = y.unwrap_or(position_y);
+                            position_z = z.unwrap_or(position_z);
+                            position_e = e.unwrap_or(position_e);
                             let cmd_str = if *is_cw { "G2" } else { "G3" };
                             let arc = Some(ArcParamsApi {
                                 i: *i,
@@ -441,6 +655,19 @@ impl PrintController {
                             }
                         }
                         _ => {
+                            // Update position/mode tracking for checkpoint
+                            match motion_cmd {
+                                MotionCommand::SetPosition { x, y, z, e } => {
+                                    position_x = x.unwrap_or(position_x);
+                                    position_y = y.unwrap_or(position_y);
+                                    position_z = z.unwrap_or(position_z);
+                                    position_e = e.unwrap_or(position_e);
+                                    save_immediately = true;
+                                }
+                                MotionCommand::AbsolutePositioning => is_absolute = true,
+                                MotionCommand::RelativePositioning => is_absolute = false,
+                                _ => {}
+                            }
                             tracing::info!("  → Skipping non-motion command: {:?}", motion_cmd);
                             let percent = (valid_processed as f32 / total_valid as f32) * 100.0;
                             let mut progress = self.progress.write().await;
@@ -567,6 +794,37 @@ impl PrintController {
                                         _ => {}
                                     }
                                 }
+                                // Update mode tracking for checkpoint
+                                match m_cmd {
+                                    MCommand::ExtruderAbsoluteMode => e_is_relative = false,
+                                    MCommand::ExtruderRelativeMode => e_is_relative = true,
+                                    MCommand::SetFeedratePercentage { percentage, .. } => {
+                                        feed_rate = *percentage as u16;
+                                    }
+                                    MCommand::SetFlowPercentage { percentage, .. } => {
+                                        flow_rate = *percentage as u16;
+                                    }
+                                    MCommand::SetFanSpeed { speed, .. } => {
+                                        fan_speed = *speed;
+                                    }
+                                    MCommand::FanOff { .. } => {
+                                        fan_speed = 0;
+                                    }
+                                    _ => {}
+                                }
+                                // State-change M commands trigger immediate checkpoint save
+                                save_immediately = matches!(m_cmd,
+                                    MCommand::SetHotendTemp { .. } |
+                                    MCommand::SetBedTemp { .. } |
+                                    MCommand::WaitHotendTemp { .. } |
+                                    MCommand::WaitBedTemp { .. } |
+                                    MCommand::ExtruderAbsoluteMode |
+                                    MCommand::ExtruderRelativeMode |
+                                    MCommand::SetFeedratePercentage { .. } |
+                                    MCommand::SetFlowPercentage { .. } |
+                                    MCommand::SetFanSpeed { .. } |
+                                    MCommand::FanOff { .. }
+                                );
                                 let percent = (valid_processed as f32 / total_valid as f32) * 100.0;
                                 let mut progress = self.progress.write().await;
                                 progress.percent = percent;
@@ -608,6 +866,39 @@ impl PrintController {
                 // Sentinels and values > 1000ms both map to full correction
                 let buf_ratio = ((buf_time as f32).min(1000.0) / 1000.0).max(0.0);
                 progress.percent = progress.percent * (1.0 - buf_ratio * 0.5);
+            }
+            // Checkpoint: save every checkpoint_interval valid commands.
+            if let Some(ref cm) = self.checkpoint_manager {
+                // Lock briefly to read config (avoids holding lock across await).
+                let interval = {
+                    let mgr = cm.lock().unwrap();
+                    let cfg = mgr.config();
+                    if !cfg.enabled {
+                        0
+                    } else {
+                        cfg.checkpoint_interval
+                    }
+                };
+                if interval > 0 && valid_processed > 0 && (save_immediately || valid_processed % interval == 0) {
+                    save_immediately = false;
+                    let temp = temperature_manager.get_temp_status().await;
+                    let ctx = CheckpointContext {
+                        file_path: file_path.to_string(),
+                        line: current_line,
+                        z: position_z,
+                        hotend_temp: temp.hotend_target,
+                        bed_temp: temp.bed_target,
+                        feed_rate,
+                        flow_rate,
+                        is_absolute,
+                        e_is_relative,
+                        fan_speed,
+                    };
+                    let mut mgr = cm.lock().unwrap();
+                    if let Err(e) = mgr.save(ctx) {
+                        tracing::warn!("Checkpoint save failed at line {}: {}", current_line, e);
+                    }
+                }
             }
             self.sync_progress_to_device_state().await;
         }
@@ -678,6 +969,18 @@ impl PrintController {
         // Push final progress to DeviceStateManager
         if let Some(ref ds) = self.device_state {
             ds.update_print_progress(progress.clone()).await;
+        }
+
+        // Clear checkpoint on successful completion
+        if let Some(ref cm) = self.checkpoint_manager {
+            let mut mgr = cm.lock().unwrap();
+            if mgr.has_checkpoint() {
+                if let Err(e) = mgr.clear() {
+                    tracing::warn!("Failed to clear checkpoint on completion: {}", e);
+                } else {
+                    tracing::info!("Checkpoint cleared (print completed successfully)");
+                }
+            }
         }
 
         tracing::info!("Print completed: {}", filename);
@@ -898,6 +1201,40 @@ impl PrintController {
     pub fn safety_controller(&self) -> Option<&Arc<SafetyController>> {
         self.safety_controller.as_ref()
     }
+}
+
+/// Extract the last E (extruder) parameter value from a G-code line.
+/// Handles lines like: `G1 X10 Y20 Z0.3 E1.234` or `G92 E12.5`
+fn extract_e_value(line: &str) -> Option<f32> {
+    let trimmed = line.trim();
+    // Skip empty lines and comments
+    if trimmed.is_empty() || trimmed.starts_with(';') {
+        return None;
+    }
+    // Remove inline comment
+    let code = if let Some(pos) = trimmed.find(';') {
+        &trimmed[..pos]
+    } else {
+        trimmed
+    };
+    let code = code.trim();
+    if code.is_empty() {
+        return None;
+    }
+    // Scan for an 'E' parameter: find "E" followed by a number
+    // Split by whitespace and look for tokens starting with E or e
+    for token in code.split_whitespace() {
+        if token.len() < 2 {
+            continue;
+        }
+        let upper = token.to_uppercase();
+        if upper.starts_with('E') {
+            if let Ok(val) = upper[1..].parse::<f32>() {
+                return Some(val);
+            }
+        }
+    }
+    None
 }
 
 impl Default for PrintController {

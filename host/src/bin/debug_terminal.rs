@@ -64,6 +64,8 @@ impl<T> ApiResponse<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GcodePrintRequest {
     filename: String,
+    #[serde(default)]
+    resume: bool,
 }
 
 /// Temperature status response
@@ -111,6 +113,8 @@ fn create_debug_router(state: Arc<DebugState>) -> Router {
         .route("/api/temperature/status", get(temperature_status))
         .route("/api/temperature/set", get(temperature_set))
         .route("/api/motion/position", get(motion_position))
+        .route("/api/checkpoint/query", get(checkpoint_query))
+        .route("/api/checkpoint/clear", get(checkpoint_clear))
         .with_state(state)
 }
 
@@ -426,11 +430,13 @@ async fn gcode_file_print(
 
     // Spawn background print task using PrintController.
     // execute_print_loop handles all file I/O internally (BufReader, two-pass scan).
+    let resume = req.resume;
     tokio::spawn(async move {
         let print_controller = state_clone.print_controller.read().await;
         let result = print_controller.execute_print_loop(
             &filename,
             &file_path,
+            resume,
         ).await;
 
         let success = result.is_ok();
@@ -483,6 +489,26 @@ async fn gcode_print_progress(
     Json(ApiResponse::success(resp))
 }
 
+/// Query checkpoint status
+async fn checkpoint_query(
+    State(state): State<Arc<DebugState>>,
+) -> impl IntoResponse {
+    let print_controller = state.print_controller.read().await;
+    let info = print_controller.checkpoint_info().unwrap_or_default();
+    Json(ApiResponse::success(info))
+}
+
+/// Clear checkpoint (discard saved state)
+async fn checkpoint_clear(
+    State(state): State<Arc<DebugState>>,
+) -> impl IntoResponse {
+    let print_controller = state.print_controller.read().await;
+    match print_controller.clear_checkpoint() {
+        Ok(()) => Json(ApiResponse::<String>::success("Checkpoint cleared".to_string())),
+        Err(e) => Json(ApiResponse::<String>::error(format!("Failed to clear checkpoint: {}", e))),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing from logging.json config
@@ -528,6 +554,7 @@ async fn main() -> anyhow::Result<()> {
     let mut print_controller = PrintController::new();
     print_controller.set_client(host.client());
     print_controller.set_temperature_manager(temperature_manager.clone());
+    print_controller.set_resume_path("config/resume.json");
     let print_controller = Arc::new(tokio::sync::RwLock::new(print_controller));
 
     // Background pinger: every 2s, triggers read_response to consume GPIO Report push

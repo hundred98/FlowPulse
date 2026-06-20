@@ -1,0 +1,21 @@
+{
+  "config": {
+    "enabled": true,
+    "checkpoint_interval": 10,
+    "z_hop": 5.0,
+    "retract_distance": 1.0
+  },
+  "checkpoint": {
+    "has": false,
+    "file_path": "",
+    "line": 0,
+    "z_pos": 0.0,
+    "hotend_temp": 0.0,
+    "bed_temp": 0.0,
+    "feed_rate": 100,
+    "flow_rate": 100,
+    "is_absolute": true,
+    "e_is_relative": true,
+    "fan_speed": 0
+  }
+}

@@ -1,4 +1,4 @@
-﻿//! Application logic
+//! Application logic
 //!
 //! Contains the main application state and logic.
 //! Integrates state management, message queue, and multi-channel access.
@@ -111,9 +111,6 @@ impl AppState {
             event_publisher.clone(),
         ));
         
-        // Create print controller
-        let print_controller = Arc::new(PrintController::new());
-
         // Create temperature manager
         let temperature_manager_config = TemperatureManagerConfig::default();
         let temperature_manager = Arc::new(TemperatureManager::new(
@@ -122,6 +119,13 @@ impl AppState {
             temperature_manager_config,
             None,  // Will be loaded from ConfigManager during initialization
         ));
+
+        // Create print controller
+        let mut pc = PrintController::new();
+        pc.set_client(core_client.clone());
+        pc.set_temperature_manager(temperature_manager.clone());
+        pc.set_resume_path("config/resume.json");
+        let print_controller = Arc::new(pc);
 
         // Create message queue
         let message_queue_config = MessageQueueConfig::default();
