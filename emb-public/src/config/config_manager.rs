@@ -1,4 +1,4 @@
-﻿//! Configuration Manager
+//! Configuration Manager
 //!
 //! Centralized configuration management module. All configuration file reads
 //! must go through this module, and other modules pull configuration from here.
@@ -29,6 +29,8 @@ use super::printer_config::PrinterJsonConfig;
 use super::config_adapter::{load_configs, build_printer_config, build_motion_config_json, LoadedConfigs, BedMeshHardwareConfig};
 use super::config_protocol::{ConfigFrameBuilder, validate_config};
 use super::config_interlock::validate_bed_mesh_interlock;
+use super::log_config::LogConfig;
+use crate::safety::config::SafetyConfig;
 use crate::CoreSocketClient;
 use emb_api::{CoreRequest, CoreResponse, MotionRequest, MotionResponse, NackReason};
 
@@ -345,6 +347,34 @@ impl ConfigManager {
     pub fn get_config_dir(&self) -> Result<String, String> {
         let inner = self.inner.read().map_err(|e| format!("Lock error: {}", e))?;
         Ok(inner.config_dir.clone())
+    }
+
+    /// Get the safety configuration.
+    ///
+    /// Returns a clone of the safety configuration loaded from `safety.json`.
+    ///
+    /// # Returns
+    /// * `Ok(SafetyConfig)` if configuration is loaded
+    /// * `Err(String)` if configuration has not been loaded
+    pub fn get_safety_config(&self) -> Result<SafetyConfig, String> {
+        let inner = self.inner.read().map_err(|e| format!("Lock error: {}", e))?;
+        inner.loaded_configs.as_ref()
+            .map(|c| c.safety.clone())
+            .ok_or_else(|| "Configuration not loaded. Call load() first.".to_string())
+    }
+
+    /// Get the logging configuration.
+    ///
+    /// Returns a clone of the logging configuration loaded from `logging.json`.
+    ///
+    /// # Returns
+    /// * `Ok(LogConfig)` if configuration is loaded
+    /// * `Err(String)` if configuration has not been loaded
+    pub fn get_logging_config(&self) -> Result<LogConfig, String> {
+        let inner = self.inner.read().map_err(|e| format!("Lock error: {}", e))?;
+        inner.loaded_configs.as_ref()
+            .map(|c| c.logging.clone())
+            .ok_or_else(|| "Configuration not loaded. Call load() first.".to_string())
     }
 
     /// Check if configuration has been loaded.

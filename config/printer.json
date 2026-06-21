@@ -1,5 +1,6 @@
 {
   "version": "1.0",
+  "description": "Printer model and communication configuration",
   "printer_model": "STM32F407_3DPrinter",
   "communication": {
     "serial": {

@@ -116,8 +116,7 @@ impl AppState {
         let temperature_manager = Arc::new(TemperatureManager::new(
             core_client.clone(),
             event_publisher.clone(),
-            temperature_manager_config,
-            None,  // Will be loaded from ConfigManager during initialization
+            temperature_manager_config,  // Safety config loaded internally from ConfigManager
         ));
 
         // Create print controller

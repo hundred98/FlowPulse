@@ -84,6 +84,12 @@ impl Default for CheckpointData {
 /// Combined resume file (top-level JSON structure)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ResumeFile {
+    #[serde(default)]
+    #[allow(dead_code)]
+    version: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    description: Option<String>,
     config: ResumeConfig,
     checkpoint: CheckpointData,
 }
@@ -122,6 +128,8 @@ impl CheckpointManager {
         } else {
             // Create file with defaults and empty checkpoint
             let default = ResumeFile {
+                version: String::new(),
+                description: None,
                 config: ResumeConfig::default(),
                 checkpoint: CheckpointData::default(),
             };
@@ -189,6 +197,8 @@ impl CheckpointManager {
 
     fn flush(&self) -> EmbResult<()> {
         let file = ResumeFile {
+            version: String::new(),
+            description: None,
             config: self.config.clone(),
             checkpoint: self.checkpoint.clone(),
         };

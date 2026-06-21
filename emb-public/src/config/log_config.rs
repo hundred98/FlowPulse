@@ -5,6 +5,8 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfig {
     pub version: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub console: ConsoleConfig,
     pub file: FileConfig,
     #[serde(default)]
@@ -50,6 +52,7 @@ impl Default for LogConfig {
     fn default() -> Self {
         Self {
             version: "1.0".to_string(),
+            description: None,
             console: ConsoleConfig {
                 enable: true,
                 level: "info".to_string(),

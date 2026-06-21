@@ -1,4 +1,4 @@
-﻿//! Temperature manager
+//! Temperature manager
 //!
 //! This module provides the main temperature management functionality,
 //! including temperature state management, safety checks, preset management,
@@ -13,7 +13,7 @@ use crate::common::{
     EmbError, EmbResult, EventPublisher, PrinterEvent, EventKind, EventSeverity,
     TempStatus,
 };
-use crate::config::{ConfigFrameBuilder, ConfigManager, TemperatureSafetyConfig};
+use crate::config::{ConfigFrameBuilder, ConfigManager};
 use crate::core_client::CoreSocketClient;
 use crate::print_control::PrintController;
 use crate::safety::temperature::{HeaterReading, TemperatureSafetyChecker};
@@ -89,7 +89,6 @@ impl TemperatureManager {
         client: Arc<CoreSocketClient>,
         event_publisher: Arc<dyn EventPublisher>,
         config: TemperatureManagerConfig,
-        _safety_config: Option<TemperatureSafetyConfig>,
     ) -> Self {
         Self {
             heaters: Arc::new(RwLock::new(HashMap::new())),
@@ -127,32 +126,28 @@ impl TemperatureManager {
     /// Load configuration from ConfigManager
     async fn load_config(&self) -> EmbResult<()> {
         let config = ConfigManager::instance().get_config()?;
+        let safety_config = ConfigManager::instance().get_safety_config().ok();
 
         let mut heaters = self.heaters.write().await;
         heaters.clear();
 
-        // Get safety configuration if available
-        let safety_config = config.temperature_safety.as_ref();
+        // Helper: get sensor fault thresholds for a heater from SafetyConfig
+        let get_sensor_fault = |name: &str| -> Option<(f32, f32)> {
+            safety_config.as_ref()
+                .and_then(|sc| sc.temperature.heaters.get(name))
+                .map(|h| (h.sensor_fault.max_temp, h.sensor_fault.min_temp))
+        };
 
         // Add bed heater (heater_id = 0)
-        let bed_heater = if let Some(safety_cfg) = safety_config {
-            if let Some(bed_safety) = safety_cfg.heaters.get("bed") {
-                HeaterState::with_sensor_fault_thresholds(
-                    "bed".to_string(),
-                    0,
-                    config.temperature.hotbed.min_temp as f32,
-                    config.temperature.hotbed.max_temp as f32,
-                    bed_safety.sensor_fault.max_temp,
-                    bed_safety.sensor_fault.min_temp,
-                )
-            } else {
-                HeaterState::new(
-                    "bed".to_string(),
-                    0,
-                    config.temperature.hotbed.min_temp as f32,
-                    config.temperature.hotbed.max_temp as f32,
-                )
-            }
+        let bed_heater = if let Some((max_t, min_t)) = get_sensor_fault("bed") {
+            HeaterState::with_sensor_fault_thresholds(
+                "bed".to_string(),
+                0,
+                config.temperature.hotbed.min_temp as f32,
+                config.temperature.hotbed.max_temp as f32,
+                max_t,
+                min_t,
+            )
         } else {
             HeaterState::new(
                 "bed".to_string(),
@@ -164,24 +159,15 @@ impl TemperatureManager {
         heaters.insert("bed".to_string(), bed_heater);
 
         // Add hotend heater (heater_id = 1)
-        let hotend_heater = if let Some(safety_cfg) = safety_config {
-            if let Some(hotend_safety) = safety_cfg.heaters.get("hotend") {
-                HeaterState::with_sensor_fault_thresholds(
-                    "hotend".to_string(),
-                    1,
-                    config.temperature.hotend.min_temp as f32,
-                    config.temperature.hotend.max_temp as f32,
-                    hotend_safety.sensor_fault.max_temp,
-                    hotend_safety.sensor_fault.min_temp,
-                )
-            } else {
-                HeaterState::new(
-                    "hotend".to_string(),
-                    1,
-                    config.temperature.hotend.min_temp as f32,
-                    config.temperature.hotend.max_temp as f32,
-                )
-            }
+        let hotend_heater = if let Some((max_t, min_t)) = get_sensor_fault("hotend") {
+            HeaterState::with_sensor_fault_thresholds(
+                "hotend".to_string(),
+                1,
+                config.temperature.hotend.min_temp as f32,
+                config.temperature.hotend.max_temp as f32,
+                max_t,
+                min_t,
+            )
         } else {
             HeaterState::new(
                 "hotend".to_string(),
@@ -194,26 +180,24 @@ impl TemperatureManager {
 
         // Register additional heaters from safety config (e.g., "chamber")
         let mut next_heater_id = 2u8;
-        if let Some(safety_cfg) = safety_config {
+        if let Some(sc) = safety_config.as_ref() {
             let known_heaters = ["bed", "hotend"];
-            for heater_name in safety_cfg.heaters.keys() {
+            for heater_name in sc.temperature.heaters.keys() {
                 if known_heaters.contains(&heater_name.as_str()) {
                     continue;
                 }
-                let heater_id = next_heater_id;
-                next_heater_id += 1;
-
-                if let Some(heater_safety) = safety_cfg.heaters.get(heater_name) {
+                if let Some(heater_safety) = sc.temperature.heaters.get(heater_name) {
                     let state = HeaterState::with_sensor_fault_thresholds(
                         heater_name.clone(),
-                        heater_id,
+                        next_heater_id,
                         0.0,              // min_temp: default safe range
                         300.0,            // max_temp: default safe range
                         heater_safety.sensor_fault.max_temp,
                         heater_safety.sensor_fault.min_temp,
                     );
                     heaters.insert(heater_name.clone(), state);
-                    tracing::info!("Registered additional heater '{}' (id={}) from safety config", heater_name, heater_id);
+                    tracing::info!("Registered additional heater '{}' (id={}) from safety config", heater_name, next_heater_id);
+                    next_heater_id += 1;
                 }
             }
         }

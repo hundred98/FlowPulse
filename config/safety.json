@@ -1,0 +1,50 @@
+{
+  "version": "1.0",
+  "description": "Safety configuration (motion limits, temperature safety thresholds)",
+  "enable_safety_checks": true,
+  "check_interval_ms": 1000,
+  "emergency_stop_timeout_ms": 1000,
+  "state_stale_threshold_ms": 5000,
+  "min_extrude_temp": 170.0,
+
+  "motion_limits": {
+    "x": { "min": 0.0, "max": 300.0 },
+    "y": { "min": 0.0, "max": 300.0 },
+    "z": { "min": 0.0, "max": 400.0 }
+  },
+
+  "temperature": {
+    "heaters": {
+      "hotend": {
+        "sensor_fault": { "max_temp": 300.0, "min_temp": -50.0 },
+        "deviation_thresholds": { "warning": 10.0, "critical": 15.0, "emergency": 20.0 },
+        "heating_delay_secs": 60,
+        "low_temp": {
+          "warning": "warn",
+          "critical": "pause_print",
+          "emergency": "emergency_stop"
+        },
+        "high_temp": {
+          "warning": "warn",
+          "critical": "turn_off",
+          "emergency": "emergency_stop"
+        }
+      },
+      "bed": {
+        "sensor_fault": { "max_temp": 120.0, "min_temp": -50.0 },
+        "deviation_thresholds": { "warning": 5.0, "critical": 10.0, "emergency": 15.0 },
+        "heating_delay_secs": 120,
+        "low_temp": {
+          "warning": "warn",
+          "critical": "warn",
+          "emergency": "pause_print"
+        },
+        "high_temp": {
+          "warning": "warn",
+          "critical": "turn_off",
+          "emergency": "turn_off"
+        }
+      }
+    }
+  }
+}

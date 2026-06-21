@@ -37,8 +37,6 @@ pub use printer_config::{
     PrinterJsonConfig, PrinterParams, MotorParams, LimitSwitchParams,
     TemperatureParams, HeaterParams, FanParams, ProbeParams,
     LimitSwitchAxis, TempSensorParams, HeaterPin, TemperaturePresetConfig,
-    TemperatureSafetyConfig, TempHeaterSafetyConfig, SensorFaultConfig,
-    DeviationThresholdsConfig, HeaterActionsConfig, TemperatureActionsConfig,
     PidTuneParams, PidTuneHeaterConfig,
 };
 

@@ -8,6 +8,7 @@ use crate::common::EmbResult;
 use crate::print_control::checkpoint::{CheckpointManager, CheckpointContext, build_resume_commands};
 use crate::state::DeviceStateManager;
 use crate::safety::SafetyController;
+use crate::safety::config::SafetyConfig;
 use crate::temperature::TemperaturePreset;
 use crate::core_client::CoreSocketClient;
 use crate::temperature::TemperatureManager;
@@ -101,29 +102,6 @@ impl Default for MotionConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct SafetyConfig {
-    pub min_temp_hotend: f32,
-    pub max_temp_hotend: f32,
-    pub min_temp_bed: f32,
-    pub max_temp_bed: f32,
-    pub min_extrude_temp: f32,
-    pub watch_period_ms: u32,
-}
-
-impl Default for SafetyConfig {
-    fn default() -> Self {
-        Self {
-            min_temp_hotend: 0.0,
-            max_temp_hotend: 300.0,
-            min_temp_bed: 0.0,
-            max_temp_bed: 120.0,
-            min_extrude_temp: 170.0,
-            watch_period_ms: 20000,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PrintEvent {
     Started,
@@ -212,6 +190,7 @@ pub struct PrintController {
     presets: Arc<RwLock<Vec<TemperaturePreset>>>,
     #[allow(dead_code)]
     motion_config: Arc<RwLock<MotionConfig>>,
+    /// Safety configuration (from the unified safety module)
     #[allow(dead_code)]
     safety_config: Arc<RwLock<SafetyConfig>>,
     stop_requested: Arc<AtomicBool>,

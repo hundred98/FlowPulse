@@ -511,8 +511,12 @@ async fn checkpoint_clear(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing from logging.json config
-    let log_config = emb_public::config::log_config::LogConfig::load("config")
+    // Load all configs via ConfigManager first (including logging.json)
+    emb_public::config::ConfigManager::instance().load("config")
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    // Initialize tracing from ConfigManager
+    let log_config = emb_public::config::ConfigManager::instance().get_logging_config()
         .unwrap_or_default();
     emb_public::logger::init_tracing(&log_config)?;
 
@@ -543,7 +547,6 @@ async fn main() -> anyhow::Result<()> {
         host.client(),
         event_publisher.clone(),
         TemperatureManagerConfig::default(),
-        None,
     ));
     setup::initialize_temperature_manager(&temperature_manager).await?;
 

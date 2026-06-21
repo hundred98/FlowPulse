@@ -1,5 +1,6 @@
 {
   "version": "1.0",
+  "description": "Hardware configuration (motors, limit switches, GPIO, temperature sensors, fans)",
   "motor": [
     {
       "axis": "X",

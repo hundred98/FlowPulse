@@ -1,5 +1,6 @@
 {
   "version": "1.0",
+  "description": "Logging configuration (console and file output levels)",
   "console": {
     "enable": true,
     "level": "info",

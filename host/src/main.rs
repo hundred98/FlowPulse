@@ -4,17 +4,21 @@
 //! Connects to emb-core-server, manages device state, and provides multi-channel access.
 
 use host::{app::AppState, setup};
-use emb_public::config::log_config::LogConfig;
+use emb_public::config::ConfigManager;
 use emb_public::logger;
 use emb_public::{GpioManager, HomingManager};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing from logging.json config
-    let log_config = LogConfig::load(setup::CONFIG_DIR)
-        .unwrap_or_else(|e| {
-            eprintln!("Warning: Failed to load logging config: {}, using defaults", e);
-            LogConfig::default()
+    // Step 0: Load all configuration files via ConfigManager (including logging.json)
+    ConfigManager::instance().load(setup::CONFIG_DIR)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    // Initialize tracing from ConfigManager
+    let log_config = ConfigManager::instance().get_logging_config()
+        .unwrap_or_else(|_| {
+            eprintln!("Warning: Failed to load logging config, using defaults");
+            Default::default()
         });
     logger::init_tracing(&log_config)?;
 
@@ -25,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Server: {}", setup::SERVER_ADDR);
     tracing::info!("Config: {}", setup::CONFIG_DIR);
 
-    // Step 1: Load all configuration files at once
+    // Step 1: Get printer config from ConfigManager (already loaded in Step 0)
     let _printer_config = setup::load_all_configs(setup::CONFIG_DIR)?;
 
     // Step 2: Create host and connect to emb-core-server

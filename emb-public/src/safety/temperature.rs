@@ -1,4 +1,4 @@
-﻿//! Temperature safety checker
+//! Temperature safety checker
 //!
 //! This module provides safety checking for temperature management,
 //! including temperature deviation detection and safety action determination.
@@ -45,7 +45,7 @@ pub struct TemperatureSafetyChecker {
     /// Per-heater safety configuration
     heater_configs: HashMap<String, HeaterSafetyConfig>,
 
-    /// Sensor fault detection thresholds (fallback)
+    /// Sensor fault detection thresholds (fallback from config)
     sensor_fault_max_temp: f32,
     sensor_fault_min_temp: f32,
 }
@@ -56,8 +56,8 @@ impl TemperatureSafetyChecker {
         let heater_configs = config.temperature.heaters.clone();
         Self {
             heater_configs,
-            sensor_fault_max_temp: 300.0,
-            sensor_fault_min_temp: -50.0,
+            sensor_fault_max_temp: config.temperature.sensor_fault.max_temp,
+            sensor_fault_min_temp: config.temperature.sensor_fault.min_temp,
         }
     }
 
@@ -65,14 +65,16 @@ impl TemperatureSafetyChecker {
     pub fn from_temp_config(config: &TemperatureSafetyConfig) -> Self {
         Self {
             heater_configs: config.heaters.clone(),
-            sensor_fault_max_temp: 300.0,
-            sensor_fault_min_temp: -50.0,
+            sensor_fault_max_temp: config.sensor_fault.max_temp,
+            sensor_fault_min_temp: config.sensor_fault.min_temp,
         }
     }
 
     /// Reload configuration
     pub fn reload(&mut self, config: &SafetyConfig) {
         self.heater_configs = config.temperature.heaters.clone();
+        self.sensor_fault_max_temp = config.temperature.sensor_fault.max_temp;
+        self.sensor_fault_min_temp = config.temperature.sensor_fault.min_temp;
     }
 
     /// Check a single heater for safety issues

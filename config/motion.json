@@ -1,4 +1,6 @@
 {
+  "version": "1.0",
+  "description": "Motion planning configuration (kinematics, jerk, arc, homing, velocity profile)",
   "kinematics": {
     "max_velocity": 400,
     "max_acceleration": 20000,

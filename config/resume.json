@@ -1,4 +1,6 @@
 {
+  "version": "",
+  "description": null,
   "config": {
     "enabled": true,
     "checkpoint_interval": 10,

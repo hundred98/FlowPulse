@@ -58,7 +58,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         core_client,
         event_publisher,
         TemperatureManagerConfig::default(),
-        None,
     ));
 
     // Create and start web server

@@ -1,4 +1,4 @@
-﻿//! Configuration Adapter
+//! Configuration Adapter
 //!
 //! Reads `hardware.json`, `motion.json`, and `printer.json`, merges them into:
 //!   1) A `MotionConfig` suitable for emb-core-server (for motion planning)
@@ -17,6 +17,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use super::printer_config as pc;
+use super::log_config::LogConfig;
+use crate::safety::config::SafetyConfig;
 use crate::CoreSocketClient;
 use super::config_protocol::ConfigFrameBuilder;
 
@@ -24,6 +26,12 @@ use super::config_protocol::ConfigFrameBuilder;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HardwareConfig {
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub version: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub description: Option<String>,
     pub communication: Option<CommunicationConfig>,
     pub limit_switch: Option<LimitSwitchHardwareConfig>,
     pub motor: Vec<MotorConfig>,
@@ -620,41 +628,7 @@ pub struct TemperaturePresetFile {
 pub struct TemperatureSafetyFile {
     pub safety_check_interval_ms: u32,
     pub temp_change_threshold: f32,
-    pub heaters: std::collections::HashMap<String, HeaterSafetyFile>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct HeaterSafetyFile {
-    pub sensor_fault: SensorFaultFile,
-    pub deviation_thresholds: DeviationThresholdsFile,
-    pub heating_delay_secs: u32,
-    pub actions: HeaterActionsFile,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct SensorFaultFile {
-    pub max_temp: f32,
-    pub min_temp: f32,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct DeviationThresholdsFile {
-    pub warning: f32,
-    pub critical: f32,
-    pub emergency: f32,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct HeaterActionsFile {
-    pub low_temp: TempActionLevels,
-    pub high_temp: TempActionLevels,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct TempActionLevels {
-    pub warning: String,
-    pub critical: String,
-    pub emergency: String,
+    // (heaters safety config moved to config/safety.json)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -702,6 +676,9 @@ pub struct PidTuneHeaterFile {
 pub struct PrinterFileConfig {
     #[allow(dead_code)]
     pub version: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub description: Option<String>,
     #[allow(dead_code)]
     pub printer_model: String,
     #[allow(dead_code)]
@@ -723,12 +700,14 @@ pub struct PrinterParamsSection {
 
 // ── Public API ───────────────────────────────────────────────
 
-/// Read and parse all 4 config files from the given directory.
+/// Read and parse all config files from the given directory.
 pub fn load_configs(config_dir: &str) -> Result<LoadedConfigs, String> {
     let hw_path = format!("{}/hardware.json", config_dir);
     let mo_path = format!("{}/motion.json", config_dir);
     let pr_path = format!("{}/printer.json", config_dir);
     let tp_path = format!("{}/temperature.json", config_dir);
+    let sf_path = format!("{}/safety.json", config_dir);
+    let lg_path = format!("{}/logging.json", config_dir);
 
     let hw_str = std::fs::read_to_string(&hw_path)
         .map_err(|e| format!("Failed to read {}: {}", hw_path, e))?;
@@ -738,6 +717,10 @@ pub fn load_configs(config_dir: &str) -> Result<LoadedConfigs, String> {
         .map_err(|e| format!("Failed to read {}: {}", pr_path, e))?;
     let tp_str = std::fs::read_to_string(&tp_path)
         .map_err(|e| format!("Failed to read {}: {}", tp_path, e))?;
+    let sf_str = std::fs::read_to_string(&sf_path)
+        .map_err(|e| format!("Failed to read {}: {}", sf_path, e))?;
+    let lg_str = std::fs::read_to_string(&lg_path)
+        .map_err(|e| format!("Failed to read {}: {}", lg_path, e))?;
 
     let hardware: HardwareConfig = serde_json::from_str(&hw_str)
         .map_err(|e| format!("Parse {} error: {}", hw_path, e))?;
@@ -747,8 +730,12 @@ pub fn load_configs(config_dir: &str) -> Result<LoadedConfigs, String> {
         .map_err(|e| format!("Parse {} error: {}", pr_path, e))?;
     let temperature: TemperatureFileConfig = serde_json::from_str(&tp_str)
         .map_err(|e| format!("Parse {} error: {}", tp_path, e))?;
+    let safety: SafetyConfig = serde_json::from_str(&sf_str)
+        .map_err(|e| format!("Parse {} error: {}", sf_path, e))?;
+    let logging: LogConfig = serde_json::from_str(&lg_str)
+        .map_err(|e| format!("Parse {} error: {}", lg_path, e))?;
 
-    Ok(LoadedConfigs { hardware, motion, printer, temperature })
+    Ok(LoadedConfigs { hardware, motion, printer, temperature, safety, logging })
 }
 
 /// All loaded configuration data.
@@ -759,6 +746,8 @@ pub struct LoadedConfigs {
     pub motion: MotionFileConfig,
     pub printer: PrinterFileConfig,
     pub temperature: TemperatureFileConfig,
+    pub safety: SafetyConfig,
+    pub logging: LogConfig,
 }
 
 /// Merge hardware per-axis values + motion global values into a single JSON
@@ -1150,38 +1139,6 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         }
     }).collect();
 
-    // Build temperature safety config from temperature.json
-    let temperature_safety = Some(pc::TemperatureSafetyConfig {
-        safety_check_interval_ms: configs.temperature.safety.safety_check_interval_ms as u64,
-        temp_change_threshold: configs.temperature.safety.temp_change_threshold,
-        heaters: configs.temperature.safety.heaters.iter().map(|(name, heater)| {
-            (name.clone(), pc::TempHeaterSafetyConfig {
-                sensor_fault: pc::SensorFaultConfig {
-                    max_temp: heater.sensor_fault.max_temp,
-                    min_temp: heater.sensor_fault.min_temp,
-                },
-                deviation_thresholds: pc::DeviationThresholdsConfig {
-                    warning: heater.deviation_thresholds.warning,
-                    critical: heater.deviation_thresholds.critical,
-                    emergency: heater.deviation_thresholds.emergency,
-                },
-                heating_delay_secs: heater.heating_delay_secs as u64,
-                actions: pc::HeaterActionsConfig {
-                    low_temp: pc::TemperatureActionsConfig {
-                        warning: heater.actions.low_temp.warning.clone(),
-                        critical: heater.actions.low_temp.critical.clone(),
-                        emergency: heater.actions.low_temp.emergency.clone(),
-                    },
-                    high_temp: pc::TemperatureActionsConfig {
-                        warning: heater.actions.high_temp.warning.clone(),
-                        critical: heater.actions.high_temp.critical.clone(),
-                        emergency: heater.actions.high_temp.emergency.clone(),
-                    },
-                },
-            })
-        }).collect(),
-    });
-
     // Build PID tune config from temperature.json
     let pid_tune = Some(pc::PidTuneParams {
         default_cycles: configs.temperature.pid_tune.default_cycles,
@@ -1233,7 +1190,6 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         fan: fans,
         limit_switch: build_limit_switch_config(&configs),
         temperature_presets,
-        temperature_safety,
         pid_tune,
         temperature_wait,
         auto_fan,
