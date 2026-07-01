@@ -523,9 +523,9 @@ pub struct ExtruderMotionSection {
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct VelocityProfileFile {
     #[serde(default)]
-    #[allow(dead_code)]
     pub r#type: String,
     pub six_point: Option<SixPointFile>,
+    pub s_curve: Option<SCurveFile>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -568,6 +568,8 @@ fn default_resonance_frequency() -> f32 { 45.0 }
 fn default_resonance_damping() -> f32 { 0.1 }
 fn default_max_velocity_jump_mm_s() -> f32 { 10.0 }
 fn default_insensitivity() -> f32 { 0.05 }
+fn default_jerk() -> f32 { 50000.0 }
+fn default_min_distance() -> f32 { 0.5 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AxisResonanceFile {
@@ -597,6 +599,16 @@ pub struct SixPointFile {
     pub start_speed_mm_s: f32,
     pub stop_speed_mm_s: f32,
     pub break_speed_mm_s: f32,
+    pub min_distance_mm: f32,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SCurveFile {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_jerk")]
+    pub max_jerk_mm_s3: f32,
+    #[serde(default = "default_min_distance")]
     pub min_distance_mm: f32,
 }
 
@@ -889,7 +901,93 @@ mod tests {
         // Global values from motion.json
         assert_eq!(v["max_velocity"], 400.0);
         assert_eq!(v["junction_deviation"], 0.05);
-        assert_eq!(v["six_point_max_accel"], 20000.0);
+        assert_eq!(v["velocity_profile_type"], "trapezoidal");
+    }
+
+    #[test]
+    fn test_build_velocity_profile_trapezoidal() {
+        let vp = VelocityProfileFile {
+            r#type: "trapezoidal".to_string(),
+            six_point: None,
+            s_curve: None,
+        };
+        let result = super::build_velocity_profile(&vp);
+        assert!(matches!(result, pc::VelocityProfileConfig::Trapezoidal));
+    }
+
+    #[test]
+    fn test_build_velocity_profile_six_point() {
+        let vp = VelocityProfileFile {
+            r#type: "six_point".to_string(),
+            six_point: Some(SixPointFile {
+                start_accel_mm_s2: 5000.0,
+                max_accel_mm_s2: 20000.0,
+                final_decel_mm_s2: 5000.0,
+                max_decel_mm_s2: 20000.0,
+                start_speed_mm_s: 0.0,
+                stop_speed_mm_s: 0.0,
+                break_speed_mm_s: 100.0,
+                min_distance_mm: 0.1,
+            }),
+            s_curve: None,
+        };
+        let result = super::build_velocity_profile(&vp);
+        assert!(matches!(result, pc::VelocityProfileConfig::SixPoint { .. }));
+    }
+
+    #[test]
+    fn test_build_velocity_profile_s_curve() {
+        let vp = VelocityProfileFile {
+            r#type: "s_curve".to_string(),
+            six_point: None,
+            s_curve: Some(SCurveFile {
+                enabled: true,
+                max_jerk_mm_s3: 50000.0,
+                min_distance_mm: 0.5,
+            }),
+        };
+        let result = super::build_velocity_profile(&vp);
+        assert!(matches!(result, pc::VelocityProfileConfig::SCurve { .. }));
+    }
+}
+
+fn build_velocity_profile(vp: &VelocityProfileFile) -> pc::VelocityProfileConfig {
+    match vp.r#type.as_str() {
+        "six_point" | "SixPoint" => {
+            if let Some(sp) = &vp.six_point {
+                pc::VelocityProfileConfig::SixPoint {
+                    six_point: pc::SixPointConfig {
+                        start_accel_mm_s2: sp.start_accel_mm_s2,
+                        max_accel_mm_s2: sp.max_accel_mm_s2,
+                        final_decel_mm_s2: sp.final_decel_mm_s2,
+                        max_decel_mm_s2: sp.max_decel_mm_s2,
+                        start_speed_mm_s: sp.start_speed_mm_s,
+                        stop_speed_mm_s: sp.stop_speed_mm_s,
+                        break_speed_mm_s: sp.break_speed_mm_s,
+                        min_distance_mm: sp.min_distance_mm,
+                    },
+                }
+            } else {
+                pc::VelocityProfileConfig::Trapezoidal
+            }
+        }
+        "s_curve" | "SCurve" => {
+            if let Some(sc) = &vp.s_curve {
+                pc::VelocityProfileConfig::SCurve {
+                    s_curve: pc::SCurveConfig {
+                        enabled: sc.enabled,
+                        max_jerk_mm_s3: sc.max_jerk_mm_s3,
+                        min_distance_mm: sc.min_distance_mm,
+                        axis_specific: None,
+                    },
+                }
+            } else {
+                pc::VelocityProfileConfig::SCurve {
+                    s_curve: Default::default(),
+                }
+            }
+        }
+        _ => pc::VelocityProfileConfig::Trapezoidal,
     }
 }
 
@@ -941,38 +1039,11 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         status_report_interval_ms: comm.and_then(|c| c.status_report_interval_ms).unwrap_or(1000),
     };
 
-    // Build printer params
     let printer_params = configs.printer.printer.as_ref()
         .map(|p| {
             let vp = p.velocity_profile.as_ref()
-                .or_else(|| configs.motion.velocity_profile.six_point.as_ref().map(|_| &configs.motion.velocity_profile));
-            
-            let velocity_profile = vp.and_then(|vp| {
-                match vp.r#type.as_str() {
-                    "six_point" | "SixPoint" => {
-                        let sp = vp.six_point.as_ref()?;
-                        Some(pc::VelocityProfileConfig::SixPoint {
-                            six_point: pc::SixPointConfig {
-                                start_accel_mm_s2: sp.start_accel_mm_s2,
-                                max_accel_mm_s2: sp.max_accel_mm_s2,
-                                final_decel_mm_s2: sp.final_decel_mm_s2,
-                                max_decel_mm_s2: sp.max_decel_mm_s2,
-                                start_speed_mm_s: sp.start_speed_mm_s,
-                                stop_speed_mm_s: sp.stop_speed_mm_s,
-                                break_speed_mm_s: sp.break_speed_mm_s,
-                                min_distance_mm: sp.min_distance_mm,
-                            },
-                        })
-                    }
-                    "s_curve" | "SCurve" => {
-                        Some(pc::VelocityProfileConfig::SCurve {
-                            s_curve: Default::default(),
-                        })
-                    }
-                    _ => Some(pc::VelocityProfileConfig::Trapezoidal),
-                }
-            })
-            .unwrap_or_default();
+                .unwrap_or(&configs.motion.velocity_profile);
+            let velocity_profile = build_velocity_profile(vp);
 
             pc::PrinterParams {
                 max_velocity: p.max_velocity,
@@ -987,20 +1058,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
             max_acceleration: configs.motion.kinematics.max_acceleration,
             square_corner_velocity: configs.motion.junction.square_corner_velocity,
             junction_deviation: configs.motion.junction.junction_deviation,
-            velocity_profile: configs.motion.velocity_profile.six_point.as_ref()
-                .map(|sp| pc::VelocityProfileConfig::SixPoint {
-                    six_point: pc::SixPointConfig {
-                        start_accel_mm_s2: sp.start_accel_mm_s2,
-                        max_accel_mm_s2: sp.max_accel_mm_s2,
-                        final_decel_mm_s2: sp.final_decel_mm_s2,
-                        max_decel_mm_s2: sp.max_decel_mm_s2,
-                        start_speed_mm_s: sp.start_speed_mm_s,
-                        stop_speed_mm_s: sp.stop_speed_mm_s,
-                        break_speed_mm_s: sp.break_speed_mm_s,
-                        min_distance_mm: sp.min_distance_mm,
-                    },
-                })
-                .unwrap_or_default(),
+            velocity_profile: build_velocity_profile(&configs.motion.velocity_profile),
         }))
         .unwrap_or_default();
 
