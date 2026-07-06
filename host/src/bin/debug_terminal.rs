@@ -178,6 +178,7 @@ struct PositionInfo {
     y: f32,
     z: f32,
     e: f32,
+    homed_axes: u8,
 }
 
 /// Get current position from server planner (coordinate system)
@@ -185,8 +186,10 @@ async fn motion_position(
     State(state): State<Arc<DebugState>>,
 ) -> impl IntoResponse {
     match state.core_client.motion_get_position().await {
-        Ok((x, y, z, e)) => Json(ApiResponse::success(PositionInfo { x, y, z, e })),
-        Err(e) => Json(ApiResponse::<PositionInfo>::error(format!("Error: {}", e))),
+        Ok((x, y, z, e, homed_axes)) => {
+            Json(ApiResponse::success(PositionInfo { x, y, z, e, homed_axes }))
+        }
+        Err(e) => Json(ApiResponse::<PositionInfo>::error(format!("Position query error: {}", e))),
     }
 }
 

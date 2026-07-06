@@ -149,6 +149,13 @@ pub enum MotionRequest {
         /// 归位轴位掩码 (bit0=X, bit1=Y, bit2=Z)
         homed_axes: u8,
     },
+    /// 设置 G92 偏移量
+    SetG92Offset {
+        x: f32,
+        y: f32,
+        z: f32,
+        e: f32,
+    },
     
     // === Bed Mesh Compensation ===
     /// Begin a mesh data transfer session.
@@ -574,6 +581,7 @@ pub enum MotionResponse {
         y: f32,
         z: f32,
         e: f32,
+        homed_axes: u8,
     },
     /// Operation acknowledged
     Acknowledged,

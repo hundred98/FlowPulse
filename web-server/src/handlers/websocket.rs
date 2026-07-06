@@ -95,10 +95,10 @@ async fn handle_websocket(socket: WebSocket, state: Arc<WebServerState>) {
                             }
                         }
                     }
-                    Ok(WebSocketMessage::Position { x, y, z, e }) => {
+                    Ok(WebSocketMessage::Position { x, y, z, e, homed_axes }) => {
                         let msg = serde_json::json!({
                             "type": "position",
-                            "data": { "x": x, "y": y, "z": z, "e": e }
+                            "data": { "x": x, "y": y, "z": z, "e": e, "homed_axes": homed_axes }
                         });
                         
                         if let Ok(json) = serde_json::to_string(&msg) {

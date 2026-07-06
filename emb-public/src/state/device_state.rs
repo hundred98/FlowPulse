@@ -232,7 +232,7 @@ impl DeviceStateManager {
     /// Sync state from core server
     pub async fn sync_state(&self) -> EmbResult<()> {
         // Get position from core server
-        if let Ok((x, y, z, e)) = self.client.motion_get_position().await {
+        if let Ok((x, y, z, e, _homed_axes)) = self.client.motion_get_position().await {
             let pos = Position { x, y, z, e };
             self.update_position(pos).await;
         }

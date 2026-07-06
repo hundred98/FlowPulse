@@ -76,6 +76,13 @@ impl HomingManager {
 
         tracing::info!("Homing start: axes_mask=0x{:02X} ({})", axes_mask, axes_names);
 
+        // 先清除正在归位的轴状态，避免归位过程中的中间位置被显示
+        let current = self.client.motion_query_homed().await.unwrap_or(0);
+        let cleared = current & !axes_mask;
+        if cleared != current {
+            self.client.motion_set_homed_axes(cleared).await?;
+        }
+
         // Send homing frame (0x0A = homing command)
         self.client.serial_send_frame(0x0A, vec![axes_mask]).await?;
 
@@ -110,16 +117,10 @@ impl HomingManager {
             tracing::info!("Homing command sent (no explicit ACK/NACK received within poll window)");
         }
 
-        // Update server-side homed_axes so motion planner knows axes are homed.
-        // The 0x0A serial frame controls the firmware directly, bypassing the
-        // motion planner. Without this sync, G0/G1 moves will fail with
-        // "axes not homed" even after successful homing.
-        let current_homed = self.client.motion_query_homed().await.unwrap_or(0);
-        let new_homed = current_homed | axes_mask;
-        if new_homed != current_homed {
-            tracing::info!("Updating server homed_axes: {:#04b} -> {:#04b}", current_homed, new_homed);
-            self.client.motion_set_homed_axes(new_homed).await?;
-        }
+        // Note: 不在这里恢复 homed_axes。
+        // 服务器端 HomingStatus 处理器会在 STM32 归位真正完成后自动调用
+        // home_with_position() 恢复 homed_axes，过早恢复会导致归位过程中的
+        // 中间位置被显示出来。
 
         Ok(())
     }

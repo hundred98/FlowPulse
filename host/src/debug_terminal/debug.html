@@ -343,9 +343,13 @@
                 const response = await fetch('/debug/api/motion/position');
                 const data = await response.json();
                 if (data.success) {
-                    document.getElementById('pos-x').textContent = data.data.x.toFixed(2);
-                    document.getElementById('pos-y').textContent = data.data.y.toFixed(2);
-                    document.getElementById('pos-z').textContent = data.data.z.toFixed(2);
+                    const homed = data.data.homed_axes;
+                    const xHomed = (homed & 0x01) !== 0;
+                    const yHomed = (homed & 0x02) !== 0;
+                    const zHomed = (homed & 0x04) !== 0;
+                    document.getElementById('pos-x').textContent = xHomed ? data.data.x.toFixed(2) : '--';
+                    document.getElementById('pos-y').textContent = yHomed ? data.data.y.toFixed(2) : '--';
+                    document.getElementById('pos-z').textContent = zHomed ? data.data.z.toFixed(2) : '--';
                     document.getElementById('pos-e').textContent = data.data.e.toFixed(2);
                 }
             } catch (e) {

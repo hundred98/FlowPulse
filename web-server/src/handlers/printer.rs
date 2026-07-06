@@ -1,4 +1,4 @@
-﻿//! Printer Control Handlers
+//! Printer Control Handlers
 //!
 //! HTTP handlers for printer control endpoints.
 
@@ -26,6 +26,7 @@ pub struct PositionData {
     pub y: f32,
     pub z: f32,
     pub e: f32,
+    pub homed_axes: u8,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,6 +59,7 @@ pub async fn get_status(
             y: position.y,
             z: position.z,
             e: position.e,
+            homed_axes: position.homed_axes,
         },
         progress: None,
     };

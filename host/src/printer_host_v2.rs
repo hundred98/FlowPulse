@@ -158,7 +158,7 @@ impl PrinterHostV2 {
     }
 
     /// Get current position.
-    pub async fn get_position(&self) -> Result<(f32, f32, f32, f32), String> {
+    pub async fn get_position(&self) -> Result<(f32, f32, f32, f32, u8), String> {
         self.client.motion_get_position().await
     }
 

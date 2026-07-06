@@ -24,6 +24,7 @@ pub enum WebSocketMessage {
         y: f32,
         z: f32,
         e: f32,
+        homed_axes: u8,
     },
     
     /// Progress update
@@ -124,6 +125,9 @@ pub struct PositionData {
     
     /// E axis position (extruder)
     pub e: f32,
+    
+    /// Homed axes bitmask (bit0=X, bit1=Y, bit2=Z)
+    pub homed_axes: u8,
 }
 
 impl TempStatus {
@@ -147,7 +151,12 @@ impl TempStatus {
 impl PositionData {
     /// Create a new position data
     pub fn new(x: f32, y: f32, z: f32, e: f32) -> Self {
-        Self { x, y, z, e }
+        Self { x, y, z, e, homed_axes: 0 }
+    }
+    
+    /// Create a new position data with homed_axes
+    pub fn new_with_homed(x: f32, y: f32, z: f32, e: f32, homed_axes: u8) -> Self {
+        Self { x, y, z, e, homed_axes }
     }
     
     /// Create zero position

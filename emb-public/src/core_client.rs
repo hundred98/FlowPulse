@@ -514,9 +514,16 @@ impl CoreSocketClient {
     }
 
     /// Get current position.
-    pub async fn motion_get_position(&self) -> Result<(f32, f32, f32, f32), String> {
+    pub async fn motion_get_position(&self) -> Result<(f32, f32, f32, f32, u8), String> {
         self.ensure_connected().await?;
         
+        let mut rx_guard = self.state_sync_rx.lock().await;
+        let rx = rx_guard.as_mut().ok_or("Not connected")?;
+
+        // 清空残留响应：之前超时等导致未消费的 PositionResult 会残留在此，
+        // 如果不清理，下次请求会拿到旧数据而非实时位置
+        while rx.try_recv().is_ok() {}
+
         // Send request
         let encoded = encode_request(&CoreRequest::Motion(MotionRequest::GetPosition))
             .map_err(|e| format!("Encode error: {}", e))?;
@@ -535,9 +542,6 @@ impl CoreSocketClient {
         // Read response from state_sync_rx channel (dedicated for PositionResult)
         let deadline = tokio::time::Instant::now() + Duration::from_millis(self.config.request_timeout_ms);
         
-        let mut rx_guard = self.state_sync_rx.lock().await;
-        let rx = rx_guard.as_mut().ok_or("Not connected")?;
-        
         loop {
             // Check timeout
             if tokio::time::Instant::now() > deadline {
@@ -551,9 +555,52 @@ impl CoreSocketClient {
             match tokio::time::timeout(remaining, rx.recv()).await {
                 Ok(Some(response)) => {
                     match response {
-                        CoreResponse::Motion(MotionResponse::PositionResult { x, y, z, e }) => {
-                            return Ok((x, y, z, e));
+                        CoreResponse::Motion(MotionResponse::PositionResult { x, y, z, e, homed_axes }) => {
+                            return Ok((x, y, z, e, homed_axes));
                         }
+                        CoreResponse::Error(e) => return Err(e.message),
+                        other => return Err(format!("Unexpected response: {:?}", other)),
+                    }
+                }
+                Ok(None) => return Err("Channel closed".to_string()),
+                Err(_) => return Err("Request timeout".to_string()),
+            }
+        }
+    }
+
+    /// Set G92 offset.
+    pub async fn motion_set_g92_offset(&self, x: f32, y: f32, z: f32, e: f32) -> Result<(), String> {
+        self.ensure_connected().await?;
+        
+        let encoded = encode_request(&CoreRequest::Motion(MotionRequest::SetG92Offset { x, y, z, e }))
+            .map_err(|e| format!("Encode error: {}", e))?;
+        
+        let mut guard = self.writer.write().await;
+        let writer = guard.as_mut().ok_or("Not connected")?;
+        
+        writer.write_all(&encoded).await
+            .map_err(|e| format!("Write error: {}", e))?;
+        writer.flush().await
+            .map_err(|e| format!("Flush error: {}", e))?;
+        
+        drop(guard);
+        
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(self.config.request_timeout_ms);
+        
+        let mut rx_guard = self.state_sync_rx.lock().await;
+        let rx = rx_guard.as_mut().ok_or("Not connected")?;
+        
+        loop {
+            if tokio::time::Instant::now() > deadline {
+                return Err("Request timeout".to_string());
+            }
+            
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Some(response)) => {
+                    match response {
+                        CoreResponse::Motion(MotionResponse::Acknowledged) => return Ok(()),
                         CoreResponse::Error(e) => return Err(e.message),
                         other => return Err(format!("Unexpected response: {:?}", other)),
                     }

@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Get initial position
     match host.get_position().await {
-        Ok((x, y, z, e)) => tracing::info!("Initial position: X={:.3} Y={:.3} Z={:.3} E={:.3}", x, y, z, e),
+        Ok((x, y, z, e, homed)) => tracing::info!("Initial position: X={:.3} Y={:.3} Z={:.3} E={:.3} homed=0x{:02X}", x, y, z, e, homed),
         Err(e) => tracing::warn!("Get position failed: {}", e),
     }
 

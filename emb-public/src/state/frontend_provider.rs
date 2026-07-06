@@ -1,4 +1,4 @@
-﻿//! Frontend data provider interface
+//! Frontend data provider interface
 //!
 //! This module defines the unified interface for frontend data access,
 //! supporting UnixSocket and WebSocket.
@@ -245,9 +245,9 @@ impl WebDataProvider {
                                     bed_target,
                                 );
                             }
-                            crate::common::WebSocketMessage::Position { x, y, z, e } => {
+                            crate::common::WebSocketMessage::Position { x, y, z, e, homed_axes } => {
                                 let mut cached = cached_position.write().unwrap();
-                                *cached = PositionData::new(x, y, z, e);
+                                *cached = PositionData::new_with_homed(x, y, z, e, homed_axes);
                             }
                             crate::common::WebSocketMessage::State { from: _, to } => {
                                 let mut cached = cached_status.write().unwrap();
@@ -362,6 +362,7 @@ impl WebDataProvider {
             y: position.y,
             z: position.z,
             e: position.e,
+            homed_axes: position.homed_axes,
         })?;
         
         Ok(())
