@@ -1,4 +1,4 @@
-﻿use super::printer_config::{PrinterJsonConfig, MotorParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams, OutputPinParams, InputPinParams, PidTuneHeaterConfig};
+﻿use super::printer_config::{PrinterJsonConfig, MotorParams, DriverParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams, OutputPinParams, InputPinParams, PidTuneHeaterConfig};
 use crate::common::pin_parser::parse_pin;
 
 pub const FRAME_SOF: u8 = 0xAA;
@@ -6,6 +6,17 @@ pub const FRAME_EOF: u8 = 0x55;
 pub const FRAME_TYPE_CONFIG: u8 = 0x05;
 pub const FRAME_TYPE_SET_TEMP: u8 = 0x24;  // 设置目标温度（避免与服务端ConfigComplete=0x11冲突）
 pub const FRAME_TYPE_STATUS_R: u8 = 0x04;  // 状态响应（包含温度）
+pub const FRAME_TYPE_TMC_CONFIG: u8 = 0x2A;  // TMC2209静态配置(Host→Device)，独立帧
+pub const FRAME_TYPE_TMC_CONFIG_ACK: u8 = 0x2B;  // TMC2209配置响应(Device→Host)
+pub const FRAME_TYPE_TMC_STALL_CFG: u8 = 0x28;  // TMC2209 StallGuard配置(Host→Device)
+pub const FRAME_TYPE_TMC_STALL_ACK: u8 = 0x29;  // TMC2209 StallGuard确认(Device→Host)
+
+pub const CONFIG_SUB_MCU2: u8 = 0x22;  // 转给 MCU2 的配置(Host→MCU1→MCU2)，MCU1 暂存不本地应用
+
+// TMC 轴索引
+pub const TMC_AXIS_X: u8 = 0;
+pub const TMC_AXIS_Y: u8 = 1;
+pub const TMC_AXIS_Z: u8 = 2;
 
 // Config frame subtypes - must match STM32 firmware definitions (emb_protocol.h)
 pub const CONFIG_SUBTYPE_MOTOR: u8 = 0x01;
@@ -54,30 +65,82 @@ impl ConfigFrameBuilder {
     pub fn build_config_frames(config: &PrinterJsonConfig) -> Vec<Vec<u8>> {
         let mut frames = Vec::new();
 
-        if !config.motor.is_empty() {
-            frames.push(Self::build_motor_frame(&config.motor));
+        // 区分 MCU1 本机与 MCU2 转发的配置
+        let mcu1_motors: Vec<&MotorParams> = config.motor.iter()
+            .filter(|m| m.mcu.eq_ignore_ascii_case("MCU1"))
+            .collect();
+        let mcu2_motors: Vec<&MotorParams> = config.motor.iter()
+            .filter(|m| m.mcu.eq_ignore_ascii_case("MCU2"))
+            .collect();
+
+        // MCU2 配置项收集：sub_type + data(不含 sub_type)
+        let mut mcu2_items: Vec<(u8, Vec<u8>)> = Vec::new();
+
+        // 电机配置帧：MCU1 轴走 CONFIG_SUB_MOTOR(0x01)，MCU2 轴打包进 CONFIG_SUB_MCU2(0x22)
+        if !mcu1_motors.is_empty() {
+            frames.push(Self::build_motor_frame(&mcu1_motors));
+        }
+        if !mcu2_motors.is_empty() {
+            if let Some(item) = Self::subframe_to_item(&Self::build_motor_frame(&mcu2_motors)) {
+                mcu2_items.push(item);
+            }
         }
 
-        // Always send limit switch config if pins are configured
-        if !config.limit_switch.x.pin.is_empty()
-            || !config.limit_switch.y.pin.is_empty()
-            || !config.limit_switch.z.pin.is_empty() {
+        // limit_switch 帧：只要任一轴配置了归位参数(speed/fine/retract/dir)或 limit 引脚就发送。
+        // 兼容两种归位模式：
+        //   - 机械归位轴: 配置了 limit 引脚，用 limit 触发
+        //   - sensorless 轴: 不配 limit 引脚，但仍需要 homing_speed(PRE速度)/retract/方向，
+        //     这些参数也必须下发，故不能仅按 pin 是否为空判断。
+        let ls = &config.limit_switch;
+        let has_limit_cfg = !ls.x.pin.is_empty() || !ls.y.pin.is_empty() || !ls.z.pin.is_empty()
+            || ls.x.homing_speed_mm_per_s != 25 || ls.y.homing_speed_mm_per_s != 25
+            || ls.z.homing_speed_mm_per_s != 25
+            || ls.x.homing_retract_mm != 5.0 || ls.y.homing_retract_mm != 5.0
+            || ls.z.homing_retract_mm != 5.0
+            || ls.x.homing_dir != 0 || ls.y.homing_dir != 0 || ls.z.homing_dir != 0;
+        if has_limit_cfg {
             let limit_frame = Self::build_limit_switch_frame(&config.limit_switch, &config.motor);
             frames.push(limit_frame);
         }
 
+        // 温度传感器：按 mcu 归属区分
         if !config.temperature.hotbed.adc_pin.is_empty() {
-            frames.push(Self::build_temp_hotbed_frame(&config.temperature.hotbed));
+            if config.temperature.hotbed.mcu.eq_ignore_ascii_case("MCU2") {
+                if let Some(item) = Self::subframe_to_item(&Self::build_temp_hotbed_frame(&config.temperature.hotbed)) {
+                    mcu2_items.push(item);
+                }
+            } else {
+                frames.push(Self::build_temp_hotbed_frame(&config.temperature.hotbed));
+            }
         }
         if !config.temperature.hotend.adc_pin.is_empty() {
-            frames.push(Self::build_temp_hotend_frame(&config.temperature.hotend));
+            if config.temperature.hotend.mcu.eq_ignore_ascii_case("MCU2") {
+                if let Some(item) = Self::subframe_to_item(&Self::build_temp_hotend_frame(&config.temperature.hotend)) {
+                    mcu2_items.push(item);
+                }
+            } else {
+                frames.push(Self::build_temp_hotend_frame(&config.temperature.hotend));
+            }
         }
 
+        // 加热器：按 mcu 归属区分
         if !config.heater.hotbed.pin.is_empty() {
-            frames.push(Self::build_heater_hotbed_frame(&config.heater.hotbed));
+            if config.heater.hotbed.mcu.eq_ignore_ascii_case("MCU2") {
+                if let Some(item) = Self::subframe_to_item(&Self::build_heater_hotbed_frame(&config.heater.hotbed)) {
+                    mcu2_items.push(item);
+                }
+            } else {
+                frames.push(Self::build_heater_hotbed_frame(&config.heater.hotbed));
+            }
         }
         if !config.heater.hotend.pin.is_empty() {
-            frames.push(Self::build_heater_hotend_frame(&config.heater.hotend));
+            if config.heater.hotend.mcu.eq_ignore_ascii_case("MCU2") {
+                if let Some(item) = Self::subframe_to_item(&Self::build_heater_hotend_frame(&config.heater.hotend)) {
+                    mcu2_items.push(item);
+                }
+            } else {
+                frames.push(Self::build_heater_hotend_frame(&config.heater.hotend));
+            }
         }
 
         for fan in &config.fan {
@@ -86,16 +149,30 @@ impl ConfigFrameBuilder {
             }
         }
 
-        // GPIO output pins
+        // GPIO output pins：MCU1 本机应用，MCU2 的打包进 CONFIG_SUB_MCU2(0x22)
         for pin in &config.gpio.output {
-            if !pin.pin.is_empty() {
+            if pin.pin.is_empty() { continue; }
+            if pin.mcu.eq_ignore_ascii_case("MCU2") {
+                for f in Self::build_gpio_output_frames(pin) {
+                    if let Some(item) = Self::subframe_to_item(&f) {
+                        mcu2_items.push(item);
+                    }
+                }
+            } else {
                 frames.extend(Self::build_gpio_output_frames(pin));
             }
         }
 
         // GPIO input pins
         for pin in &config.gpio.input {
-            if !pin.pin.is_empty() {
+            if pin.pin.is_empty() { continue; }
+            if pin.mcu.eq_ignore_ascii_case("MCU2") {
+                for f in Self::build_gpio_input_frames(pin) {
+                    if let Some(item) = Self::subframe_to_item(&f) {
+                        mcu2_items.push(item);
+                    }
+                }
+            } else {
                 frames.extend(Self::build_gpio_input_frames(pin));
             }
         }
@@ -109,7 +186,42 @@ impl ConfigFrameBuilder {
             frames.push(Self::build_pid_tune_hotbed_frame(&pid_tune.hotbed));
         }
 
+        // MCU2 配置统一打包进 CONFIG_SUB_MCU2(0x22) 独立帧，最后下发。
+        if !mcu2_items.is_empty() {
+            frames.push(Self::build_mcu2_config_frame(&mcu2_items));
+        }
+
+        // TMC2209 独立静态配置帧 (0x2A)。
+        // 仅对归属于 MCU1 的轴生成（E 轴若归属 MCU2，由 MCU2 侧处理）。
+        // 必须在所有 CONFIG 子帧设置完毕后下发，因为下位机执行串口配置耗时较长。
+        // 注意：StallGuard 帧 (0x28) 不属于启动配置阶段，由归位流程单独触发。
+        frames.extend(Self::build_tmc_config_frames(&config.motor));
+
         frames
+    }
+
+    /// 从完整的 CONFIG 子帧中提取 (sub_type, data_without_subtype)，用于 MCU2 打包。
+    /// 完整帧格式: [SOF][len][type][payload][crc][EOF]，payload 从 index 3 到 len-2。
+    fn subframe_to_item(frame: &[u8]) -> Option<(u8, Vec<u8>)> {
+        if frame.len() < 6 { return None; }
+        let payload = &frame[3..frame.len() - 2];
+        if payload.is_empty() { return None; }
+        Some((payload[0], payload[1..].to_vec()))
+    }
+
+    /// 构建 CONFIG_SUB_MCU2(0x22) 帧，把多个 MCU2 配置项打包为 TLV 序列。
+    /// payload: [0x22][count][item...]，每个 item = [sub_type][sub_len][sub_data]。
+    /// MCU1 收到后暂存，后续由 MCU1 转发给 MCU2。
+    fn build_mcu2_config_frame(items: &[(u8, Vec<u8>)]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.push(CONFIG_SUB_MCU2);
+        payload.push(items.len() as u8);
+        for (sub_type, data) in items {
+            payload.push(*sub_type);
+            payload.push(data.len() as u8);
+            payload.extend_from_slice(data);
+        }
+        Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
     }
 
     /// 构建状态查询帧（StatusQuery，帧类型 0x03）
@@ -134,7 +246,7 @@ impl ConfigFrameBuilder {
         Self::wrap_frame(FRAME_TYPE_SET_TEMP, &payload)
     }
 
-    fn build_motor_frame(motors: &[MotorParams]) -> Vec<u8> {
+    fn build_motor_frame(motors: &[&MotorParams]) -> Vec<u8> {
         let mut payload = vec![0x01];
 
         for motor in motors {
@@ -553,6 +665,158 @@ impl ConfigFrameBuilder {
         payload.extend_from_slice(&config.initial_d.to_be_bytes());
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
+    }
+
+    // ============ TMC2209 独立配置帧 ============
+
+    /// 为所有归属于 MCU1 的轴构建 TMC2209 静态配置帧 (0x2A)。
+    /// payload 布局对应固件 TmcConfigPayload (emb_protocol.h):
+    ///   [0] axis  [1] uart_addr  [2] irun  [3] ihold  [4] iholddelay
+    ///   [5] tpowerdown  [6] mres  [7] intpol  [8] en_spreadcycle  [9] vsense
+    ///   [10] toff  [11] hstrt  [12] hend  [13] tbl  [14..17] tpwmthrs(LE)
+    ///   [18] pwm_auto_scale  [19] pwm_auto_grad
+    fn build_tmc_config_frames(motors: &[MotorParams]) -> Vec<Vec<u8>> {
+        let mut frames = Vec::new();
+        for motor in motors {
+            // 仅下发 MCU1 上的轴（MCU2 上的 E 轴由 MCU2 侧管理）
+            if !motor.mcu.eq_ignore_ascii_case("MCU1") {
+                continue;
+            }
+            let axis = match motor.axis.as_bytes().first().copied().unwrap_or(0) {
+                b'X' => Some(TMC_AXIS_X),
+                b'Y' => Some(TMC_AXIS_Y),
+                b'Z' => Some(TMC_AXIS_Z),
+                _ => None,
+            };
+            let axis = match axis {
+                Some(a) => a,
+                None => continue,
+            };
+            let d = &motor.driver;
+            frames.push(Self::build_tmc_config_frame(axis, d));
+        }
+        frames
+    }
+
+    fn build_tmc_config_frame(axis: u8, d: &DriverParams) -> Vec<u8> {
+        let irun = Self::calc_irun(d);
+        let ihold = Self::calc_ihold(d);
+        let mres = Self::microsteps_to_mres(d.microsteps);
+
+        let mut payload = Vec::with_capacity(23);
+        payload.push(axis);                    // [0] axis
+        payload.push(d.uart_addr.min(3));      // [1] uart_addr
+        payload.push(irun);                    // [2] irun
+        payload.push(ihold);                   // [3] ihold
+        payload.push(d.iholddelay.min(15));    // [4] iholddelay
+        payload.push(d.tpowerdown);            // [5] tpowerdown
+        payload.push(mres);                    // [6] mres
+        payload.push(if d.intpol != 0 { 1 } else { 0 });  // [7] intpol
+        // [8] en_spreadcycle: 由 stealthchop_threshold 决定。若为 0 表示始终 StealthChop(0)，否则 SpreadCycle(1)
+        payload.push(if d.stealthchop_threshold == 0 { 0 } else { 1 });
+        payload.push(if d.vsense != 0 { 1 } else { 0 });  // [9] vsense
+        payload.push(d.toff.min(15));          // [10] toff
+        payload.push(d.hstrt.min(7));          // [11] hstrt
+        payload.push(d.hend.min(15));          // [12] hend
+        payload.push(d.tbl.min(3));            // [13] tbl
+        // [14..17] tpwmthrs (LE)
+        payload.extend_from_slice(&d.tpwmthrs.to_le_bytes());
+        payload.push(d.pwm_auto_scale.min(15));  // [18]
+        payload.push(d.pwm_auto_grad.min(15));   // [19]
+        // [20] homing_mode: 0=limit 机械, 1=sensorless diag
+        payload.push(Self::homing_mode_byte(d));
+        // [21] diag_port: 0=无, 1=A,2=B,3=C,4=D
+        payload.push(Self::diag_port_byte(&d.diag_pin));
+        // [22] diag_pin: 0~15, 0xFF=未配置
+        payload.push(Self::diag_pin_byte(&d.diag_pin));
+
+        Self::wrap_frame(FRAME_TYPE_TMC_CONFIG, &payload)
+    }
+
+    /// homing_mode 字符串 → 协议字节 (0=limit, 1=sensorless)
+    fn homing_mode_byte(d: &DriverParams) -> u8 {
+        if d.homing_mode.eq_ignore_ascii_case("sensorless") { 1 } else { 0 }
+    }
+
+    /// "PA8"/"PB3" 等引脚串 → 端口编码 (0=无, 1=A,2=B,3=C,4=D)
+    fn diag_port_byte(pin: &str) -> u8 {
+        let s = pin.trim();
+        if s.is_empty() { return 0; }
+        match s.as_bytes().get(0).copied().unwrap_or(0).to_ascii_uppercase() {
+            b'A' => 1, b'B' => 2, b'C' => 3, b'D' => 4, _ => 0,
+        }
+    }
+
+    /// "PA8" 等引脚串 → 引脚号 (0~15)，未配置/非法返回 0xFF
+    fn diag_pin_byte(pin: &str) -> u8 {
+        let s = pin.trim();
+        if s.len() < 2 || s.len() > 3 { return 0xFF; }
+        let num = &s[1..];
+        match num.parse::<u8>() {
+            Ok(v) if v <= 15 => v,
+            _ => 0xFF,
+        }
+    }
+
+    /// 构建 StallGuard 配置帧 (0x28) 用于传感器无源归位。
+    /// 由归位流程在归位前 (enable=1) 与归位后 (enable=0) 调用。
+    /// 返回对应 MCU1 上 X/Y 轴的帧列表。
+    /// payload 布局对应固件 TmcStallPayload (emb_protocol.h):
+    ///   [0] axis  [1] enable  [2] sgthrs  [3..5] tcoolthrs(LE24)
+    pub fn build_tmc_stall_cfg_frames(motors: &[MotorParams], enable: u8) -> Vec<Vec<u8>> {
+        let mut frames = Vec::new();
+        for motor in motors {
+            if !motor.mcu.eq_ignore_ascii_case("MCU1") {
+                continue;
+            }
+            // 仅 X/Y 支持传感器无源归位 (DIAG)，且需配置为 sensorless 归位方式
+            let d = &motor.driver;
+            if !d.homing_mode.eq_ignore_ascii_case("sensorless") {
+                continue;
+            }
+            let axis = match motor.axis.as_bytes().first().copied().unwrap_or(0) {
+                b'X' => Some(TMC_AXIS_X),
+                b'Y' => Some(TMC_AXIS_Y),
+                _ => None,
+            };
+            let axis = match axis {
+                Some(a) => a,
+                None => continue,
+            };
+            let mut payload = Vec::with_capacity(7);
+            payload.push(axis);                     // [0] axis
+            payload.push(enable);                   // [1] enable
+            // 归位前 enable=1 需提供 sgthrs/tcoolthrs；归位后 enable=0 可省略
+            payload.push(d.sgthrs);                 // [2] sgthrs
+            // [3..6] tcoolthrs (LE24, 固件 TmcStallPayload.tcoolthrs 为 uint32, sizeof=7)
+            payload.extend_from_slice(&d.tcoolthrs.to_le_bytes()[..3]);
+            payload.push(0x00);                     // [6] tcoolthrs 高字节补零
+            frames.push(Self::wrap_frame(FRAME_TYPE_TMC_STALL_CFG, &payload));
+        }
+        frames
+    }
+
+    /// 由 RMS 电流 (mA) + 采样电阻换算 IRUN (0~31)。
+    /// TMC2209 数据手册: I_RMS = (IRUN+1)/32 * V_FS / (1.414 * (R_sense+0.02))
+    /// 其中 V_FS = 0.32 (vsense=0) 或 0.18 (vsense=1)
+    fn calc_irun(d: &DriverParams) -> u8 {
+        let vfs = if d.vsense != 0 { 0.18 } else { 0.32 };
+        let irun = (d.current_ma as f32 / 1000.0) * 32.0 * 1.414 * (d.sense_resistor + 0.02) / vfs - 1.0;
+        irun.round().clamp(0.0, 31.0) as u8
+    }
+
+    /// 由保持电流换算 IHOLD (0~31)
+    fn calc_ihold(d: &DriverParams) -> u8 {
+        let vfs = if d.vsense != 0 { 0.18 } else { 0.32 };
+        let ihold = (d.hold_current_ma as f32 / 1000.0) * 32.0 * 1.414 * (d.sense_resistor + 0.02) / vfs - 1.0;
+        ihold.round().clamp(0.0, 31.0) as u8
+    }
+
+    /// microsteps -> MRES (0=256μstep ... 8=full-step)
+    fn microsteps_to_mres(microsteps: u8) -> u8 {
+        let ms = (microsteps as u32).clamp(1, 256);
+        // MRES = 8 - log2(microsteps): 256→0, 128→1, 64→2, ..., 1→8
+        (8 - ms.ilog2() as u8).clamp(0, 8)
     }
 
     fn wrap_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {

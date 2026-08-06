@@ -55,6 +55,8 @@ pub struct LimitSwitchHardwareConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct LimitSwitchAxisHardware {
+    /// 机械限位引脚；sensorless(diag)归位轴可不配置，默认为空串
+    #[serde(default)]
     pub pin: String,
     #[serde(default)]
     pub pull: String,
@@ -84,6 +86,8 @@ pub struct LimitSwitchHomingHardware {
 
 fn default_z_lift_mm() -> f32 { 10.0 }
 
+fn default_mcu1() -> String { "MCU1".to_string() }
+
 impl Default for LimitSwitchHomingHardware {
     fn default() -> Self {
         Self { z_lift_mm: 10.0 }
@@ -108,6 +112,9 @@ pub struct TemperatureHardwareConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TempSensorHardwareConfig {
     pub sensor_type: String,
+    /// MCU 归属: "MCU1" (默认) 或 "MCU2"
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     pub adc_pin: String,
     pub beta: u32,
     pub pullup_resistor: u32,
@@ -128,6 +135,9 @@ pub struct HeaterHardwareConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HeaterHardwarePin {
     pub pin: String,
+    /// MCU 归属: "MCU1" (默认) 或 "MCU2"
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     pub active_high: bool,
     pub pwm_freq_hz: u16,
     pub max_power: u8,
@@ -307,6 +317,9 @@ pub struct GpioConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct OutputGpioConfig {
     pub name: String,
+    /// MCU 归属: "MCU1" (默认) 或 "MCU2"
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     pub pin: String,
     #[serde(rename = "type")]
     pub pin_type: String,
@@ -325,6 +338,9 @@ pub struct OutputGpioConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InputGpioConfig {
     pub name: String,
+    /// MCU 归属: "MCU1" (默认) 或 "MCU2"
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     pub pin: String,
     #[serde(rename = "type")]
     pub pin_type: String,
@@ -394,6 +410,9 @@ pub struct SerialConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MotorConfig {
     pub axis: String,
+    /// MCU 归属: "MCU1" (默认) 或 "MCU2"
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     pub step_pin: String,
     pub dir_pin: String,
     pub enable_pin: String,
@@ -416,8 +435,44 @@ pub struct DriverConfig {
     pub microsteps: u16,
     pub current_ma: u16,
     pub hold_current_ma: u16,
+    #[serde(default)]
+    pub sense_resistor: f32,
     pub stealthchop_threshold: u32,
+    #[serde(default)]
+    pub uart_addr: u8,
+    #[serde(default)]
+    pub iholddelay: u8,
+    #[serde(default)]
+    pub tpowerdown: u8,
+    #[serde(default)]
+    pub intpol: u8,
+    #[serde(default)]
+    pub vsense: u8,
+    #[serde(default)]
+    pub toff: u8,
+    #[serde(default)]
+    pub hstrt: u8,
+    #[serde(default)]
+    pub hend: u8,
+    #[serde(default)]
+    pub tbl: u8,
+    #[serde(default)]
+    pub tpwmthrs: u32,
+    #[serde(default)]
+    pub pwm_auto_scale: u8,
+    #[serde(default)]
+    pub pwm_auto_grad: u8,
+    #[serde(default)]
+    pub sgthrs: u8,
+    #[serde(default)]
+    pub tcoolthrs: u32,
+    #[serde(default = "default_homing_mode")]
+    pub homing_mode: String,
+    #[serde(default)]
+    pub diag_pin: String,
 }
+
+fn default_homing_mode() -> String { "limit".to_string() }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ExtruderConfig {
@@ -997,6 +1052,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
     let motors: Vec<pc::MotorParams> = configs.hardware.motor.iter().map(|m| {
         pc::MotorParams {
             axis: m.axis.clone(),
+            mcu: m.mcu.clone(),
             step_pin: m.step_pin.clone(),
             dir_pin: m.dir_pin.clone(),
             enable_pin: m.enable_pin.clone(),
@@ -1010,7 +1066,24 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
                 microsteps: d.microsteps as u8,
                 current_ma: d.current_ma,
                 hold_current_ma: d.hold_current_ma,
+                sense_resistor: d.sense_resistor,
                 stealthchop_threshold: d.stealthchop_threshold,
+                uart_addr: d.uart_addr,
+                iholddelay: d.iholddelay,
+                tpowerdown: d.tpowerdown,
+                intpol: d.intpol,
+                vsense: d.vsense,
+                toff: d.toff,
+                hstrt: d.hstrt,
+                hend: d.hend,
+                tbl: d.tbl,
+                tpwmthrs: d.tpwmthrs,
+                pwm_auto_scale: d.pwm_auto_scale,
+                pwm_auto_grad: d.pwm_auto_grad,
+                sgthrs: d.sgthrs,
+                tcoolthrs: d.tcoolthrs,
+                homing_mode: d.homing_mode.clone(),
+                diag_pin: d.diag_pin.clone(),
             }).unwrap_or_default(),
             extruder: m.extruder.as_ref().map(|e| pc::ExtruderParams {
                 nozzle_diameter_mm: Some(e.nozzle_diameter_mm),
@@ -1072,6 +1145,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         let output_pins: Vec<pc::OutputPinParams> = hw_gpio.output.iter().map(|o| {
             pc::OutputPinParams {
                 name: o.name.clone(),
+                mcu: o.mcu.clone(),
                 pin: o.pin.clone(),
                 pin_type: match o.pin_type.as_str() {
                     "pwm" => pc::OutputPinType::Pwm,
@@ -1088,6 +1162,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         let input_pins: Vec<pc::InputPinParams> = hw_gpio.input.iter().map(|i| {
             pc::InputPinParams {
                 name: i.name.clone(),
+                mcu: i.mcu.clone(),
                 pin: i.pin.clone(),
                 pin_type: match i.pin_type.as_str() {
                     "analog" => pc::InputPinType::Analog,
@@ -1114,6 +1189,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         pc::TemperatureParams {
             hotbed: pc::TempSensorParams {
                 sensor_type: temp.hotbed.sensor_type.clone(),
+                mcu: temp.hotbed.mcu.clone(),
                 adc_pin: temp.hotbed.adc_pin.clone(),
                 beta: temp.hotbed.beta,
                 pullup_resistor: temp.hotbed.pullup_resistor,
@@ -1126,6 +1202,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
             },
             hotend: pc::TempSensorParams {
                 sensor_type: temp.hotend.sensor_type.clone(),
+                mcu: temp.hotend.mcu.clone(),
                 adc_pin: temp.hotend.adc_pin.clone(),
                 beta: temp.hotend.beta,
                 pullup_resistor: temp.hotend.pullup_resistor,
@@ -1144,6 +1221,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
         pc::HeaterParams {
             hotbed: pc::HeaterPin {
                 pin: h.hotbed.pin.clone(),
+                mcu: h.hotbed.mcu.clone(),
                 active_high: h.hotbed.active_high,
                 pwm_freq_hz: h.hotbed.pwm_freq_hz,
                 max_power: h.hotbed.max_power,
@@ -1156,6 +1234,7 @@ pub fn build_printer_config(configs: &LoadedConfigs) -> pc::PrinterJsonConfig {
             },
             hotend: pc::HeaterPin {
                 pin: h.hotend.pin.clone(),
+                mcu: h.hotend.mcu.clone(),
                 active_high: h.hotend.active_high,
                 pwm_freq_hz: h.hotend.pwm_freq_hz,
                 max_power: h.hotend.max_power,

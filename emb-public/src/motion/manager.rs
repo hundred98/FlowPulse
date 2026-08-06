@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 use crate::CoreSocketClient;
+use crate::config::{ConfigManager, ConfigFrameBuilder};
 
 /// Homing Manager for axis homing operations.
 ///
@@ -81,6 +82,28 @@ impl HomingManager {
         let cleared = current & !axes_mask;
         if cleared != current {
             self.client.motion_set_homed_axes(cleared).await?;
+        }
+
+        // sensorless (StallGuard/diag) 归位：归位前先启用 StallGuard。
+        // 通过 CONFIG_SUB_MCU2/0x2A 下发的 homing_mode 决定哪些轴走 sensorless。
+        if let Ok(config) = ConfigManager::instance().get_config() {
+            let motors = &config.motor;
+            let stall_frames = ConfigFrameBuilder::build_tmc_stall_cfg_frames(motors, 1);
+            for frame in &stall_frames {
+                self.client.serial_send_raw(frame).await?;
+                // 等待 TMC StallGuard ACK (0x29)，确保下位机已 override endstop 为 DIAG
+                for _ in 0..10 {
+                    match self.client.serial_recv_frame().await {
+                        Ok(Some((ft, _pld))) => {
+                            if ft == 0x29 { break; }  // TmcStallAck
+                            if ft == 0x12 { return Err("TMC StallGuard NACK".to_string()); }
+                        }
+                        Ok(None) => break,
+                        Err(_) => break,
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                }
+            }
         }
 
         // Send homing frame (0x0A = homing command)

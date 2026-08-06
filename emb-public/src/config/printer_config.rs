@@ -275,10 +275,79 @@ pub struct DriverParams {
     #[serde(rename = "hold_current_ma")]
     #[serde(default)]
     pub hold_current_ma: u16,
+    #[serde(rename = "sense_resistor")]
+    #[serde(default)]
+    pub sense_resistor: f32,
     #[serde(rename = "stealthchop_threshold")]
     #[serde(default)]
     pub stealthchop_threshold: u32,
+    /// TMC2209 从机地址 (0~3, 由 MS1/MS2 硬件决定)，默认 0
+    #[serde(rename = "uart_addr")]
+    #[serde(default)]
+    pub uart_addr: u8,
+    /// IHOLDDELAY (0~15)，默认 0
+    #[serde(rename = "iholddelay")]
+    #[serde(default)]
+    pub iholddelay: u8,
+    /// TPOWERDOWN (0~255)，默认 20
+    #[serde(rename = "tpowerdown")]
+    #[serde(default)]
+    pub tpowerdown: u8,
+    /// INT_POL (0/1)，默认 1
+    #[serde(rename = "intpol")]
+    #[serde(default)]
+    pub intpol: u8,
+    /// VSENSE (0/1)，默认 0
+    #[serde(rename = "vsense")]
+    #[serde(default)]
+    pub vsense: u8,
+    /// TOFF (0~15)，默认 3
+    #[serde(rename = "toff")]
+    #[serde(default)]
+    pub toff: u8,
+    /// HSTRT (0~7)，默认 0
+    #[serde(rename = "hstrt")]
+    #[serde(default)]
+    pub hstrt: u8,
+    /// HEND (0~15)，默认 0
+    #[serde(rename = "hend")]
+    #[serde(default)]
+    pub hend: u8,
+    /// TBL (0~3)，默认 0
+    #[serde(rename = "tbl")]
+    #[serde(default)]
+    pub tbl: u8,
+    /// TPWMTHRS (StealthChop 速度阈值)，默认 0
+    #[serde(rename = "tpwmthrs")]
+    #[serde(default)]
+    pub tpwmthrs: u32,
+    /// PWM_AUTOSCALE (0~15)，默认 4
+    #[serde(rename = "pwm_auto_scale")]
+    #[serde(default)]
+    pub pwm_auto_scale: u8,
+    /// PWM_AUTOGRAD (0~15)，默认 12
+    #[serde(rename = "pwm_auto_grad")]
+    #[serde(default)]
+    pub pwm_auto_grad: u8,
+    /// StallGuard 灵敏度阈值 SGTHRS (0~255)，默认 100
+    #[serde(rename = "sgthrs")]
+    #[serde(default)]
+    pub sgthrs: u8,
+    /// StallGuard 速度窗口阈值 TCOOLTHRS (0=禁用)，默认 200000
+    #[serde(rename = "tcoolthrs")]
+    #[serde(default)]
+    pub tcoolthrs: u32,
+    /// 归位方式: "limit" 机械限位 (默认) 或 "sensorless" StallGuard/diag
+    #[serde(rename = "homing_mode")]
+    #[serde(default = "default_homing_mode")]
+    pub homing_mode: String,
+    /// DIAG 引脚 (如 "PA8"/"PA6")，sensorless 归位时使用；空串=未配置
+    #[serde(rename = "diag_pin")]
+    #[serde(default)]
+    pub diag_pin: String,
 }
+
+fn default_homing_mode() -> String { "limit".to_string() }
 
 impl Default for DriverParams {
     fn default() -> Self {
@@ -287,7 +356,24 @@ impl Default for DriverParams {
             microsteps: 16,
             current_ma: 800,
             hold_current_ma: 500,
+            sense_resistor: 0.11,
             stealthchop_threshold: 999999,
+            uart_addr: 0,
+            iholddelay: 0,
+            tpowerdown: 20,
+            intpol: 1,
+            vsense: 0,
+            toff: 3,
+            hstrt: 0,
+            hend: 0,
+            tbl: 0,
+            tpwmthrs: 0,
+            pwm_auto_scale: 4,
+            pwm_auto_grad: 12,
+            sgthrs: 100,
+            tcoolthrs: 200000,
+            homing_mode: default_homing_mode(),
+            diag_pin: String::new(),
         }
     }
 }
@@ -318,6 +404,9 @@ impl Default for ExtruderParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MotorParams {
     pub axis: String,
+    /// MCU 归属: "MCU1" (默认, 本机驱动) 或 "MCU2" (由从机驱动, 如 E 轴)
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     #[serde(rename = "step_pin")]
     pub step_pin: String,
     #[serde(rename = "dir_pin")]
@@ -343,6 +432,8 @@ pub struct MotorParams {
     #[serde(default)]
     pub extruder: ExtruderParams,
 }
+
+fn default_mcu1() -> String { "MCU1".to_string() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitSwitchParams {
@@ -437,6 +528,9 @@ impl Default for TemperatureParams {
 pub struct TempSensorParams {
     #[serde(rename = "sensor_type")]
     pub sensor_type: String,
+    /// MCU 归属: "MCU1" (默认, 本机采样) 或 "MCU2" (由从机采样)
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     #[serde(rename = "adc_pin")]
     pub adc_pin: String,
     pub beta: u32,
@@ -458,6 +552,7 @@ impl Default for TempSensorParams {
     fn default() -> Self {
         Self {
             sensor_type: "NTC100K".to_string(),
+            mcu: default_mcu1(),
             adc_pin: String::new(),  // Empty string means not configured
             beta: 3950,
             pullup_resistor: 4700,
@@ -491,6 +586,9 @@ impl Default for HeaterParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeaterPin {
     pub pin: String,
+    /// MCU 归属: "MCU1" (默认, 本机加热) 或 "MCU2" (由从机加热)
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     #[serde(rename = "active_high")]
     #[serde(default = "default_active_high")]
     pub active_high: bool,
@@ -536,6 +634,7 @@ impl Default for HeaterPin {
     fn default() -> Self {
         Self {
             pin: String::new(),  // Empty string means not configured
+            mcu: default_mcu1(),
             active_high: true,
             pwm_freq_hz: default_heater_pwm_freq(),
             max_power: default_max_power(),
@@ -622,6 +721,9 @@ pub struct GpioConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputPinParams {
     pub name: String,
+    /// MCU 归属: "MCU1" (默认, 本机) 或 "MCU2" (由从机控制, 如风扇)
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     pub pin: String,
     #[serde(rename = "type")]
     pub pin_type: OutputPinType,
@@ -647,6 +749,9 @@ pub enum OutputPinType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputPinParams {
     pub name: String,
+    /// MCU 归属: "MCU1" (默认, 本机) 或 "MCU2" (由从机读取)
+    #[serde(default = "default_mcu1")]
+    pub mcu: String,
     pub pin: String,
     #[serde(rename = "type")]
     pub pin_type: InputPinType,
