@@ -4,7 +4,7 @@
   "printer_model": "STM32F407_3DPrinter",
   "communication": {
     "serial": {
-      "port": "COM7",
+      "port": "COM6",
       "baud_rate": 115200,
       "data_bits": 8,
       "parity": "None",

@@ -1,0 +1,259 @@
+{
+  "version": "1.0",
+  "description": "Hardware configuration (motors, limit switches, GPIO, temperature sensors, fans)",
+  "motor": [
+    {
+      "axis": "X",
+      "step_pin": "PE3",
+      "dir_pin": "PE2",
+      "enable_pin": "!PE4",
+      "steps_per_mm": 80,
+      "max_speed_mm_per_s": 400,
+      "max_accel": 20000,
+      "position_min": 0,
+      "position_max": 300,
+      "driver": {
+        "uart_pin": "",
+        "microsteps": 16,
+        "current_ma": 800,
+        "hold_current_ma": 500,
+        "stealthchop_threshold": 999999
+      }
+    },
+    {
+      "axis": "Y",
+      "step_pin": "PE0",
+      "dir_pin": "PB9",
+      "enable_pin": "!PE1",
+      "steps_per_mm": 80,
+      "max_speed_mm_per_s": 400,
+      "max_accel": 20000,
+      "position_min": 0,
+      "position_max": 300,
+      "driver": {
+        "uart_pin": "",
+        "microsteps": 16,
+        "current_ma": 800,
+        "hold_current_ma": 500,
+        "stealthchop_threshold": 999999
+      }
+    },
+    {
+      "axis": "Z",
+      "step_pin": "PB5",
+      "dir_pin": "PB4",
+      "enable_pin": "!PB8",
+      "steps_per_mm": 400,
+      "max_speed_mm_per_s": 20,
+      "max_accel": 500,
+      "position_min": 0,
+      "position_max": 200,
+      "driver": {
+        "uart_pin": "",
+        "microsteps": 16,
+        "current_ma": 800,
+        "hold_current_ma": 500,
+        "stealthchop_threshold": 999999
+      }
+    },
+    {
+      "axis": "E",
+      "step_pin": "PD6",
+      "dir_pin": "!PD3",
+      "enable_pin": "!PB3",
+      "steps_per_mm": 80,
+      "max_speed_mm_per_s": 50,
+      "max_accel": 5000,
+      "driver": {
+        "uart_pin": "",
+        "microsteps": 16,
+        "current_ma": 600,
+        "hold_current_ma": 300,
+        "stealthchop_threshold": 999999
+      },
+      "extruder": {
+        "nozzle_diameter_mm": 0.4,
+        "filament_diameter_mm": 1.75,
+        "max_flow_rate": 25
+      }
+    }
+  ],
+  "limit_switch": {
+    "x": {
+      "pin": "PC4",
+      "pull": "up",
+      "active_high": false,
+      "position_endstop": 0,
+      "homing_speed_mm_per_s": 25,
+      "homing_fine_speed_mm_per_s": 1,
+      "homing_retract_mm": 20,
+      "homing_dir": 0
+    },
+    "y": {
+      "pin": "PD2",
+      "pull": "up",
+      "active_high": false,
+      "position_endstop": 0,
+      "homing_speed_mm_per_s": 25,
+      "homing_fine_speed_mm_per_s": 1,
+      "homing_retract_mm": 20,
+      "homing_dir": 0
+    },
+    "z": {
+      "pin": "PC8",
+      "pull": "up",
+      "active_high": false,
+      "position_endstop": 0,
+      "homing_speed_mm_per_s": 25,
+      "homing_fine_speed_mm_per_s": 1,
+      "homing_retract_mm": 5,
+      "homing_dir": 0
+    },
+    "homing": {
+      "z_lift_mm": 10
+    }
+  },
+  "temperature": {
+    "hotbed": {
+      "sensor_type": "NTC100K",
+      "adc_pin": "PC0",
+      "beta": 3950,
+      "pullup_resistor": 4700,
+      "min_temp": 0,
+      "max_temp": 130,
+      "kp": 325.10,
+      "ki": 63.35,
+      "kd": 417.10,
+      "pid_interval_ms": 100
+    },
+    "hotend": {
+      "sensor_type": "NTC100K",
+      "adc_pin": "PC1",
+      "beta": 3950,
+      "pullup_resistor": 4700,
+      "min_temp": 0,
+      "max_temp": 250,
+      "kp": 14.669,
+      "ki": 0.572,
+      "kd": 94.068,
+      "pid_interval_ms": 100
+    }
+  },
+  "heater": {
+    "hotbed": {
+      "pin": "PA0",
+      "active_high": true,
+      "pwm_freq_hz": 10,
+      "max_power": 100,
+      "safety": {
+        "max_temp_deviation": 5,
+        "min_temp_deviation": -10,
+        "heating_timeout_ms": 300000,
+        "sensor_fault_threshold": 50
+      }
+    },
+    "hotend": {
+      "pin": "PB0",
+      "active_high": true,
+      "pwm_freq_hz": 10,
+      "max_power": 100,
+      "safety": {
+        "max_temp_deviation": 5,
+        "min_temp_deviation": -10,
+        "heating_timeout_ms": 300000,
+        "sensor_fault_threshold": 50
+      }
+    }
+  },
+  "gpio": {
+    "output": [
+      {
+        "name": "hotend_fan",
+        "pin": "PA6",
+        "type": "pwm",
+        "active_high": true,
+        "pwm_freq_hz": 100,
+        "default_value": 0.0,
+        "shutdown_value": 0.0,
+        "max_value": 1.0
+      }
+    ],
+    "input": [
+      {
+        "name": "filament_sensor",
+        "pin": "PA4",
+        "type": "digital",
+        "pull": "up",
+        "active_high": true,
+        "debounce_ms": 50,
+        "report": {
+          "mode": "on_change",
+          "trigger": "rising",
+          "event": {
+            "action": "filament_runout"
+          }
+        }
+      },
+      {
+        "name": "power_monitor",
+        "pin": "PA13",
+        "type": "analog",
+        "pull": "none",
+        "adc_resolution": 12,
+        "calibration": {
+          "offset": 0.0,
+          "scale": 1.0,
+          "min_value": 0.0,
+          "max_value": 1.0
+        },
+        "report": {
+          "mode": "on_change",
+          "threshold": 0.2,
+          "event": {
+            "action": "power_loss"
+          }
+        }
+      }
+    ]
+  },
+  "fan": [
+    {
+      "index": 0,
+      "name": "hotend_fan",
+      "description": "Hotend cooling fan"
+    }
+  ],
+  "bed_mesh": {
+    "probe": {
+      "probe_count_x": 5,
+      "probe_count_y": 5,
+      "probe_samples": 3,
+      "travel_speed": 100.0,
+      "mesh_smooth_x": 0.2,
+      "mesh_smooth_y": 0.2,
+      "mesh_min_x": 0.0,
+      "mesh_max_x": 235.0,
+      "mesh_min_y": 0.0,
+      "mesh_max_y": 235.0
+    },
+    "algorithm": {
+      "enabled": true,
+      "algorithm": "lagrange",
+      "bicubic_tension": 0.5,
+      "mesh_pps_x": 1,
+      "mesh_pps_y": 1,
+      "probe_z_adjust": 0.0,
+      "fade_start": 5.0,
+      "fade_end": 10.0
+    },
+    "data": {
+      "points": [
+        0.0, 0.2, -0.2, 0.2, 0.0,
+        0.0, 0.2, -0.2, 0.2, -0.2,
+        -0.2, 0.2, -0.22, 0.2, -0.01,
+        0.2, -0.2, 0.2, -0.2, 0.05,
+        -0.2, 0.2, -0.22, 0.2, -0.2
+      ]
+    }
+  }
+}
