@@ -1,4 +1,4 @@
-﻿use super::printer_config::{PrinterJsonConfig, MotorParams, DriverParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams, OutputPinParams, InputPinParams, PidTuneHeaterConfig};
+use super::printer_config::{PrinterJsonConfig, MotorParams, DriverParams, LimitSwitchAxis, TempSensorParams, HeaterPin, FanParams, LimitSwitchParams, OutputPinParams, InputPinParams, PidTuneHeaterConfig};
 use crate::common::pin_parser::parse_pin;
 
 pub const FRAME_SOF: u8 = 0xAA;
@@ -246,8 +246,17 @@ impl ConfigFrameBuilder {
         Self::wrap_frame(FRAME_TYPE_SET_TEMP, &payload)
     }
 
+    /// 构建电机配置子帧 (CONFIG_SUBTYPE_MOTOR = 0x01)。
+    /// payload: [0x01][sub_len][motor...]，每个 motor 固定 11 字节：
+    ///   axis, step_port, step_pin, dir_port, dir_pin, dir_inverted,
+    ///   en_port, en_pin, en_inverted, uart_port, uart_pin
+    /// sub_len = 11 * motors.len()，与其它子帧的 [sub_type][sub_len][data] 布局保持一致，
+    /// 使下位机可以统一走通用 TLV 解析循环。
     fn build_motor_frame(motors: &[&MotorParams]) -> Vec<u8> {
-        let mut payload = vec![0x01];
+        const MOTOR_ENTRY_LEN: usize = 11;
+
+        let mut payload = vec![CONFIG_SUBTYPE_MOTOR];
+        payload.push((motors.len() * MOTOR_ENTRY_LEN) as u8);
 
         for motor in motors {
             let step = parse_pin(&motor.step_pin);
