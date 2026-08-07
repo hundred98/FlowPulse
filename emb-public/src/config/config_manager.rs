@@ -263,12 +263,6 @@ impl ConfigManager {
         tracing::info!("📤 Sending hardware config to device...");
         let config_frames = ConfigFrameBuilder::build_config_frames(&printer_config);
 
-        // [TMP-DIAG] 打印实际生成的帧类型序列，排查 TMC(0x2A) 帧缺失
-        let types: Vec<String> = config_frames.iter()
-            .map(|f| if f.len() >= 3 { format!("0x{:02X}", f[2]) } else { "?".into() })
-            .collect();
-        tracing::info!("[TMP-DIAG] build_config_frames 共 {} 条帧: {}", config_frames.len(), types.join(", "));
-
         for frame_bytes in config_frames.iter() {
             client.serial_send_raw(frame_bytes).await
                 .map_err(|e| format!("Failed to send config frame to device: {}", e))?;

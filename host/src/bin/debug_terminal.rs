@@ -245,22 +245,15 @@ async fn gcode_execute(
             match motion_cmd {
                 MotionCommand::LinearMove { x, y, z, e, f, is_rapid } => {
                     let cmd = if is_rapid { "G0" } else { "G1" };
-                    tracing::info!(
-                        "  [MOTION-DBG] LinearMove: cmd={} x={:?} y={:?} z={:?} e={:?} f={:?} (mm)",
-                        cmd, x, y, z, e, f
-                    );
                     
                     // G0/G1 homed check before dispatch
                     match state.core_client.motion_query_homed().await {
                         Ok(homed) if homed != 0b111 => {
-                            tracing::info!("  [MOTION-DBG] homed check FAIL: homed_axes={:#04b}", homed);
                             return Json(ApiResponse::<String>::error(
                                 format!("Cannot move: axes not homed (homed_axes={:#04b}). Use G28 first.", homed)
                             ));
                         }
-                        Ok(homed) => {
-                            tracing::info!("  [MOTION-DBG] homed check OK: homed_axes={:#04b}", homed);
-                        }
+                        Ok(_homed) => {}
                         Err(e) => {
                             return Json(ApiResponse::<String>::error(format!("Homed query failed: {}", e)));
                         }
@@ -268,11 +261,9 @@ async fn gcode_execute(
                     
                     match state.core_client.motion_dispatch(cmd, x, y, z, e, f).await {
                         Ok(msg) => {
-                            tracing::info!("  [MOTION-DBG] motion_dispatch OK: msg=\"{}\"", msg);
                             Json(ApiResponse::success(if msg.is_empty() { "Motion dispatched".to_string() } else { msg }))
                         }
                         Err(e) => {
-                            tracing::info!("  [MOTION-DBG] motion_dispatch ERR: {}", e);
                             Json(ApiResponse::<String>::error(format!("Motion dispatch failed: {}", e)))
                         }
                     }
