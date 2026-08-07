@@ -57,7 +57,7 @@
   },
 
   "resonance_compensation": {
-    "enabled": true,
+    "enabled": false,
     "shaper_type": "MZV",
     "insensitivity": 0.05,
     "max_velocity_jump_mm_s": 10.0,
