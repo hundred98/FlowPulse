@@ -691,6 +691,15 @@ impl ConfigFrameBuilder {
             if !motor.mcu.eq_ignore_ascii_case("MCU1") {
                 continue;
             }
+            // 未配置 uart_pin 的轴不需要下发 TMC 配置（无 UART 通信能力，
+            // 下发后下位机也无法 ACK，会触发 ACK 超时重传）。
+            if motor.driver.uart_pin.trim().is_empty() {
+                tracing::debug!(
+                    "跳过轴 {} 的 TMC 配置下发：未配置 uart_pin",
+                    motor.axis
+                );
+                continue;
+            }
             let axis = match motor.axis.as_bytes().first().copied().unwrap_or(0) {
                 b'X' => Some(TMC_AXIS_X),
                 b'Y' => Some(TMC_AXIS_Y),
