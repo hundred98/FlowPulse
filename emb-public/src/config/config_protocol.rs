@@ -274,8 +274,8 @@ impl ConfigFrameBuilder {
             payload.push(enable.map(|p| p.port).unwrap_or(0));
             payload.push(enable.map(|p| p.pin).unwrap_or(0));
             payload.push(if enable.map(|p| p.inverted).unwrap_or(false) { 1 } else { 0 });
-            payload.push(uart.map(|p| p.port).unwrap_or(0));
-            payload.push(uart.map(|p| p.pin).unwrap_or(0));
+            payload.push(uart.map(|p| p.port).unwrap_or(0xFF));
+            payload.push(uart.map(|p| p.pin).unwrap_or(0xFF));
         }
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
