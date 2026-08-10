@@ -647,7 +647,9 @@ impl ConfigFrameBuilder {
         buf.extend_from_slice(&pin.shutdown_value.to_be_bytes());
         buf.extend_from_slice(&pin.max_value.to_be_bytes());
 
-        buf.push(0);
+        // owner 字节放在末尾 (原 [0][0] 的第一个): 0 = MCU1 本地, 1 = MCU2 远程
+        let owner: u8 = if pin.mcu.eq_ignore_ascii_case("MCU2") { 1 } else { 0 };
+        buf.push(owner);
         buf.push(0);
 
         frames.push(Self::wrap_frame(FRAME_TYPE_CONFIG, &buf));
