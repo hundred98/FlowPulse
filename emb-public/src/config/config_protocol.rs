@@ -27,6 +27,7 @@ pub const CONFIG_SUBTYPE_SYSTEM: u8 = 0x05;
 pub const CONFIG_SUBTYPE_GPIO: u8 = 0x06;
 pub const CONFIG_SUBTYPE_GPIO_OUTPUT: u8 = 0x07;  // Matches CONFIG_SUB_GPIO_OUTPUT on STM32
 pub const CONFIG_SUBTYPE_GPIO_INPUT: u8 = 0x08;   // Matches CONFIG_SUB_GPIO_INPUT on STM32
+pub const CONFIG_SUBTYPE_FAN: u8 = 0x23;        // 风扇(喷头/模型冷却/腔体等，可能不止一个)
 pub const CONFIG_SUBTYPE_PID_TUNE: u8 = 0x09;   // PID整定配置
 pub const CONFIG_SUBTYPE_QUERY: u8 = 0x10;
 
@@ -149,17 +150,36 @@ impl ConfigFrameBuilder {
             }
         }
 
+        // 风扇名字集合：hardware.json 里风扇通常在 `fan[]` 中只声明 index/name，
+        // 真正的引脚写在 `gpio.output` 里。为避免同一个引脚既按 GPIO_OUTPUT(0x07)
+        // 又按 FAN(0x23) 下发两次，这里按名字识别出"其实是风扇"的输出脚，
+        // 统一改用 CONFIG_SUBTYPE_FAN(0x23) 下发。
+        let fan_names: std::collections::HashSet<String> = config.fan.iter()
+            .filter(|f| f.pin.is_empty())   // 只认那些没有独立 pin、依赖 gpio.output 的风扇
+            .map(|f| f.name.trim().to_ascii_lowercase())
+            .filter(|n| !n.is_empty())
+            .collect();
+
         // GPIO output pins：MCU1 本机应用，MCU2 的打包进 CONFIG_SUB_MCU2(0x22)
         for pin in &config.gpio.output {
             if pin.pin.is_empty() { continue; }
+
+            let is_fan = fan_names.contains(&pin.name.trim().to_ascii_lowercase());
+
+            let sub_frames = if is_fan {
+                Self::build_fan_frames_from_output(pin)
+            } else {
+                Self::build_gpio_output_frames(pin)
+            };
+
             if pin.mcu.eq_ignore_ascii_case("MCU2") {
-                for f in Self::build_gpio_output_frames(pin) {
+                for f in sub_frames {
                     if let Some(item) = Self::subframe_to_item(&f) {
                         mcu2_items.push(item);
                     }
                 }
             } else {
-                frames.extend(Self::build_gpio_output_frames(pin));
+                frames.extend(sub_frames);
             }
         }
 
@@ -184,6 +204,12 @@ impl ConfigFrameBuilder {
         if let Some(ref pid_tune) = config.pid_tune {
             frames.push(Self::build_pid_tune_hotend_frame(&pid_tune.hotend));
             frames.push(Self::build_pid_tune_hotbed_frame(&pid_tune.hotbed));
+        }
+
+        // E 轴 TMC 配置：单独构造 MCU2 TMC item (sub_type=0x2A)，随 0x22 一起下发。
+        // 上位机 FRAME_TYPE_TMC_CONFIG(0x2A) 仅处理 MCU1 轴，E 轴归属 MCU2 必须在此补充。
+        if let Some(item) = Self::build_mcu2_tmc_item(&config.motor) {
+            mcu2_items.push(item);
         }
 
         // MCU2 配置统一打包进 CONFIG_SUB_MCU2(0x22) 独立帧，最后下发。
@@ -222,6 +248,99 @@ impl ConfigFrameBuilder {
             payload.extend_from_slice(data);
         }
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
+    }
+
+    /// 构建 E 轴(MCU2) TMC2209 配置 item，用于随 CONFIG_SUB_MCU2(0x22) 下发。
+    /// 返回 (sub_type=0x2A, data)，data 格式与 FRAME_TYPE_TMC_CONFIG(0x2A) 的 payload 完全一致
+    /// （23 字节: [axis='E'][uart_addr]...[diag_pin]），MCU2 端按 0x2A 子帧解析。
+    /// 仅当存在归属 MCU2 的 E 轴且带 driver 参数时返回 Some。
+    fn build_mcu2_tmc_item(motors: &[MotorParams]) -> Option<(u8, Vec<u8>)> {
+        let e_motor = motors.iter().find(|m| {
+            m.axis.eq_ignore_ascii_case("E") && m.mcu.eq_ignore_ascii_case("MCU2")
+        })?;
+        let d = &e_motor.driver;
+        let tmc = Self::build_tmc_payload(d, b'E');
+        Some((FRAME_TYPE_TMC_CONFIG, tmc))
+    }
+
+    /// 为缺省字段填入安全默认值，返回归一化后的 DriverParams 副本。
+    ///
+    /// 背景：DriverParams 的多数字段用 `#[serde(default)]`，缺省时得到 Rust 零值
+    /// 而不是 `DriverParams::default()` 里的值。hardware.json 中 E 轴 driver 只写了
+    /// 5 个字段，其余全为 0，其中 `toff = 0` 会直接关闭 TMC2209 输出级，
+    /// `sense_resistor = 0.0` 也会让 IRUN/IHOLD 换算严重偏小。
+    /// 因此在打包前把这些"0 表示未填写"的字段补成默认值。
+    ///
+    /// 注意：只补那些"0 不是合法配置值"的字段。
+    /// `vsense`/`hstrt`/`hend`/`tbl`/`tpwmthrs`/`iholddelay` 的 0 都是合法取值，不做替换。
+    fn normalize_driver(d: &DriverParams) -> DriverParams {
+        let def = DriverParams::default();
+        let mut out = d.clone();
+
+        // toff = 0 表示驱动关闭，绝不能作为静态配置下发
+        if out.toff == 0 {
+            out.toff = def.toff;             // 3
+        }
+        // 采样电阻为 0 会让电流换算发散
+        if out.sense_resistor <= 0.0 {
+            out.sense_resistor = def.sense_resistor;  // 0.11
+        }
+        if out.microsteps == 0 {
+            out.microsteps = def.microsteps;  // 16
+        }
+        if out.current_ma == 0 {
+            out.current_ma = def.current_ma;  // 800
+        }
+        if out.hold_current_ma == 0 {
+            out.hold_current_ma = def.hold_current_ma;  // 500
+        }
+        if out.tpowerdown == 0 {
+            out.tpowerdown = def.tpowerdown;  // 20
+        }
+        if out.pwm_auto_scale == 0 {
+            out.pwm_auto_scale = def.pwm_auto_scale;  // 4
+        }
+        if out.pwm_auto_grad == 0 {
+            out.pwm_auto_grad = def.pwm_auto_grad;    // 12
+        }
+        if out.sgthrs == 0 {
+            out.sgthrs = def.sgthrs;          // 100
+        }
+        if out.homing_mode.trim().is_empty() {
+            out.homing_mode = def.homing_mode;
+        }
+        out
+    }
+
+    /// 复用 FRAME_TYPE_TMC_CONFIG 的 23 字节 payload 布局（不含帧头），供 MCU2 item 使用。
+    fn build_tmc_payload(d: &DriverParams, axis: u8) -> Vec<u8> {
+        let d = &Self::normalize_driver(d);
+        let irun = Self::calc_irun(d);
+        let ihold = Self::calc_ihold(d);
+        let mres = Self::microsteps_to_mres(d.microsteps);
+
+        let mut payload = Vec::with_capacity(23);
+        payload.push(axis);                    // [0] axis
+        payload.push(d.uart_addr.min(3));      // [1] uart_addr
+        payload.push(irun);                    // [2] irun
+        payload.push(ihold);                   // [3] ihold
+        payload.push(d.iholddelay.min(15));    // [4] iholddelay
+        payload.push(d.tpowerdown);            // [5] tpowerdown
+        payload.push(mres);                    // [6] mres
+        payload.push(if d.intpol != 0 { 1 } else { 0 });  // [7] intpol
+        payload.push(if d.stealthchop_threshold == 0 { 0 } else { 1 });  // [8] en_spreadcycle
+        payload.push(if d.vsense != 0 { 1 } else { 0 });  // [9] vsense
+        payload.push(d.toff.min(15));          // [10] toff
+        payload.push(d.hstrt.min(7));          // [11] hstrt
+        payload.push(d.hend.min(15));          // [12] hend
+        payload.push(d.tbl.min(3));            // [13] tbl
+        payload.extend_from_slice(&d.tpwmthrs.to_le_bytes());  // [14..17] tpwmthrs (LE)
+        payload.push(d.pwm_auto_scale.min(15));  // [18]
+        payload.push(d.pwm_auto_grad.min(15));   // [19]
+        payload.push(Self::homing_mode_byte(d));   // [20] homing_mode
+        payload.push(Self::diag_port_byte(&d.diag_pin));  // [21] diag_port
+        payload.push(Self::diag_pin_byte(&d.diag_pin));   // [22] diag_pin
+        payload
     }
 
     /// 构建状态查询帧（StatusQuery，帧类型 0x03）
@@ -458,7 +577,7 @@ impl ConfigFrameBuilder {
     }
 
     fn build_fan_frame(fan: &FanParams) -> Vec<u8> {
-        let mut payload = vec![0x08];
+        let mut payload = vec![CONFIG_SUBTYPE_FAN];
 
         payload.push(fan.name.as_bytes().first().copied().unwrap_or(b'F'));
 
@@ -471,6 +590,25 @@ impl ConfigFrameBuilder {
         payload.extend_from_slice(&freq_bytes[..2]);
 
         Self::wrap_frame(FRAME_TYPE_CONFIG, &payload)
+    }
+
+    /// 把一个"其实是风扇"的 gpio.output 项按 CONFIG_SUBTYPE_FAN(0x23) 下发。
+    ///
+    /// 载荷布局与 build_gpio_output_frames 完全一致，仅首字节的 sub_type
+    /// 由 0x07 换成 0x23。这样做的理由：
+    ///   - 风扇需要 pwm_freq / default / shutdown / max 这些字段，
+    ///     而精简版 build_fan_frame 的 6 字节载荷装不下；
+    ///   - 下位机可以直接复用已有的 GPIO 输出解析器，只是登记到风扇表里。
+    fn build_fan_frames_from_output(pin: &OutputPinParams) -> Vec<Vec<u8>> {
+        let mut frames = Self::build_gpio_output_frames(pin);
+        for f in frames.iter_mut() {
+            // 帧结构: [SOF][len][type][payload...][crc][EOF]，payload[0] 即 sub_type
+            if f.len() > 3 {
+                f[3] = CONFIG_SUBTYPE_FAN;
+                Self::refresh_frame_crc(f);
+            }
+        }
+        frames
     }
 
     fn build_gpio_output_frames(pin: &OutputPinParams) -> Vec<Vec<u8>> {
@@ -851,6 +989,16 @@ impl ConfigFrameBuilder {
         frame.push(FRAME_EOF);
 
         frame
+    }
+
+    /// 就地修改过 payload 之后重算帧尾 CRC。
+    /// 帧结构: [SOF][len][type][payload...][crc][EOF]，
+    /// CRC 覆盖范围与 wrap_frame 一致 = frame[1 .. len-2]。
+    fn refresh_frame_crc(frame: &mut [u8]) {
+        let n = frame.len();
+        if n < 4 { return; }
+        let crc = Self::crc8(&frame[1..n - 2]);
+        frame[n - 2] = crc;
     }
 
     fn crc8(data: &[u8]) -> u8 {
