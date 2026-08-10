@@ -75,18 +75,34 @@
     },
     {
       "axis": "E",
-      "step_pin": "PD6",
-      "dir_pin": "!PD3",
-      "enable_pin": "!PB3",
+      "mcu": "MCU2",
+      "step_pin": "PA5",
+      "dir_pin": "PA6",
+      "enable_pin": "PA7",
       "steps_per_mm": 80,
       "max_speed_mm_per_s": 50,
       "max_accel": 5000,
       "driver": {
-        "uart_pin": "",
+        "uart_pin": "PB1",
         "microsteps": 16,
         "current_ma": 600,
         "hold_current_ma": 300,
-        "stealthchop_threshold": 999999
+        "sense_resistor": 0.100,
+        "stealthchop_threshold": 0,
+        "uart_addr": 3,
+        "iholddelay": 0,
+        "tpowerdown": 20,
+        "intpol": 1,
+        "vsense": 0,
+        "toff": 3,
+        "hstrt": 0,
+        "hend": 0,
+        "tbl": 0,
+        "tpwmthrs": 0,
+        "pwm_auto_scale": 4,
+        "pwm_auto_grad": 12,
+        "sgthrs": 100,
+        "tcoolthrs": 200000
       },
       "extruder": {
         "nozzle_diameter_mm": 0.4,
@@ -138,21 +154,22 @@
       "pullup_resistor": 4700,
       "min_temp": 0,
       "max_temp": 130,
-      "kp": 325.10,
-      "ki": 63.35,
-      "kd": 417.10,
+      "kp": 20.0,
+      "ki": 0.1,
+      "kd": 0.06,
       "pid_interval_ms": 100
     },
     "hotend": {
+      "mcu": "MCU2",
       "sensor_type": "NTC100K",
-      "adc_pin": "PC1",
+      "adc_pin": "PA4",
       "beta": 3950,
       "pullup_resistor": 4700,
       "min_temp": 0,
       "max_temp": 250,
-      "kp": 14.669,
-      "ki": 0.572,
-      "kd": 94.068,
+      "kp": 40.605,
+      "ki": 13.535,
+      "kd": 30.454,
       "pid_interval_ms": 100
     }
   },
@@ -170,6 +187,7 @@
       }
     },
     "hotend": {
+      "mcu": "MCU2",
       "pin": "PB0",
       "active_high": true,
       "pwm_freq_hz": 10,
@@ -185,8 +203,9 @@
   "gpio": {
     "output": [
       {
+        "mcu": "MCU2",
         "name": "hotend_fan",
-        "pin": "PA6",
+        "pin": "PA8",
         "type": "pwm",
         "active_high": true,
         "pwm_freq_hz": 100,
@@ -208,26 +227,6 @@
           "trigger": "rising",
           "event": {
             "action": "filament_runout"
-          }
-        }
-      },
-      {
-        "name": "power_monitor",
-        "pin": "PA13",
-        "type": "analog",
-        "pull": "none",
-        "adc_resolution": 12,
-        "calibration": {
-          "offset": 0.0,
-          "scale": 1.0,
-          "min_value": 0.0,
-          "max_value": 1.0
-        },
-        "report": {
-          "mode": "on_change",
-          "threshold": 0.2,
-          "event": {
-            "action": "power_loss"
           }
         }
       }
