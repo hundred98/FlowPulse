@@ -3,13 +3,13 @@
   "description": "Motion planning configuration (kinematics, jerk, arc, homing, velocity profile)",
   "kinematics": {
     "max_velocity": 400,
-    "max_acceleration": 20000,
+    "max_acceleration": 10000,
     "max_feed_rate": 15000.0,
     "jerk": 10.0
   },
 
   "junction": {
-    "square_corner_velocity": 5.0,
+    "square_corner_velocity": 8.0,
     "junction_deviation": 0.05
   },
 
@@ -45,14 +45,14 @@
   "velocity_profile": {
     "type": "six_point",
     "six_point": {
-      "start_accel_mm_s2": 5000,
+      "start_accel_mm_s2": 10000,
       "max_accel_mm_s2": 20000,
-      "final_decel_mm_s2": 5000,
+      "final_decel_mm_s2": 10000,
       "max_decel_mm_s2": 20000,
-      "start_speed_mm_s": 0,
-      "stop_speed_mm_s": 0,
-      "break_speed_mm_s": 100,
-      "min_distance_mm": 0.1
+      "start_speed_mm_s": 10,
+      "stop_speed_mm_s": 10,
+      "break_speed_mm_s": 30,
+      "min_distance_mm": 0.2
     }
   },
 

@@ -103,9 +103,7 @@
         "tbl": 0,
         "tpwmthrs": 0,
         "pwm_auto_scale": 4,
-        "pwm_auto_grad": 12,
-        "sgthrs": 100,
-        "tcoolthrs": 200000
+        "pwm_auto_grad": 12
       }
     },
     {
