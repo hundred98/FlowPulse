@@ -15,8 +15,19 @@ use crate::app::AppState;
 /// Default socket server address
 pub const SERVER_ADDR: &str = "127.0.0.1:9527";
 
-/// Default configuration directory
+/// Fallback configuration directory (relative to CWD) if exe path is unavailable
 pub const CONFIG_DIR: &str = "config";
+
+/// Resolve the configuration directory relative to the executable's location.
+///
+/// This makes the binary self-contained: copying it anywhere still resolves
+/// `<exe_dir>/config` instead of depending on the current working directory.
+pub fn exe_config_dir() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(CONFIG_DIR).to_string_lossy().to_string()))
+        .unwrap_or_else(|| CONFIG_DIR.to_string())
+}
 
 /// Load all configuration files at once
 ///

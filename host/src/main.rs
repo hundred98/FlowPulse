@@ -11,7 +11,9 @@ use emb_public::{GpioManager, HomingManager};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Step 0: Load all configuration files via ConfigManager (including logging.json)
-    ConfigManager::instance().load(setup::CONFIG_DIR)
+    // Resolve config dir relative to the executable so the binary is portable.
+    let config_dir = setup::exe_config_dir();
+    ConfigManager::instance().load(&config_dir)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Initialize tracing from ConfigManager
@@ -27,10 +29,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("========================================");
 
     tracing::info!("Server: {}", setup::SERVER_ADDR);
-    tracing::info!("Config: {}", setup::CONFIG_DIR);
+    tracing::info!("Config: {}", config_dir);
 
     // Step 1: Get printer config from ConfigManager (already loaded in Step 0)
-    let _printer_config = setup::load_all_configs(setup::CONFIG_DIR)?;
+    let _printer_config = setup::load_all_configs(&config_dir)?;
 
     // Step 2: Create host and connect to emb-core-server
     let host = setup::create_and_connect_host(setup::SERVER_ADDR).await?;

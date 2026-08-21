@@ -519,7 +519,9 @@ async fn checkpoint_clear(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load all configs via ConfigManager first (including logging.json)
-    emb_public::config::ConfigManager::instance().load("config")
+    // Resolve config dir relative to the executable so the binary is portable.
+    let config_dir = setup::exe_config_dir();
+    emb_public::config::ConfigManager::instance().load(&config_dir)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Initialize tracing from ConfigManager
@@ -536,7 +538,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Core server: {}", core_addr);
 
     // Step 1: Load all configuration files at once
-    setup::load_all_configs(setup::CONFIG_DIR)?;
+    setup::load_all_configs(&config_dir)?;
 
     // Step 2: Create host and connect to emb-core-server
     let host = setup::create_and_connect_host(&core_addr).await?;
@@ -564,7 +566,7 @@ async fn main() -> anyhow::Result<()> {
     let mut print_controller = PrintController::new();
     print_controller.set_client(host.client());
     print_controller.set_temperature_manager(temperature_manager.clone());
-    print_controller.set_resume_path("config/resume.json");
+    print_controller.set_resume_path(&format!("{}/resume.json", config_dir));
     let print_controller = Arc::new(tokio::sync::RwLock::new(print_controller));
 
     // Background pinger: every 2s, triggers read_response to consume GPIO Report push
@@ -583,10 +585,13 @@ async fn main() -> anyhow::Result<()> {
     //     tm_safety.start_safety_check_loop().await;
     // });
 
-    // Gcodes directory (default: ./gcodes relative to current working dir)
-    let gcodes_dir = std::env::current_dir()
-        .map(|p| p.join("gcodes").to_string_lossy().to_string())
-        .unwrap_or_else(|_| "gcodes".to_string());
+    // Gcodes directory: <executable's directory>/gcodes
+    // Use the executable location instead of CWD so that copying the binary
+    // anywhere still resolves the gcodes folder relative to the exe itself.
+    let gcodes_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("gcodes").to_string_lossy().to_string()))
+        .unwrap_or_else(|| "gcodes".to_string());
 
     let print_running = Arc::new(AtomicBool::new(false));
 

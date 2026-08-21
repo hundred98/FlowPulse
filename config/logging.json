@@ -7,7 +7,7 @@
     "format": "compact"
   },
   "file": {
-    "enable": true,
+    "enable": false,
     "level": "debug",
     "path": "logs/flowpulse.log",
     "max_size_mb": 50,
