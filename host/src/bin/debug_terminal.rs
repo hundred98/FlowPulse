@@ -4,7 +4,7 @@
 //! Initializes automatically following the standard setup flow:
 //!   load configs → connect core server → init device (serial + GPIO subscribe + configs + seq)
 //!
-//! Usage: debug_terminal [http_addr] [core_addr]
+//! Usage: debug_terminal [http_addr] [core_addr] [gcodes_dir]
 //!
 //! Example:
 //!   debug_terminal 127.0.0.1:8080 127.0.0.1:9527
@@ -393,10 +393,9 @@ async fn gcode_file_list(
     match std::fs::read_dir(dir) {
         Ok(entries) => {
             for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.ends_with(".gcode") || name.ends_with(".gc") || name.ends_with(".g") {
-                        files.push(name.to_string());
-                    }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".gcode") || name.ends_with(".gc") || name.ends_with(".g") {
+                    files.push(name);
                 }
             }
             files.sort();
@@ -530,7 +529,7 @@ async fn main() -> anyhow::Result<()> {
     emb_public::logger::init_tracing(&log_config)?;
 
     let args: Vec<String> = std::env::args().collect();
-    let http_addr = args.get(1).unwrap_or(&"127.0.0.1:8080".to_string()).clone();
+    let http_addr = args.get(1).unwrap_or(&"0.0.0.0:8080".to_string()).clone();
     let core_addr = args.get(2).unwrap_or(&"127.0.0.1:9527".to_string()).clone();
 
     tracing::info!("Debug Terminal starting...");
@@ -585,12 +584,19 @@ async fn main() -> anyhow::Result<()> {
     //     tm_safety.start_safety_check_loop().await;
     // });
 
-    // Gcodes directory: <executable's directory>/gcodes
-    // Use the executable location instead of CWD so that copying the binary
-    // anywhere still resolves the gcodes folder relative to the exe itself.
-    let gcodes_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("gcodes").to_string_lossy().to_string()))
+    // Gcodes directory resolution priority:
+    //   1. CLI arg #4  (explicit path, absolute or relative to CWD)
+    //   2. GCODES_DIR  environment variable
+    //   3. <current working directory>/gcodes   (default; the gcodes folder
+    //      sitting next to where the binary is *launched* from)
+    //   4. <executable's directory>/gcodes      (portable fallback)
+    let gcodes_dir = args.get(4).cloned()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("GCODES_DIR").ok().filter(|s| !s.is_empty()))
+        .or_else(|| std::env::current_dir().ok()
+            .map(|d| d.join("gcodes").to_string_lossy().to_string()))
+        .or_else(|| std::env::current_exe().ok()
+            .and_then(|p| p.parent().map(|d| d.join("gcodes").to_string_lossy().to_string())))
         .unwrap_or_else(|| "gcodes".to_string());
 
     let print_running = Arc::new(AtomicBool::new(false));
