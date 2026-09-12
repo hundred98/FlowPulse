@@ -18,6 +18,8 @@ This code cannot perform complete printing functionality on its own — it must 
 
 ## Project Overview
 
+For detailed information, please refer to: [https://flowpulse.hundred98.workers.dev/](https://flowpulse.hundred98.workers.dev/)
+
 A modular 3D printer control system designed for enthusiasts, with cross-platform desktop UI, Rust-based host software, and optimized embedded firmware.
 
 ### Target Audience
