@@ -18,7 +18,7 @@
 
 ## 项目概述
 
-详细介绍请查阅：https://flowpulse.hundred98.workers.dev/
+详细介绍请查阅：https://flowpulse.top/
 
 模块化的3D打印机控制系统，专为爱好者设计，包含跨平台桌面UI、基于Rust的上位机软件和优化的嵌入式固件。
 
